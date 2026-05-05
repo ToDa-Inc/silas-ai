@@ -30,6 +30,7 @@ from models.generation import (
     GenerationStartBody,
     GenerateThumbnailBody,
     ComposeThumbnailBody,
+    PatchGenerationSessionBody,
 )
 from services.content_generation import (
     GENERATION_PROMPT_VERSION,
@@ -65,6 +66,7 @@ from services.format_digest import (
 )
 from services.instagram_post_url import canonical_instagram_post_url
 from services.reel_metrics import compute_niche_benchmarks, enrich_engagement_metrics
+from services.url_adapt_format_recommendation import recommend_url_adapt_format
 
 router = APIRouter(prefix="/api/v1", tags=["generation"])
 logger = logging.getLogger(__name__)
@@ -478,20 +480,16 @@ def generation_start(
                 analysis_ids.append(str(one["id"]))
             if one.get("reel_id"):
                 reel_ids.append(str(one["reel_id"]))
-            # Create / Remotion need a visual format key; url_adapt historically left this NULL.
-            # When the user explicitly picked a target format, honour it; otherwise fall
-            # back to the source reel's normalized format (legacy auto-detection).
+            # When the user explicitly picked a target format, honour it; otherwise route
+            # Auto from source media type + duration: carousels stay carousels, short
+            # videos become text overlays, longer videos become talking-head scripts.
             if user_target_fk:
                 source_format_key = user_target_fk
             else:
-                nf = str(one.get("normalized_format") or "").strip()
-                ck = canonicalize_stored_format_key(nf) or nf
-                if ck in ("text_overlay", "b_roll_reel", "carousel"):
-                    source_format_key = ck
-                elif ck == "talking_head":
-                    source_format_key = "text_overlay"
-                else:
-                    source_format_key = "text_overlay"
+                source_format_key = recommend_url_adapt_format(
+                    one,
+                    reel_meta=one.get("_reel_meta"),
+                )
 
         elif st == "script_adapt":
             raw_script = (body.source_script or "").strip()
@@ -938,6 +936,51 @@ def generation_list_sessions(
             detail="Could not list sessions (is sql/phase6_generation_sessions.sql applied?).",
         ) from e
     return [_row_to_out(r) for r in (res.data or [])]
+
+
+@router.patch(
+    "/clients/{slug}/generate/sessions/{session_id}",
+    response_model=GenerationSessionOut,
+)
+def patch_generation_session(
+    slug: str,
+    session_id: str,
+    body: PatchGenerationSessionBody,
+    client_id: Annotated[str, Depends(resolve_client_id)],
+    supabase: Annotated[Client, Depends(get_supabase)],
+) -> dict:
+    """Update session artifacts that must remain editable before heavy assets exist.
+
+    Currently supports replacing ``selected_carousel_template`` for carousel sessions only,
+    and only while ``carousel_slides`` is still empty (no PNGs generated yet).
+    """
+    _ = slug
+    row = _load_session(supabase, client_id, session_id)
+    raw_fk = str(row.get("source_format_key") or "").strip()
+    fk = canonicalize_stored_format_key(raw_fk) or raw_fk
+
+    if body.selected_carousel_template is None:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    if fk != "carousel":
+        raise HTTPException(
+            status_code=400,
+            detail="selected_carousel_template only applies when source_format_key is carousel.",
+        )
+
+    cs_raw = row.get("carousel_slides")
+    if isinstance(cs_raw, list) and len(cs_raw) > 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Carousel reference template cannot be changed after slides are generated.",
+        )
+
+    payload = body.selected_carousel_template.model_dump(mode="json")
+    now = _now_iso()
+    supabase.table("generation_sessions").update(
+        {"selected_carousel_template": payload, "updated_at": now}
+    ).eq("id", session_id).eq("client_id", client_id).execute()
+    return _row_to_out(_load_session(supabase, client_id, session_id))
 
 
 @router.get(

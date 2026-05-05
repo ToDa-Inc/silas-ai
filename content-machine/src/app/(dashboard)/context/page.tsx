@@ -17,7 +17,7 @@ export default async function ContextPage() {
         <div>
           <h1 className="text-lg font-semibold text-app-fg">Context</h1>
           <p className="mt-1 text-sm text-app-fg-secondary">
-            Transcript and strategy sections below feed your AI profile — what Silas uses to
+            Transcript and strategy sections below feed your AI profile — what the system uses to
             understand this creator for reel analysis (and future generators).
           </p>
         </div>

@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
+  Grid3x3,
   Download,
   Eye,
   Film,
@@ -22,6 +24,7 @@ import {
   clientImagesList,
   contentApiFetch,
   creationListSessions,
+  fetchClientGenerationLibraries,
   type BrollClipRow,
   type ClientImageRow,
   type GenerationSession,
@@ -50,7 +53,9 @@ function sessionTitle(s: GenerationSession): string {
   return s.id.slice(0, 8);
 }
 
-type Tab = "renders" | "covers" | "broll" | "images";
+type Tab = "renders" | "covers" | "broll" | "images" | "templates";
+
+const VALID_TAB = new Set<string>(["renders", "covers", "broll", "images", "templates"]);
 
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 
@@ -75,14 +80,26 @@ function EmptyState({ icon: Icon, label }: { icon: React.ElementType; label: str
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function MediaPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="flex min-h-[40vh] items-center justify-center">
+          <Loader2 className="h-6 w-6 animate-spin text-app-fg-subtle" />
+        </main>
+      }
+    >
+      <MediaPageInner />
+    </Suspense>
+  );
+}
+
+function MediaPageInner() {
   const { show } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [bootstrapDone, setBootstrapDone] = useState(false);
   const [clientSlug, setClientSlug] = useState("");
   const [orgSlug, setOrgSlug] = useState("");
-  const [tab, setTab] = useState<Tab>("renders");
-
   const [sessions, setSessions] = useState<GenerationSession[]>([]);
   const [clips, setClips] = useState<BrollClipRow[]>([]);
   const [images, setImages] = useState<ClientImageRow[]>([]);
@@ -95,6 +112,20 @@ export default function MediaPage() {
    *  hashtags in one place — replaces the old plain-MP4 new-tab link, which gave no
    *  context (no caption, no cover, no actions). */
   const [previewSession, setPreviewSession] = useState<GenerationSession | null>(null);
+  const [recipeCount, setRecipeCount] = useState(0);
+
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
+  const router = useRouter();
+  const tabParam = searchParams.get("tab");
+  const tab: Tab = tabParam && VALID_TAB.has(tabParam) ? (tabParam as Tab) : "renders";
+
+  const selectTab = useCallback(
+    (t: Tab) => {
+      router.replace(`${pathname}?tab=${encodeURIComponent(t)}`, { scroll: false });
+    },
+    [pathname, router],
+  );
 
   // ── Bootstrap ────────────────────────────────────────────────────────────
 
@@ -108,15 +139,19 @@ export default function MediaPage() {
       setClientSlug(cs);
       setOrgSlug(os);
       if (cs && os) {
-        const [sRes, bRes, iRes] = await Promise.all([
+        const [sRes, bRes, iRes, libRes] = await Promise.all([
           creationListSessions(cs, os, 200),
           brollList(cs, os),
           clientImagesList(cs, os),
+          fetchClientGenerationLibraries(cs, os),
         ]);
         if (cancelled) return;
         if (sRes.ok) setSessions(sRes.data);
         if (bRes.ok) setClips(bRes.data);
         if (iRes.ok) setImages(iRes.data);
+        if (libRes.ok) {
+          setRecipeCount(libRes.data.carouselTemplates.length + libRes.data.coverTemplates.length);
+        }
       }
       setBootstrapDone(true);
     })();
@@ -247,6 +282,17 @@ export default function MediaPage() {
     }
   }, [clientSlug, orgSlug, show]);
 
+  const refreshRecipeCount = useCallback(() => {
+    const cs = clientSlug.trim();
+    const os = orgSlug.trim();
+    if (!cs || !os) return;
+    void fetchClientGenerationLibraries(cs, os).then((r) => {
+      if (r.ok) {
+        setRecipeCount(r.data.carouselTemplates.length + r.data.coverTemplates.length);
+      }
+    });
+  }, [clientSlug, orgSlug]);
+
   // ── Loading guard ────────────────────────────────────────────────────────
 
   if (!bootstrapDone) {
@@ -264,6 +310,7 @@ export default function MediaPage() {
     { id: "covers", label: "Covers", count: covers.length },
     { id: "broll", label: "B-roll", count: clips.length },
     { id: "images", label: "Images", count: images.length },
+    { id: "templates", label: "Styles", count: recipeCount },
   ];
 
   return (
@@ -272,7 +319,11 @@ export default function MediaPage() {
       <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-app-fg">Media</h1>
-          <p className="mt-0.5 text-sm text-app-fg-muted">All generated renders, covers, and B-roll clips.</p>
+          <p className="mt-0.5 max-w-xl text-sm text-app-fg-muted">
+            {tab === "templates"
+              ? "Carousel and cover styles are managed from Settings and use images from this Media library."
+              : "Outputs from Create plus uploaded images and clips."}
+          </p>
         </div>
         {tab === "broll" && (
           <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-amber-500/15 px-4 py-2 text-xs font-bold text-app-on-amber-title hover:bg-amber-500/25 disabled:opacity-50">
@@ -306,12 +357,12 @@ export default function MediaPage() {
       </div>
 
       {/* Tabs */}
-      <div className="mb-6 flex gap-1 rounded-xl border border-app-divider bg-app-chip-bg/40 p-1">
+      <div className="mb-6 flex flex-wrap gap-1 rounded-xl border border-app-divider bg-app-chip-bg/40 p-1">
         {tabs.map((t) => (
           <button
             key={t.id}
             type="button"
-            onClick={() => setTab(t.id)}
+            onClick={() => selectTab(t.id)}
             className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold transition-colors ${
               tab === t.id
                 ? "bg-white/10 text-app-fg shadow-sm dark:bg-white/[0.08]"
@@ -583,6 +634,42 @@ export default function MediaPage() {
               })}
             </div>
           )
+      )}
+
+      {tab === "templates" && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-start gap-3 rounded-2xl border border-app-divider/80 bg-app-chip-bg/30 px-4 py-3 dark:border-white/10">
+            <Grid3x3 className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" aria-hidden />
+            <div className="min-w-0 text-sm text-app-fg-muted">
+              <p className="font-semibold text-app-fg">Carousel and cover styles</p>
+              <p className="mt-1 leading-relaxed">
+                Upload images here, then choose which ones should become reusable carousel or cover examples in Settings.
+              </p>
+            </div>
+          </div>
+          <div className="rounded-2xl border border-dashed border-app-divider/70 px-5 py-10 text-center">
+            <p className="text-sm font-semibold text-app-fg">Styles live in Settings</p>
+            <p className="mx-auto mt-2 max-w-lg text-sm leading-relaxed text-app-fg-muted">
+              Keep the image files here. Set up reusable links, carousel structures, and cover examples
+              from Content defaults in Settings.
+            </p>
+            <div className="mt-5 flex flex-wrap justify-center gap-3">
+              <Link
+                href="/settings#content-defaults"
+                className="inline-flex items-center rounded-lg bg-amber-500 px-4 py-2 text-sm font-bold text-zinc-950"
+              >
+                Open content defaults
+              </Link>
+              <button
+                type="button"
+                onClick={() => refreshRecipeCount()}
+                className="inline-flex items-center rounded-lg border border-app-divider px-4 py-2 text-sm font-semibold text-app-fg hover:bg-app-chip-bg"
+              >
+                Refresh count
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <PostPreviewModal

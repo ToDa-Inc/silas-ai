@@ -12,10 +12,9 @@ import { formatCommentViewPct } from "@/lib/reel-comment-view";
 import {
   clientApiContext,
   fetchAdaptPreviewReels,
-  fetchClientCarouselTemplates,
-  fetchClientCoverTemplates,
-  fetchClientCtaLibrary,
+  fetchClientGenerationLibraries,
   fetchFormatDigests,
+  fetchReelSourcePreview,
   generateAutoVideoIdea,
   generationChooseAngle,
   generationDeleteSession,
@@ -26,6 +25,7 @@ import {
   type FormatDigestSummary,
   type GenerationSession,
 } from "@/lib/api-client";
+import { scrapedReelRowMatchesComposerUrl } from "@/lib/instagram-post-url";
 
 type Step = "source" | "angles" | "create";
 
@@ -122,14 +122,14 @@ function CtaPicker({
 function CtaPickerEmpty() {
   return (
     <div className="rounded-xl border border-dashed border-app-divider bg-app-chip-bg/20 p-3 text-[11px] leading-relaxed text-app-fg-muted">
-      No CTAs configured yet.{" "}
+      No links or offers configured yet.{" "}
       <Link
-        href="/context"
+        href="/settings#content-defaults"
         className="font-semibold text-amber-600 hover:underline dark:text-amber-400"
       >
-        Add one in Context
+        Add one in Settings
       </Link>{" "}
-      so generated reels can drive traffic. We&apos;ll fall back to a generic CTA otherwise.
+      so future posts know where to send viewers. We&apos;ll fall back to a generic ending otherwise.
     </div>
   );
 }
@@ -147,16 +147,16 @@ function CarouselTemplatePicker({
     <div>
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
         <p className="text-[10px] font-bold uppercase tracking-wider text-app-fg-subtle">
-          Carousel template <span className="font-normal text-app-fg-muted">(required)</span>
+          Carousel style <span className="font-normal text-app-fg-muted">(required)</span>
         </p>
         <Link
-          href="/context"
+          href="/settings#content-defaults"
           className="text-[11px] font-semibold text-amber-600 hover:underline dark:text-amber-400"
         >
-          Edit templates →
+          Edit styles →
         </Link>
       </div>
-      <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Carousel template">
+      <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Carousel style">
         {templates.map((template) => {
           const active = selectedId === template.id;
           return (
@@ -182,7 +182,7 @@ function CarouselTemplatePicker({
         })}
       </div>
       <p className="mt-2 text-[11px] leading-relaxed text-app-fg-muted">
-        The AI will adapt your new idea into this reference sequence and generate new slides.
+        This slide structure will be used as a starting point, then new slides are written and rendered for this idea.
       </p>
     </div>
   );
@@ -191,14 +191,14 @@ function CarouselTemplatePicker({
 function CarouselTemplatePickerEmpty() {
   return (
     <div className="rounded-xl border border-dashed border-app-divider bg-app-chip-bg/20 p-3 text-[11px] leading-relaxed text-app-fg-muted">
-      No carousel templates configured yet.{" "}
+      No carousel styles configured yet.{" "}
       <Link
-        href="/context"
+        href="/settings#content-defaults"
         className="font-semibold text-amber-600 hover:underline dark:text-amber-400"
       >
-        Add one in Context
+        Add one in Settings
       </Link>{" "}
-      to guide carousel structure from Media references.
+      to reuse slide structures from example images.
     </div>
   );
 }
@@ -216,16 +216,16 @@ function CoverTemplatePicker({
     <div>
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
         <p className="text-[10px] font-bold uppercase tracking-wider text-app-fg-subtle">
-          Cover template <span className="font-normal text-app-fg-muted">(required)</span>
+          Cover style <span className="font-normal text-app-fg-muted">(required)</span>
         </p>
         <Link
-          href="/context"
+          href="/settings#content-defaults"
           className="text-[11px] font-semibold text-amber-600 hover:underline dark:text-amber-400"
         >
-          Edit templates →
+          Edit styles →
         </Link>
       </div>
-      <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Cover template">
+      <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Cover style">
         {templates.map((template) => {
           const active = selectedId === template.id;
           return (
@@ -251,7 +251,7 @@ function CoverTemplatePicker({
         })}
       </div>
       <p className="mt-2 text-[11px] leading-relaxed text-app-fg-muted">
-        The cover workspace will preload this Media image as the thumbnail source.
+        The cover workspace will start from this example image.
       </p>
     </div>
   );
@@ -260,14 +260,14 @@ function CoverTemplatePicker({
 function CoverTemplatePickerEmpty() {
   return (
     <div className="rounded-xl border border-dashed border-app-divider bg-app-chip-bg/20 p-3 text-[11px] leading-relaxed text-app-fg-muted">
-      No cover/thumbnail templates configured yet.{" "}
+      No cover styles configured yet.{" "}
       <Link
-        href="/context"
+        href="/settings#content-defaults"
         className="font-semibold text-amber-600 hover:underline dark:text-amber-400"
       >
-        Add one in Context
+        Add one in Settings
       </Link>{" "}
-      to preload cover creation from Media references.
+      to reuse cover examples from Media.
     </div>
   );
 }
@@ -604,16 +604,21 @@ function UrlAdaptReferenceCard({
         Reference reel (URL adapt)
       </p>
       {u ? (
-        <p className="mt-2 text-xs">
-          <a
-            href={u}
-            target="_blank"
-            rel="noreferrer"
-            className="font-semibold text-amber-600 underline-offset-2 hover:underline dark:text-amber-400"
-          >
-            Open original on Instagram ↗
-          </a>
-        </p>
+        <>
+          <p className="mt-2 truncate font-mono text-[11px] text-app-fg-secondary" title={u}>
+            {u}
+          </p>
+          <p className="mt-1.5 text-xs">
+            <a
+              href={u}
+              target="_blank"
+              rel="noreferrer"
+              className="font-semibold text-amber-600 underline-offset-2 hover:underline dark:text-amber-400"
+            >
+              Open original on Instagram ↗
+            </a>
+          </p>
+        </>
       ) : null}
       {summary ? (
         <p className="mt-2 text-xs leading-relaxed text-app-fg-secondary">
@@ -905,9 +910,15 @@ export default function GeneratePage() {
   const [selectedCarouselTemplateId, setSelectedCarouselTemplateId] = useState<string | null>(null);
   const [coverTemplates, setCoverTemplates] = useState<ClientCoverTemplate[]>([]);
   const [selectedCoverTemplateId, setSelectedCoverTemplateId] = useState<string | null>(null);
+  /** Debounced niche inference when Format = Auto + idea text (drives template rows without triple-fetch). */
+  const [autoFormatHint, setAutoFormatHint] = useState<string | null>(null);
+  const [autoFormatHintLoading, setAutoFormatHintLoading] = useState(false);
   const [adaptPreviewRows, setAdaptPreviewRows] = useState<ScrapedReelRow[]>([]);
   const [adaptPreviewLoading, setAdaptPreviewLoading] = useState(false);
   const [adaptPreviewError, setAdaptPreviewError] = useState<string | null>(null);
+  /** When pasted URL is not in quick picks, lazy-load scraped_reels row for cover thumbnail. */
+  const [recreateSourcePreviewApi, setRecreateSourcePreviewApi] = useState<ScrapedReelRow | null>(null);
+  const [recreateSourcePreviewLoading, setRecreateSourcePreviewLoading] = useState(false);
   const [session, setSession] = useState<GenerationSession | null>(null);
   const [sessions, setSessions] = useState<GenerationSession[]>([]);
   const [loading, setLoading] = useState(false);
@@ -947,12 +958,10 @@ export default function GeneratePage() {
     void (async () => {
       const ctx = await refreshContext();
       if (!ctx.clientSlug || !ctx.orgSlug) return;
-      const [listRes, digRes, ctaRes, templateRes, coverTemplateRes] = await Promise.all([
+      const [listRes, digRes, libsRes] = await Promise.all([
         generationListSessions(ctx.clientSlug, ctx.orgSlug, 15),
         fetchFormatDigests(ctx.clientSlug, ctx.orgSlug, false),
-        fetchClientCtaLibrary(ctx.clientSlug, ctx.orgSlug),
-        fetchClientCarouselTemplates(ctx.clientSlug, ctx.orgSlug),
-        fetchClientCoverTemplates(ctx.clientSlug, ctx.orgSlug),
+        fetchClientGenerationLibraries(ctx.clientSlug, ctx.orgSlug),
       ]);
       if (listRes.ok) setSessions(listRes.data);
       if (digRes.ok) {
@@ -960,27 +969,85 @@ export default function GeneratePage() {
       } else {
         show(digRes.error, "error");
       }
-      if (ctaRes.ok) {
-        setCtaLibrary(ctaRes.data);
-        // Auto-select the only CTA if the user has exactly one configured.
-        if (ctaRes.data.length === 1) {
-          setSelectedCtaId(ctaRes.data[0].id);
+      if (libsRes.ok) {
+        const { ctaLibrary: ctas, carouselTemplates: carousels, coverTemplates: covers } =
+          libsRes.data;
+        setCtaLibrary(ctas);
+        if (ctas.length === 1) {
+          setSelectedCtaId(ctas[0].id);
         }
-      }
-      if (templateRes.ok) {
-        setCarouselTemplates(templateRes.data);
-        if (templateRes.data.length === 1) {
-          setSelectedCarouselTemplateId(templateRes.data[0].id);
+        setCarouselTemplates(carousels);
+        if (carousels.length === 1) {
+          setSelectedCarouselTemplateId(carousels[0].id);
         }
-      }
-      if (coverTemplateRes.ok) {
-        setCoverTemplates(coverTemplateRes.data);
-        if (coverTemplateRes.data.length === 1) {
-          setSelectedCoverTemplateId(coverTemplateRes.data[0].id);
+        setCoverTemplates(covers);
+        if (covers.length === 1) {
+          setSelectedCoverTemplateId(covers[0].id);
         }
+      } else {
+        show(libsRes.error, "error");
       }
     })();
   }, [refreshContext, show]);
+
+  /** When Format = Auto and the user typed enough idea text, infer format once for template UI (matches submit-time recommend). */
+  useEffect(() => {
+    if (mode !== "idea" || formatPreset !== "auto") {
+      setAutoFormatHint(null);
+      setAutoFormatHintLoading(false);
+      return;
+    }
+    const trimmed = composerInput.trim();
+    if (trimmed.length < 8) {
+      setAutoFormatHint(null);
+      setAutoFormatHintLoading(false);
+      return;
+    }
+    if (!clientSlug.trim() || !orgSlug.trim()) {
+      return;
+    }
+    let cancelled = false;
+    setAutoFormatHintLoading(true);
+    const t = window.setTimeout(() => {
+      void (async () => {
+        const res = await recommendFormatForIdea(clientSlug, orgSlug, trimmed);
+        if (cancelled) return;
+        setAutoFormatHintLoading(false);
+        if (!res.ok) {
+          setAutoFormatHint(null);
+          return;
+        }
+        const first = res.data[0]?.format_key;
+        const canon = first ? canonicalFormatKey(String(first)) : "";
+        setAutoFormatHint(ALLOWED_VIDEO_FORMATS.has(canon) ? canon : "text_overlay");
+      })();
+    }, 520);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [mode, formatPreset, composerInput, clientSlug, orgSlug]);
+
+  const ideaShowsCarouselTemplateRow = useMemo(() => {
+    if (mode !== "idea") return false;
+    if (formatPreset === "carousel") return true;
+    return (
+      formatPreset === "auto" &&
+      composerInput.trim().length >= 8 &&
+      autoFormatHint === "carousel"
+    );
+  }, [mode, formatPreset, composerInput, autoFormatHint]);
+
+  const ideaShowsCoverTemplateRow = useMemo(() => {
+    if (mode !== "idea") return false;
+    if (formatPreset === "talking_head" || formatPreset === "text_overlay") return true;
+    if (formatPreset !== "auto") return false;
+    return (
+      composerInput.trim().length >= 8 &&
+      autoFormatHint !== null &&
+      autoFormatHint !== "carousel"
+    );
+  }, [mode, formatPreset, composerInput, autoFormatHint]);
 
   /** Top competitor reels by comments÷views — quick-pick URLs into the composer. */
   useEffect(() => {
@@ -1001,6 +1068,59 @@ export default function GeneratePage() {
       cancelled = true;
     };
   }, [clientSlug, orgSlug, step]);
+
+  const recreatePreviewFromQuickPicks = useMemo(() => {
+    if (mode !== "recreate") return null;
+    const raw = composerInput.trim();
+    if (!raw || !isLikelyInstagramReelUrl(raw)) return null;
+    return adaptPreviewRows.find((r) => scrapedReelRowMatchesComposerUrl(r, raw)) ?? null;
+  }, [mode, composerInput, adaptPreviewRows]);
+
+  useEffect(() => {
+    if (mode !== "recreate" || step !== "source") {
+      setRecreateSourcePreviewApi(null);
+      setRecreateSourcePreviewLoading(false);
+      return;
+    }
+    const raw = composerInput.trim();
+    if (!raw || !isLikelyInstagramReelUrl(raw)) {
+      setRecreateSourcePreviewApi(null);
+      setRecreateSourcePreviewLoading(false);
+      return;
+    }
+    if (recreatePreviewFromQuickPicks) {
+      setRecreateSourcePreviewApi(null);
+      setRecreateSourcePreviewLoading(false);
+      return;
+    }
+    if (!clientSlug.trim() || !orgSlug.trim()) {
+      setRecreateSourcePreviewApi(null);
+      setRecreateSourcePreviewLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setRecreateSourcePreviewApi(null);
+    const t = window.setTimeout(() => {
+      if (cancelled) return;
+      setRecreateSourcePreviewLoading(true);
+      void fetchReelSourcePreview(clientSlug, orgSlug, raw).then((res) => {
+        if (cancelled) return;
+        setRecreateSourcePreviewLoading(false);
+        if (res.ok) setRecreateSourcePreviewApi(res.data);
+        else setRecreateSourcePreviewApi(null);
+      });
+    }, 400);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+      setRecreateSourcePreviewLoading(false);
+    };
+  }, [mode, step, composerInput, clientSlug, orgSlug, recreatePreviewFromQuickPicks]);
+
+  const recreateSourcePreviewRow = useMemo(
+    () => recreatePreviewFromQuickPicks ?? recreateSourcePreviewApi,
+    [recreatePreviewFromQuickPicks, recreateSourcePreviewApi],
+  );
 
   /** Open session from Intelligence "Recreate" flow, /media cards, or the Recent
    *  sessions panel (`/generate?session=…`). While this effect is in flight we
@@ -1085,9 +1205,7 @@ export default function GeneratePage() {
       return;
     }
     const selectedCta =
-      selectedCtaId !== null
-        ? ctaLibrary.find((c) => c.id === selectedCtaId) ?? null
-        : null;
+      selectedCtaId !== null ? (ctaLibrary.find((c) => c.id === selectedCtaId) ?? null) : null;
     const raw = composerInput.trim();
     const extra = extraInstruction.trim() || undefined;
     setLoading(true);
@@ -1107,6 +1225,23 @@ export default function GeneratePage() {
           show("Pick a target format to recreate the reel as.", "error");
           return;
         }
+        if (
+          recreateFormat === "carousel" &&
+          carouselTemplates.length > 0 &&
+          !selectedCarouselTemplateId
+        ) {
+          show("Pick a carousel template below first.", "error");
+          return;
+        }
+        if (
+          recreateFormat !== "carousel" &&
+          recreateFormat !== "auto" &&
+          coverTemplates.length > 0 &&
+          !selectedCoverTemplateId
+        ) {
+          show("Pick a cover template below first.", "error");
+          return;
+        }
         body = {
           source_type: "url_adapt",
           url: raw,
@@ -1114,7 +1249,6 @@ export default function GeneratePage() {
           format_key: recreateFormat === "auto" ? undefined : recreateFormat,
         };
       } else if (raw.length > 0) {
-        // Idea mode + text → idea_match (auto resolves format from niche data).
         let fk: string;
         if (formatPreset === "auto") {
           const recRes = await recommendFormatForIdea(ctx.clientSlug, ctx.orgSlug, raw);
@@ -1128,6 +1262,14 @@ export default function GeneratePage() {
         } else {
           fk = formatPreset;
         }
+        if (fk === "carousel" && carouselTemplates.length > 0 && !selectedCarouselTemplateId) {
+          show("Pick a carousel reference template below first.", "error");
+          return;
+        }
+        if (fk !== "carousel" && coverTemplates.length > 0 && !selectedCoverTemplateId) {
+          show("Pick a cover template below first.", "error");
+          return;
+        }
         body = {
           source_type: "idea_match",
           format_key: fk,
@@ -1135,14 +1277,28 @@ export default function GeneratePage() {
           extra_instruction: extra,
         };
       } else if (formatPreset !== "auto") {
-        // Idea mode + empty box + explicit format → format_pick (style only).
+        if (
+          formatPreset === "carousel" &&
+          carouselTemplates.length > 0 &&
+          !selectedCarouselTemplateId
+        ) {
+          show("Pick a carousel reference template below first.", "error");
+          return;
+        }
+        if (
+          formatPreset !== "carousel" &&
+          coverTemplates.length > 0 &&
+          !selectedCoverTemplateId
+        ) {
+          show("Pick a cover template below first.", "error");
+          return;
+        }
         body = {
           source_type: "format_pick",
           format_key: formatPreset,
           extra_instruction: extra,
         };
       } else {
-        // Idea mode + empty + auto → AI proposes both an idea and the format.
         const ideaRes = await generateAutoVideoIdea(ctx.clientSlug, ctx.orgSlug);
         if (!ideaRes.ok) {
           show(ideaRes.error, "error");
@@ -1150,6 +1306,25 @@ export default function GeneratePage() {
         }
         let fk = canonicalFormatKey(ideaRes.data.suggested_format_key);
         if (!ALLOWED_VIDEO_FORMATS.has(fk)) fk = "text_overlay";
+
+        if (fk === "carousel" && carouselTemplates.length > 0 && !selectedCarouselTemplateId) {
+          setComposerInput(ideaRes.data.idea.trim());
+          setFormatPreset("carousel");
+          show(
+            "Auto chose Carousel — pick a reference template below, then Generate angles again.",
+            "default",
+          );
+          return;
+        }
+        if (fk !== "carousel" && coverTemplates.length > 0 && !selectedCoverTemplateId) {
+          setComposerInput(ideaRes.data.idea.trim());
+          setFormatPreset(fk === "talking_head" ? "talking_head" : "text_overlay");
+          show(
+            "Auto chose this format — pick a cover template below, then Generate angles again.",
+            "default",
+          );
+          return;
+        }
         body = {
           source_type: "idea_match",
           format_key: fk,
@@ -1161,30 +1336,28 @@ export default function GeneratePage() {
       if (selectedCta) {
         body = { ...body, selected_cta: selectedCta };
       }
-      const startsCarousel = body.format_key === "carousel";
-      const needsCoverTemplate = !startsCarousel && coverTemplates.length > 0;
-      if (startsCarousel && carouselTemplates.length > 0 && !selectedCarouselTemplateId) {
-        show("Pick a carousel template below the format selector first.", "error");
-        return;
-      }
-      if (needsCoverTemplate && !selectedCoverTemplateId) {
-        show("Pick a cover template below the format selector first.", "error");
-        return;
-      }
+
+      const fkForSnap =
+        "format_key" in body && typeof body.format_key === "string" ? body.format_key : "";
+      const startsCarousel = fkForSnap === "carousel";
+      const needsCoverSnapshot = Boolean(fkForSnap && fkForSnap !== "carousel");
+
       if (startsCarousel && selectedCarouselTemplateId) {
         const selectedTemplate =
-          carouselTemplates.find((template) => template.id === selectedCarouselTemplateId) ?? null;
+          carouselTemplates.find((template) => template.id === selectedCarouselTemplateId) ??
+          null;
         if (selectedTemplate) {
           body = { ...body, selected_carousel_template: selectedTemplate };
         }
       }
-      if (needsCoverTemplate && selectedCoverTemplateId) {
+      if (needsCoverSnapshot && selectedCoverTemplateId) {
         const selectedTemplate =
           coverTemplates.find((template) => template.id === selectedCoverTemplateId) ?? null;
         if (selectedTemplate) {
           body = { ...body, selected_cover_template: selectedTemplate };
         }
       }
+
       const res = await generationStart(ctx.clientSlug, ctx.orgSlug, body);
       if (!res.ok) {
         show(res.error, "error");
@@ -1238,18 +1411,6 @@ export default function GeneratePage() {
   // buttons that live inside VideoCreateWorkspace. Approve/Reject is gone too —
   // rendering a video implicitly approves it; rejection became "Delete session".
   // Cover generation also lives entirely inside VideoCreateWorkspace now.
-
-  const copyText = useCallback(
-    async (label: string, text: string) => {
-      try {
-        await navigator.clipboard.writeText(text);
-        show(`Copied ${label}.`, "success");
-      } catch {
-        show("Copy failed.", "error");
-      }
-    },
-    [show],
-  );
 
   const loadSessionById = useCallback(
     async (id: string) => {
@@ -1414,9 +1575,18 @@ export default function GeneratePage() {
                       Auto picks the best fit from your niche data when you have text — or a proven style (and
                       a fresh idea) when the box is empty.
                     </p>
+                    {formatPreset === "auto" && composerInput.trim().length >= 8 ? (
+                      <p className="mt-1 text-[11px] text-app-fg-subtle">
+                        {autoFormatHintLoading
+                          ? "Inferring format from your niche…"
+                          : autoFormatHint
+                            ? `Auto preview → ${autoFormatHint.replace(/_/g, " ")}`
+                            : null}
+                      </p>
+                    ) : null}
                   </div>
 
-                  {formatPreset === "carousel" ? (
+                  {ideaShowsCarouselTemplateRow ? (
                     carouselTemplates.length > 0 ? (
                       <CarouselTemplatePicker
                         templates={carouselTemplates}
@@ -1426,15 +1596,17 @@ export default function GeneratePage() {
                     ) : (
                       <CarouselTemplatePickerEmpty />
                     )
-                  ) : coverTemplates.length > 0 ? (
-                    <CoverTemplatePicker
-                      templates={coverTemplates}
-                      selectedId={selectedCoverTemplateId}
-                      onSelect={setSelectedCoverTemplateId}
-                    />
-                  ) : (
-                    <CoverTemplatePickerEmpty />
-                  )}
+                  ) : ideaShowsCoverTemplateRow ? (
+                    coverTemplates.length > 0 ? (
+                      <CoverTemplatePicker
+                        templates={coverTemplates}
+                        selectedId={selectedCoverTemplateId}
+                        onSelect={setSelectedCoverTemplateId}
+                      />
+                    ) : (
+                      <CoverTemplatePickerEmpty />
+                    )
+                  ) : null}
 
                   {ctaLibrary.length > 0 ? (
                     <CtaPicker
@@ -1471,6 +1643,60 @@ export default function GeneratePage() {
                         idea, your client&apos;s voice) plus four variants in the format you pick below.
                       </p>
                     )}
+                    {composerInput.trim() && isLikelyInstagramReelUrl(composerInput.trim()) ? (
+                      <>
+                        {recreateSourcePreviewRow ? (
+                          <div className="mt-3 flex gap-3 rounded-xl border border-app-divider bg-app-chip-bg/20 p-3">
+                            <ReelThumbnail
+                              src={recreateSourcePreviewRow.thumbnail_url}
+                              href={composerInput.trim()}
+                              size="lg"
+                              alt={
+                                recreateSourcePreviewRow.account_username
+                                  ? `@${recreateSourcePreviewRow.account_username} reel cover`
+                                  : "Reel cover"
+                              }
+                            />
+                            <div className="min-w-0 flex-1">
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-app-fg-subtle">
+                                Source preview
+                              </p>
+                              {recreateSourcePreviewRow.account_username ? (
+                                <p className="mt-0.5 text-xs font-semibold text-app-fg">
+                                  @{recreateSourcePreviewRow.account_username}
+                                </p>
+                              ) : null}
+                              <p className="mt-1 line-clamp-3 text-[11px] leading-snug text-app-fg-secondary">
+                                {(recreateSourcePreviewRow.hook_text || recreateSourcePreviewRow.caption || "")
+                                  .trim()
+                                  .slice(0, 180) ||
+                                  "Cover from your workspace — tap the image to open on Instagram."}
+                              </p>
+                              <p className="mt-1.5 text-[10px] leading-relaxed text-app-fg-subtle">
+                                Inline Instagram playback isn&apos;t available here; the cover + link confirm
+                                you picked the right reel.
+                              </p>
+                            </div>
+                          </div>
+                        ) : recreateSourcePreviewLoading ? (
+                          <div className="mt-3 flex items-center gap-2 text-[11px] text-app-fg-muted">
+                            <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
+                            Looking up cover in your workspace…
+                          </div>
+                        ) : (
+                          <p className="mt-3 text-[11px] leading-relaxed text-app-fg-muted">
+                            No saved cover for this URL yet. Analyze the reel under{" "}
+                            <Link
+                              href="/intelligence/reels"
+                              className="font-semibold text-amber-600 hover:underline dark:text-amber-400"
+                            >
+                              Intelligence → Reels
+                            </Link>{" "}
+                            (or start below — we fetch video when generating).
+                          </p>
+                        )}
+                      </>
+                    ) : null}
                   </div>
 
                   {/* ── Recreate-as format picker ──

@@ -12,7 +12,7 @@ import re
 import textwrap
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -100,6 +100,270 @@ def _parse_color(value: Any, fallback: Tuple[int, int, int, int]) -> Tuple[int, 
     return fallback
 
 
+def _text_line_width(draw: "ImageDraw.ImageDraw", text: str, font: Any) -> int:
+    bbox = draw.textbbox((0, 0), text, font=font)
+    return max(0, bbox[2] - bbox[0])
+
+
+def _wrap_lines_pixel_width(
+    text: str,
+    font: Any,
+    draw: "ImageDraw.ImageDraw",
+    max_width_px: int,
+) -> List[str]:
+    """Greedy wrap using measured glyph widths; only splits long tokens when they exceed width."""
+    cleaned = " ".join(text.replace("\n", " ").split())
+    if not cleaned:
+        return []
+    words = cleaned.split()
+    lines: List[str] = []
+    cur = ""
+    for word in words:
+        candidate = f"{cur} {word}".strip() if cur else word
+        if _text_line_width(draw, candidate, font) <= max_width_px:
+            cur = candidate
+            continue
+        if cur:
+            lines.append(cur)
+            cur = ""
+        if _text_line_width(draw, word, font) <= max_width_px:
+            cur = word
+            continue
+        chunk = ""
+        for ch in word:
+            cand = chunk + ch
+            if _text_line_width(draw, cand, font) <= max_width_px:
+                chunk = cand
+            else:
+                if chunk:
+                    lines.append(chunk)
+                chunk = ch
+        if chunk:
+            cur = chunk
+    if cur:
+        lines.append(cur)
+    return lines if lines else [cleaned]
+
+
+def prepare_carousel_base_png_bytes(
+    image_bytes: bytes,
+    *,
+    target_w: int = 1080,
+    target_h: int = 1920,
+    wash: bool = False,
+    crop_y: float = 0.5,
+    zoom: float = 1.0,
+) -> bytes:
+    """Resize (and optionally wash) to 9:16 without drawing text — composition base layer."""
+    if not _PILLOW_AVAILABLE:
+        raise RuntimeError("Pillow is not installed. Run: pip install Pillow")
+    img = Image.open(io.BytesIO(image_bytes))
+    if wash:
+        out_img = _wash_image(img, target_w, target_h, crop_y=crop_y, zoom=zoom)
+    else:
+        out_img = _resize_cover(img, target_w, target_h, crop_y=crop_y, zoom=zoom)
+    buf = io.BytesIO()
+    out_img.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
+def _overlay_carousel_text_box(
+    img: "Image.Image",
+    text: str,
+    text_box: Dict[str, Any],
+    *,
+    carousel_slide_role: str = "body",
+) -> "Image.Image":
+    """Editor-style text block: center (x,y), width fraction, optional card."""
+    W, H = img.size
+    margin = max(8, int(W * 0.02))
+    x_c = float(text_box.get("x") or 0.5) * W
+    y_c = float(text_box.get("y") or 0.82) * H
+    width_frac = float(text_box.get("width") or 0.84)
+    scale_m = float(text_box.get("scale") or 1.0)
+    align = str(text_box.get("align") or "center").lower()
+    if align not in ("left", "center", "right"):
+        align = "center"
+    use_card = bool(text_box.get("card"))
+
+    text_area_w = max(80, min(W - 2 * margin, int(W * max(0.25, min(1.0, width_frac)))))
+    left = int(x_c - text_area_w / 2)
+    left = max(margin, min(W - margin - text_area_w, left))
+
+    role = str(carousel_slide_role or "body").strip().lower()
+    exact_base = 0.062 if role == "cover" else 0.066
+    base_font_px = max(42, int(W * exact_base * max(0.4, min(2.0, scale_m))))
+
+    draw0 = ImageDraw.Draw(img)
+    wrapped_lines: Optional[List[str]] = None
+    font: Any = None
+    font_size = base_font_px
+    max_body_frac = 0.48
+    max_lines = 9
+    for step in range(14):
+        font_size = max(22, int(base_font_px * (0.88**step)))
+        try:
+            font = _load_font(font_size)
+        except Exception:
+            font = ImageFont.load_default()
+        wrapped_lines = _wrap_lines_pixel_width(text, font, draw0, text_area_w)
+        line_spacing_try = int(font_size * 1.22)
+        total_h_try = line_spacing_try * len(wrapped_lines)
+        if total_h_try <= H * max_body_frac and len(wrapped_lines) <= max_lines:
+            break
+    if not wrapped_lines:
+        wrapped_lines = [text]
+    if font is None:
+        try:
+            font = _load_font(base_font_px)
+        except Exception:
+            font = ImageFont.load_default()
+    line_spacing = int(font_size * 1.26)
+    total_h = line_spacing * len(wrapped_lines)
+
+    y_top = int(y_c - total_h / 2)
+    y_top = max(margin, min(H - total_h - margin, y_top))
+
+    if use_card:
+        card_pad = max(10, int(font_size * 0.35))
+        overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        overlay_draw = ImageDraw.Draw(overlay)
+        overlay_draw.rounded_rectangle(
+            (
+                left - card_pad,
+                y_top - card_pad,
+                left + text_area_w + card_pad,
+                y_top + total_h + card_pad,
+            ),
+            radius=max(14, int(font_size * 0.25)),
+            fill=(20, 20, 20, 200),
+        )
+        img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+        fill_rgb = (248, 248, 248)
+        stroke_rgb = (20, 20, 20)
+        stroke_w = max(2, font_size // 20)
+    else:
+        fill_rgb = (20, 20, 20)
+        stroke_rgb = None
+        stroke_w = 0
+
+    draw = ImageDraw.Draw(img)
+    y = y_top
+    for line in wrapped_lines:
+        bbox = draw.textbbox((0, 0), line, font=font)
+        text_w = bbox[2] - bbox[0]
+        if align == "left":
+            x = left
+        elif align == "right":
+            x = left + text_area_w - text_w
+        else:
+            x = left + (text_area_w - text_w) // 2
+        if stroke_w and stroke_rgb is not None:
+            draw.text(
+                (x, y),
+                line,
+                font=font,
+                fill=fill_rgb,
+                stroke_width=stroke_w,
+                stroke_fill=stroke_rgb,
+            )
+        else:
+            draw.text((x, y), line, font=font, fill=fill_rgb)
+        y += line_spacing
+    return img
+
+
+def compose_carousel_final_png(
+    base_image_png_bytes: bytes,
+    text: str,
+    text_box: Dict[str, Any],
+    *,
+    carousel_slide_role: str = "body",
+) -> bytes:
+    """Burn ``text`` onto the base 9:16 PNG using a normalized ``text_box``."""
+    if not _PILLOW_AVAILABLE:
+        raise RuntimeError("Pillow is not installed. Run: pip install Pillow")
+    img = Image.open(io.BytesIO(base_image_png_bytes)).convert("RGB")
+    img = _overlay_carousel_text_box(
+        img,
+        text,
+        text_box,
+        carousel_slide_role=carousel_slide_role,
+    )
+    out = io.BytesIO()
+    img.save(out, format="PNG", optimize=True)
+    return out.getvalue()
+
+
+def generate_freepik_washed_background_png(
+    freepik_key: str,
+    angle_context: str,
+    *,
+    target_w: int = 1080,
+    target_h: int = 1920,
+    wash: bool = False,
+) -> bytes:
+    """Download a Freepik flux background for carousel composition — no text overlay."""
+    if not _PILLOW_AVAILABLE:
+        raise RuntimeError("Pillow is not installed. Run: pip install Pillow")
+    prompt = _build_freepik_bg_prompt("", angle_context)
+    headers = {
+        "x-freepik-api-key": freepik_key,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    with httpx.Client(timeout=60) as client:
+        r = client.post(
+            f"{_FREEPIK_BASE}{_FLUX_TURBO_PATH}",
+            headers=headers,
+            json={
+                "prompt": prompt,
+                "image_size": {"width": 864, "height": 1536},
+                "output_format": "jpeg",
+                "enable_safety_checker": True,
+            },
+        )
+        r.raise_for_status()
+        task_id: str = r.json()["data"]["task_id"]
+
+    deadline = time.monotonic() + _POLL_MAX_WAIT_S
+    image_url = ""
+    with httpx.Client(timeout=30) as client:
+        while time.monotonic() < deadline:
+            time.sleep(_POLL_INTERVAL_S)
+            poll = client.get(
+                f"{_FREEPIK_BASE}{_FLUX_TURBO_PATH}/{task_id}",
+                headers=headers,
+            )
+            poll.raise_for_status()
+            result = poll.json().get("data", {})
+            status = result.get("status", "")
+            if status == "COMPLETED":
+                generated = result.get("generated") or []
+                if not generated:
+                    raise RuntimeError("Freepik task completed but returned no image URLs")
+                image_url = str(generated[0])
+                break
+            if status == "FAILED":
+                raise RuntimeError(f"Freepik generation task failed: {result}")
+    if not image_url:
+        raise RuntimeError("Freepik generation timed out after 120 s")
+
+    with httpx.Client(timeout=60) as client:
+        dl = client.get(image_url)
+        dl.raise_for_status()
+        bg_bytes = dl.content
+
+    bg = Image.open(io.BytesIO(bg_bytes))
+    if wash:
+        bg = _wash_image(bg, target_w, target_h)
+    else:
+        bg = _resize_crop(bg, target_w, target_h)
+    out = io.BytesIO()
+    bg.save(out, format="PNG", optimize=True)
+    return out.getvalue()
+
+
 def _overlay_text(
     img: "Image.Image",
     text: str,
@@ -112,27 +376,80 @@ def _overlay_text(
     text_treatment: Optional[str] = None,
     layout: Any = None,
     appearance: Any = None,
+    carousel_exact_base: bool = False,
+    carousel_slide_role: str = "body",
 ) -> "Image.Image":
     """Draw cover text using the same controls exposed by the video editor."""
     W, H = img.size
     layout_d = _as_dict(layout)
     appearance_d = _as_dict(appearance)
+
+    role = str(carousel_slide_role or "body").strip().lower()
+    if carousel_exact_base:
+        if role == "cover":
+            template_id = "bottom-card"
+            text_position = "bottom"
+        else:
+            template_id = "centered-pop"
+            text_position = "center"
+            text_treatment = None
+        text_theme = "dark"
+
     legacy_size = {"small": 0.82, "medium": 1.0, "large": 1.18}.get(str(text_size).lower(), 1.0)
     scale = float(layout_d.get("scale") or legacy_size)
-    size_scale = 0.082 * max(0.7, min(1.3, scale))
-    font_size = max(42, int(W * size_scale))
+    if carousel_exact_base:
+        exact_base = 0.062 if role == "cover" else 0.066
+        size_scale = exact_base * max(0.78, min(1.15, scale))
+    else:
+        size_scale = 0.082 * max(0.7, min(1.3, scale))
+    base_font_size = max(42, int(W * size_scale))
 
-    try:
-        font = _load_font(font_size)
-    except Exception:
-        font = ImageFont.load_default()
-
-    side_padding = max(0.02, min(0.12, float(layout_d.get("sidePadding") or 0.05)))
+    default_side_padding = 0.08 if carousel_exact_base else 0.05
+    side_padding = max(0.02, min(0.14, float(layout_d.get("sidePadding") or default_side_padding)))
     text_area_w = max(1, int(W * (1.0 - side_padding * 2.0)))
-    wrap_width = max(8, int(12 / max(0.7, min(1.3, scale))))
-    wrapped_lines = textwrap.wrap(text, width=wrap_width) or [text]
 
     draw = ImageDraw.Draw(img)
+
+    max_body_frac = 0.24 if role == "cover" else 0.50
+    max_lines = 5 if role == "cover" else 7
+
+    if carousel_exact_base:
+        wrapped_lines: Optional[List[str]] = None
+        font = None
+        font_size = base_font_size
+        for step in range(12):
+            font_size = max(26, int(base_font_size * (0.88**step)))
+            try:
+                font = _load_font(font_size)
+            except Exception:
+                font = ImageFont.load_default()
+            wrapped_lines = _wrap_lines_pixel_width(text, font, draw, text_area_w)
+            line_spacing = int(font_size * 1.26)
+            total_h_try = line_spacing * len(wrapped_lines)
+            if total_h_try <= H * max_body_frac and len(wrapped_lines) <= max_lines:
+                break
+        if not wrapped_lines:
+            wrapped_lines = [text]
+        if font is None:
+            try:
+                font = _load_font(base_font_size)
+            except Exception:
+                font = ImageFont.load_default()
+    else:
+        avg_char_px = max(base_font_size * 0.48, 8.0)
+        wrap_chars = max(18, min(52, int(text_area_w / avg_char_px)))
+        wrapped_lines = textwrap.wrap(
+            text,
+            width=wrap_chars,
+            break_long_words=True,
+            break_on_hyphens=True,
+        ) or [text]
+        font_size = base_font_size
+        try:
+            font = _load_font(font_size)
+        except Exception:
+            font = ImageFont.load_default()
+
     line_spacing = int(font_size * 1.28)
     total_h = line_spacing * len(wrapped_lines)
 
@@ -145,7 +462,8 @@ def _overlay_text(
     if pos == "top":
         y = int(H * 0.16)
     elif pos == "bottom":
-        y = H - total_h - int(H * 0.16)
+        bottom_margin = 0.10 if carousel_exact_base else 0.16
+        y = H - total_h - int(H * bottom_margin)
     else:
         y = (H - total_h) // 2 - int(H * 0.03)
     y = int(y + vertical_offset * H)
@@ -330,6 +648,8 @@ def compose_thumbnail_from_image(
     text_treatment: Optional[str] = None,
     layout: Any = None,
     appearance: Any = None,
+    carousel_exact_base: bool = False,
+    carousel_slide_role: str = "body",
 ) -> bytes:
     """Compose a 9:16 reel cover from a user-supplied image + text overlay.
 
@@ -360,6 +680,8 @@ def compose_thumbnail_from_image(
         text_treatment=text_treatment,
         layout=layout,
         appearance=appearance,
+        carousel_exact_base=carousel_exact_base,
+        carousel_slide_role=carousel_slide_role,
     )
 
     out = io.BytesIO()
@@ -376,10 +698,15 @@ def generate_slide_image(
     style: str = "",
     visual_prompt: str = "",
     client_image_bytes: bytes | None = None,
+    wash_template_base: bool = True,
+    carousel_slide_role: Optional[str] = None,
+    layout: Any = None,
+    appearance: Any = None,
+    text_box: Any = None,
     target_w: int = 1080,
-    target_h: int = 1350,
+    target_h: int = 1920,
 ) -> bytes:
-    """Render one carousel slide as a 4:5 PNG (1080×1350 by default).
+    """Render one carousel slide as a 9:16 PNG (1080×1920 by default).
 
     Two modes (mutually exclusive):
     - ``client_image_bytes`` provided → uses :func:`compose_thumbnail_from_image` (same editorial
@@ -387,16 +714,41 @@ def generate_slide_image(
     - Otherwise → calls :func:`generate_thumbnail_freepik_pillow` to generate a fresh background
       and overlays ``text``. Requires ``freepik_key``.
 
+    When ``client_image_bytes`` is a saved carousel template reference, pass
+    ``wash_template_base=False`` to preserve layout/colours (exact-base rendering).
+
     ``idx`` / ``total`` are reserved for future per-slide styling (e.g. cover vs body vs CTA);
     today they are forwarded as a hint into ``angle_context``.
     """
+    tb_dict: Dict[str, Any] = _as_dict(text_box) if text_box is not None else {}
+
     if client_image_bytes is not None:
+        rn = (carousel_slide_role or "").strip().lower()
+        if not rn:
+            rn = "cover" if idx == 0 else ("cta" if idx == total - 1 else "body")
+        if tb_dict:
+            base_bytes = prepare_carousel_base_png_bytes(
+                client_image_bytes,
+                wash=wash_template_base,
+                target_w=target_w,
+                target_h=target_h,
+            )
+            return compose_carousel_final_png(
+                base_bytes,
+                text,
+                tb_dict,
+                carousel_slide_role=rn,
+            )
         return compose_thumbnail_from_image(
             client_image_bytes,
             text,
             target_w=target_w,
             target_h=target_h,
-            wash=True,
+            wash=wash_template_base,
+            carousel_exact_base=not wash_template_base,
+            carousel_slide_role=rn,
+            layout=layout,
+            appearance=appearance,
         )
     if not freepik_key:
         raise RuntimeError("generate_slide_image: freepik_key required when no client_image_bytes")
@@ -410,12 +762,27 @@ def generate_slide_image(
         )
         if p
     ]
+    if tb_dict:
+        base_png = generate_freepik_washed_background_png(
+            freepik_key,
+            ", ".join(ctx_parts),
+            target_w=target_w,
+            target_h=target_h,
+        )
+        return compose_carousel_final_png(
+            base_png,
+            text,
+            tb_dict,
+            carousel_slide_role=role,
+        )
     return generate_thumbnail_freepik_pillow(
         freepik_key,
         text,
         angle_context=", ".join(ctx_parts),
         target_w=target_w,
         target_h=target_h,
+        layout=layout,
+        appearance=appearance,
     )
 
 

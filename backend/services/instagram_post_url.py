@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import re
 
-# Matches reel, /p/, and /tv/ paths; short code is the first path segment after the type.
+# Matches reel, reels, /p/, and /tv/ paths; short code is the first path segment after the type.
 _IG_SHORT_CODE_RE = re.compile(
-    r"instagram\.com/(?:reel|p|tv)/([^/?#]+)",
+    r"instagram\.com/(?:reels|reel|p|tv)/([^/?#]+)",
     re.IGNORECASE,
 )
 
@@ -32,3 +32,26 @@ def canonical_instagram_post_url(url: str) -> str:
     if not url:
         return ""
     return str(url).strip().split("?")[0].split("#")[0].rstrip("/")
+
+
+def instagram_post_url_lookup_variants(url: str) -> list[str]:
+    """Canonical ``post_url`` strings that may exist in ``scraped_reels`` for the same IG media.
+
+    Rows may store ``/reel/{code}`` while the user pastes ``/p/{code}`` (or the reverse).
+    """
+    seen: dict[str, None] = {}
+    base = canonical_instagram_post_url(url)
+    if base:
+        seen[base] = None
+    sc = instagram_post_short_code(url)
+    if sc:
+        for path in (
+            f"https://www.instagram.com/reel/{sc}",
+            f"https://www.instagram.com/reels/{sc}",
+            f"https://www.instagram.com/p/{sc}",
+            f"https://www.instagram.com/tv/{sc}",
+        ):
+            c = canonical_instagram_post_url(path)
+            if c:
+                seen[c] = None
+    return list(seen.keys())

@@ -12,6 +12,7 @@ class ClientCreate(BaseModel):
     icp: dict = Field(default_factory=dict)
     products: dict = Field(default_factory=dict)
     client_context: dict = Field(default_factory=dict)
+    generation_libraries: dict = Field(default_factory=dict)
 
 
 class ClientUpdate(BaseModel):
@@ -22,6 +23,7 @@ class ClientUpdate(BaseModel):
     icp: Optional[dict] = None
     products: Optional[dict] = None
     client_context: Optional[dict] = None
+    generation_libraries: Optional[dict] = None
     is_active: Optional[bool] = None
     outlier_ratio_threshold: Optional[float] = None
 
@@ -61,6 +63,7 @@ class ClientOut(BaseModel):
     icp: dict
     products: dict
     client_context: Optional[dict] = None
+    generation_libraries: Optional[dict] = None
     client_dna: Optional[dict] = None
     brand_theme: Optional[dict] = None
     is_active: bool

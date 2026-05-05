@@ -65,6 +65,7 @@ def create_client(
         "icp": body.icp,
         "products": body.products,
         "client_context": body.client_context or {},
+        "generation_libraries": body.generation_libraries or {},
         "is_active": True,
         "outlier_ratio_threshold": 5.0,
     }

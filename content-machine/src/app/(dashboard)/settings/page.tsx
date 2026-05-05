@@ -1,6 +1,7 @@
-import { KeyRound, Settings, Sparkles } from "lucide-react";
+import { KeyRound, Library, Settings, Sparkles } from "lucide-react";
 import { fetchClient, getCachedServerApiContext } from "@/lib/api";
 import { ApiKeyPanel } from "./api-key-panel";
+import { GenerationLibrariesPanel } from "./generation-libraries-panel";
 import { NicheProfilePanel } from "./niche-profile-panel";
 
 export default async function SettingsPage() {
@@ -17,6 +18,22 @@ export default async function SettingsPage() {
         <Settings className="h-8 w-8 text-zinc-500" aria-hidden />
         <h1 className="text-lg font-semibold text-zinc-100">Settings</h1>
       </div>
+
+      <section className="mb-10 rounded-2xl border border-outline-variant/10 bg-surface-container p-8">
+        <div className="mb-4 flex items-center gap-2">
+          <Library className="h-5 w-5 text-primary" aria-hidden />
+          <h2 className="text-lg font-bold text-on-surface">Content defaults</h2>
+        </div>
+        <p className="mb-6 text-sm text-zinc-400">
+          Set where viewers should go next, plus the visual styles to reuse when creating new posts.
+        </p>
+        <GenerationLibrariesPanel
+          clientSlug={clientSlug}
+          orgSlug={orgSlug}
+          client={client}
+          disabled={syncDisabled}
+        />
+      </section>
 
       <section className="mb-10 rounded-2xl border border-outline-variant/10 bg-surface-container p-8">
         <div className="mb-4 flex items-center gap-2">

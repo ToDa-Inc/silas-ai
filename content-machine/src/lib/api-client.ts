@@ -10,6 +10,7 @@ import type {
   ClientCarouselTemplateSlide,
   ClientCarouselTemplateSlideRole,
   ClientCoverTemplate,
+  ClientGenerationLibraries,
   ClientRow,
   ClientCta,
   ReelsListSortBy,
@@ -228,6 +229,44 @@ export async function fetchAdaptPreviewReels(
   }
 }
 
+/** GET /clients/{slug}/reels/source-preview — scraped row + thumbnail when URL is already in workspace. */
+export async function fetchReelSourcePreview(
+  clientSlug: string,
+  orgSlug: string,
+  url: string,
+): Promise<
+  | { ok: true; data: ScrapedReelRow }
+  | { ok: false; error: string; status: number }
+> {
+  const base = getContentApiBase();
+  const headers = await clientApiHeaders({ orgSlug });
+  const u = url.trim();
+  try {
+    const res = await contentApiFetch(
+      `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/reels/source-preview?url=${encodeURIComponent(u)}`,
+      { headers },
+    );
+    const json = (await res.json().catch(() => ({}))) as unknown;
+    if (res.status === 404) {
+      return {
+        ok: false,
+        error: formatFastApiError(json as Record<string, unknown>, "Reel not in workspace"),
+        status: 404,
+      };
+    }
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: formatFastApiError(json as Record<string, unknown>, `Request failed (${res.status})`),
+        status: res.status,
+      };
+    }
+    return { ok: true, data: json as ScrapedReelRow };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "fetch failed", status: 0 };
+  }
+}
+
 export async function fetchReplicateSuggestions(
   clientSlug: string,
   orgSlug: string,
@@ -359,6 +398,66 @@ export async function fetchClientRowClient(
       return {
         ok: false,
         error: formatFastApiError(json as Record<string, unknown>, `Request failed (${res.status})`),
+      };
+    }
+    if (!json || typeof json !== "object") {
+      return { ok: false, error: "Invalid client response" };
+    }
+    return { ok: true, data: json as ClientRow };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "fetch failed" };
+  }
+}
+
+/** PUT replaces the entire ``client_context`` JSON column — merge with existing keys before calling. */
+export async function putClientClientContext(
+  clientSlug: string,
+  orgSlug: string,
+  client_context: Record<string, unknown>,
+): Promise<{ ok: true; data: ClientRow } | { ok: false; error: string }> {
+  const base = getContentApiBase();
+  const headers = await clientApiHeaders({ orgSlug });
+  try {
+    const res = await contentApiFetch(`${base}/api/v1/clients/${encodeURIComponent(clientSlug)}`, {
+      method: "PUT",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ client_context }),
+    });
+    const json = (await res.json().catch(() => null)) as unknown;
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: formatFastApiError(json as Record<string, unknown>, `Save failed (${res.status})`),
+      };
+    }
+    if (!json || typeof json !== "object") {
+      return { ok: false, error: "Invalid client response" };
+    }
+    return { ok: true, data: json as ClientRow };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "fetch failed" };
+  }
+}
+
+/** PUT replaces the full ``generation_libraries`` JSON object without touching ``client_context``. */
+export async function putClientGenerationLibraries(
+  clientSlug: string,
+  orgSlug: string,
+  generation_libraries: Record<string, unknown>,
+): Promise<{ ok: true; data: ClientRow } | { ok: false; error: string }> {
+  const base = getContentApiBase();
+  const headers = await clientApiHeaders({ orgSlug });
+  try {
+    const res = await contentApiFetch(`${base}/api/v1/clients/${encodeURIComponent(clientSlug)}`, {
+      method: "PUT",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ generation_libraries }),
+    });
+    const json = (await res.json().catch(() => null)) as unknown;
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: formatFastApiError(json as Record<string, unknown>, `Save failed (${res.status})`),
       };
     }
     if (!json || typeof json !== "object") {
@@ -662,11 +761,33 @@ export type GenerationSession = {
   updated_at?: string | null;
 };
 
+/** Normalized text frame for carousel composition (mirrors backend ``CarouselTextBox``). */
+export type CarouselTextBox = {
+  x: number;
+  y: number;
+  width: number;
+  align: "left" | "center" | "right";
+  scale: number;
+  card: boolean;
+  font?: "playfair" | "inter" | "poppins" | "georgia";
+};
+
+export type CarouselBackgroundStyle = {
+  overlay_color: string;
+  overlay_opacity: number;
+};
+
 export type CarouselSlide = {
   idx: number;
   text: string;
+  /** Background without burned-in text — editor preview + ZIP compose base. */
+  base_image_url?: string | null;
   image_url?: string | null;
   prompt?: string | null;
+  /** Legacy slide typography (pre–text_box). When present without ``text_box``, re-render uses layout overlay. */
+  layout?: VideoSpecLayout | null;
+  text_box?: CarouselTextBox | null;
+  background_style?: CarouselBackgroundStyle | null;
 };
 
 export type BackgroundJobRow = {
@@ -694,13 +815,70 @@ export type FormatDigestSummary = {
   computed_at?: string | null;
 };
 
-/** Client-side fetch of the active client's CTA library. Used by the Generate
- *  page so the user can pick which CTA the new session should adapt around.
- *  Returns `[]` (not an error) when the client has no CTAs configured yet. */
-export async function fetchClientCtaLibrary(
+/** Normalize raw CTA library JSON from generation_libraries, with legacy client_context fallback callers. */
+export function normalizeCtaLibraryFromRaw(raw: unknown): ClientCta[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const out: ClientCta[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const label = typeof o.label === "string" ? o.label.trim() : "";
+    if (!label) continue;
+    const id = typeof o.id === "string" && o.id.trim() ? o.id.trim() : `cta_${out.length}`;
+    const typeRaw = typeof o.type === "string" ? o.type : "other";
+    const type =
+      typeRaw === "website" ||
+      typeRaw === "newsletter" ||
+      typeRaw === "video" ||
+      typeRaw === "lead_magnet" ||
+      typeRaw === "booking"
+        ? typeRaw
+        : "other";
+    out.push({
+      id,
+      label,
+      type,
+      destination: typeof o.destination === "string" ? o.destination : "",
+      traffic_goal: typeof o.traffic_goal === "string" ? o.traffic_goal : "",
+      instructions:
+        typeof o.instructions === "string" && o.instructions.trim() ? o.instructions : null,
+    });
+  }
+  return out;
+}
+
+export type ClientGenerationLibraryBundle = {
+  ctaLibrary: ClientCta[];
+  carouselTemplates: ClientCarouselTemplate[];
+  coverTemplates: ClientCoverTemplate[];
+};
+
+function objectRecord(raw: unknown): Record<string, unknown> {
+  return raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+}
+
+export function normalizeGenerationLibrariesFromRow(row: {
+  client_context?: unknown;
+  generation_libraries?: unknown;
+}): ClientGenerationLibraryBundle {
+  const libsObj = objectRecord(row.generation_libraries);
+  const ctxObj = objectRecord(row.client_context);
+  const pick = (key: keyof ClientGenerationLibraries): unknown =>
+    key in libsObj ? libsObj[key] : ctxObj[key];
+  return {
+    ctaLibrary: normalizeCtaLibraryFromRaw(pick("cta_library")),
+    carouselTemplates: normalizeCarouselTemplates(pick("carousel_templates")),
+    coverTemplates: normalizeCoverTemplates(pick("cover_thumbnail_templates")),
+  };
+}
+
+/** One GET ``/clients/{slug}`` → CTA + carousel + cover libraries from generation_libraries, with legacy client_context fallback. */
+export async function fetchClientGenerationLibraries(
   clientSlug: string,
   orgSlug: string,
-): Promise<{ ok: true; data: ClientCta[] } | { ok: false; error: string }> {
+): Promise<{ ok: true; data: ClientGenerationLibraryBundle } | { ok: false; error: string }> {
   const base = getContentApiBase();
   const headers = await clientApiHeaders({ orgSlug });
   try {
@@ -715,41 +893,25 @@ export async function fetchClientCtaLibrary(
         error: formatFastApiError(json, `Request failed (${res.status})`),
       };
     }
-    const ctx = (json["client_context"] as Record<string, unknown> | null | undefined) ?? null;
-    const raw = ctx && typeof ctx === "object" ? (ctx["cta_library"] as unknown) : null;
-    if (!Array.isArray(raw)) {
-      return { ok: true, data: [] };
-    }
-    const out: ClientCta[] = [];
-    for (const item of raw) {
-      if (!item || typeof item !== "object") continue;
-      const o = item as Record<string, unknown>;
-      const label = typeof o.label === "string" ? o.label.trim() : "";
-      if (!label) continue;
-      const id = typeof o.id === "string" && o.id.trim() ? o.id.trim() : `cta_${out.length}`;
-      const typeRaw = typeof o.type === "string" ? o.type : "other";
-      const type =
-        typeRaw === "website" ||
-        typeRaw === "newsletter" ||
-        typeRaw === "video" ||
-        typeRaw === "lead_magnet" ||
-        typeRaw === "booking"
-          ? typeRaw
-          : "other";
-      out.push({
-        id,
-        label,
-        type,
-        destination: typeof o.destination === "string" ? o.destination : "",
-        traffic_goal: typeof o.traffic_goal === "string" ? o.traffic_goal : "",
-        instructions:
-          typeof o.instructions === "string" && o.instructions.trim() ? o.instructions : null,
-      });
-    }
-    return { ok: true, data: out };
+    return {
+      ok: true,
+      data: normalizeGenerationLibrariesFromRow(json as ClientRow),
+    };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "fetch failed" };
   }
+}
+
+/** Client-side fetch of the active client's CTA library. Used by the Generate
+ *  page so the user can pick which CTA the new session should adapt around.
+ *  Returns `[]` (not an error) when the client has no CTAs configured yet. */
+export async function fetchClientCtaLibrary(
+  clientSlug: string,
+  orgSlug: string,
+): Promise<{ ok: true; data: ClientCta[] } | { ok: false; error: string }> {
+  const bundle = await fetchClientGenerationLibraries(clientSlug, orgSlug);
+  if (!bundle.ok) return bundle;
+  return { ok: true, data: bundle.data.ctaLibrary };
 }
 
 const CAROUSEL_TEMPLATE_ROLES = new Set<ClientCarouselTemplateSlideRole>([
@@ -881,54 +1043,18 @@ export async function fetchClientCarouselTemplates(
   clientSlug: string,
   orgSlug: string,
 ): Promise<{ ok: true; data: ClientCarouselTemplate[] } | { ok: false; error: string }> {
-  const base = getContentApiBase();
-  const headers = await clientApiHeaders({ orgSlug });
-  try {
-    const res = await contentApiFetch(
-      `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}`,
-      { headers },
-    );
-    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-    if (!res.ok) {
-      return {
-        ok: false,
-        error: formatFastApiError(json, `Request failed (${res.status})`),
-      };
-    }
-    const ctx = (json["client_context"] as Record<string, unknown> | null | undefined) ?? null;
-    const raw =
-      ctx && typeof ctx === "object" ? (ctx["carousel_templates"] as unknown) : null;
-    return { ok: true, data: normalizeCarouselTemplates(raw) };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "fetch failed" };
-  }
+  const bundle = await fetchClientGenerationLibraries(clientSlug, orgSlug);
+  if (!bundle.ok) return bundle;
+  return { ok: true, data: bundle.data.carouselTemplates };
 }
 
 export async function fetchClientCoverTemplates(
   clientSlug: string,
   orgSlug: string,
 ): Promise<{ ok: true; data: ClientCoverTemplate[] } | { ok: false; error: string }> {
-  const base = getContentApiBase();
-  const headers = await clientApiHeaders({ orgSlug });
-  try {
-    const res = await contentApiFetch(
-      `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}`,
-      { headers },
-    );
-    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-    if (!res.ok) {
-      return {
-        ok: false,
-        error: formatFastApiError(json, `Request failed (${res.status})`),
-      };
-    }
-    const ctx = (json["client_context"] as Record<string, unknown> | null | undefined) ?? null;
-    const raw =
-      ctx && typeof ctx === "object" ? (ctx["cover_thumbnail_templates"] as unknown) : null;
-    return { ok: true, data: normalizeCoverTemplates(raw) };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "fetch failed" };
-  }
+  const bundle = await fetchClientGenerationLibraries(clientSlug, orgSlug);
+  if (!bundle.ok) return bundle;
+  return { ok: true, data: bundle.data.coverTemplates };
 }
 
 export async function fetchFormatDigests(
@@ -1245,6 +1371,39 @@ export async function generationGetSession(
     const res = await contentApiFetch(
       `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/generate/sessions/${encodeURIComponent(sessionId)}`,
       { headers },
+    );
+    const json = (await res.json().catch(() => ({}))) as GenerationSession & { detail?: unknown };
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: formatFastApiError(json as Record<string, unknown>, `Failed (${res.status})`),
+      };
+    }
+    return { ok: true, data: json as GenerationSession };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "fetch failed" };
+  }
+}
+
+/** PATCH …/generate/sessions/{sessionId} — e.g. swap carousel reference template before slides exist. */
+export async function generationPatchSession(
+  clientSlug: string,
+  orgSlug: string,
+  sessionId: string,
+  body: {
+    selected_carousel_template: SelectedCarouselTemplatePayload;
+  },
+): Promise<{ ok: true; data: GenerationSession } | { ok: false; error: string }> {
+  const base = getContentApiBase();
+  const headers = await clientApiHeaders({ orgSlug });
+  try {
+    const res = await contentApiFetch(
+      `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/generate/sessions/${encodeURIComponent(sessionId)}`,
+      {
+        method: "PATCH",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
     );
     const json = (await res.json().catch(() => ({}))) as GenerationSession & { detail?: unknown };
     if (!res.ok) {
@@ -1825,6 +1984,8 @@ export async function carouselSlideRegenerate(
     prompt?: string;
     image_source?: "ai" | "client_image";
     client_image_id?: string;
+    layout?: VideoSpecLayout | null;
+    text_box?: CarouselTextBox | null;
   },
 ): Promise<{ ok: true; data: GenerationSession } | { ok: false; error: string }> {
   const base = getContentApiBase();
@@ -1843,6 +2004,8 @@ export async function carouselSlideRegenerate(
           prompt: args.prompt ?? null,
           image_source: args.image_source ?? "ai",
           client_image_id: args.client_image_id ?? null,
+          layout: args.layout ?? null,
+          text_box: args.text_box ?? null,
         }),
       },
     );

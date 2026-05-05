@@ -1,7 +1,7 @@
 -- Phase 24: Cover/thumbnail templates
 --
 -- Stores the selected cover/thumbnail template snapshot on generation sessions.
--- The editable template library lives under clients.client_context.cover_thumbnail_templates.
+-- The editable template library lives under clients.generation_libraries.cover_thumbnail_templates.
 
 ALTER TABLE generation_sessions
   ADD COLUMN IF NOT EXISTS selected_cover_template jsonb;

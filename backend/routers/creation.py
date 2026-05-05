@@ -37,8 +37,11 @@ from services.content_generation import get_chosen_angle, run_carousel_slide_tex
 from services.format_classifier import canonicalize_stored_format_key
 from services.image_generation import (
     build_background_image_prompt,
+    compose_carousel_final_png,
+    generate_freepik_washed_background_png,
     generate_image_via_openrouter,
     generate_slide_image,
+    prepare_carousel_base_png_bytes,
 )
 from services.job_queue import has_active_job
 from services.video_render import RENDERS_BUCKET, recover_stale_video_render_jobs, run_video_render_job
@@ -695,6 +698,8 @@ def queue_session_render(
 
 # ── Carousel slides ───────────────────────────────────────────────────────────
 
+_MAX_REFERENCE_IMAGE_BYTES = 15 * 1024 * 1024
+
 
 def _slides_array_from_row(row: Dict[str, Any]) -> List[Dict[str, Any]]:
     raw = row.get("carousel_slides")
@@ -704,8 +709,18 @@ def _slides_array_from_row(row: Dict[str, Any]) -> List[Dict[str, Any]]:
     for s in raw:
         if isinstance(s, dict):
             out.append(s)
-    out.sort(key=lambda x: int(x.get("idx") or 0))
+    out.sort(key=lambda x: _slide_idx(x, default=0))
     return out
+
+
+def _slide_idx(slide: Dict[str, Any], *, default: int = -1) -> int:
+    raw = slide.get("idx")
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
 
 
 def _ensure_carousel_session(row: Dict[str, Any]) -> None:
@@ -737,9 +752,60 @@ def _fetch_client_image_bytes(supabase: Client, *, client_id: str, image_id: str
         with httpx.Client(timeout=30) as client:
             r = client.get(file_url)
             r.raise_for_status()
-            return r.content
+            data = r.content
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to fetch client image: {e}") from e
+    if len(data) > _MAX_REFERENCE_IMAGE_BYTES:
+        raise HTTPException(status_code=400, detail="Reference image is too large (max 15 MB).")
+    return data
+
+
+def _fetch_url_image_bytes(url: str) -> bytes:
+    u = (url or "").strip()
+    if not u.lower().startswith("https://"):
+        raise HTTPException(
+            status_code=400,
+            detail="Template reference_image_url must be an https URL.",
+        )
+    try:
+        with httpx.Client(timeout=30) as client:
+            r = client.get(u, follow_redirects=True)
+            r.raise_for_status()
+            data = r.content
+    except HTTPException:
+        raise
+    except httpx.HTTPError as e:
+        raise HTTPException(
+            status_code=502, detail=f"Failed to download template reference image: {e}"
+        ) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=502, detail=f"Failed to download template reference image: {e}"
+        ) from e
+    if len(data) > _MAX_REFERENCE_IMAGE_BYTES:
+        raise HTTPException(status_code=400, detail="Reference image is too large (max 15 MB).")
+    ct = (r.headers.get("content-type") or "").lower()
+    if "image" not in ct and not u.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+        raise HTTPException(
+            status_code=400,
+            detail="Template reference_image_url did not return an image (check content-type or URL).",
+        )
+    return data
+
+
+def _resolve_template_slide_image_bytes(
+    supabase: Client, client_id: str, slide: Dict[str, Any], *, slide_idx: int
+) -> bytes:
+    ref_id = slide.get("reference_image_id")
+    if isinstance(ref_id, str) and ref_id.strip():
+        return _fetch_client_image_bytes(supabase, client_id=client_id, image_id=ref_id.strip())
+    ref_url = slide.get("reference_image_url")
+    if isinstance(ref_url, str) and ref_url.strip():
+        return _fetch_url_image_bytes(ref_url.strip())
+    raise HTTPException(
+        status_code=400,
+        detail=f"Carousel template slide {slide_idx + 1} is missing reference_image_id and reference_image_url.",
+    )
 
 
 def _upload_slide_png(
@@ -755,6 +821,84 @@ def _upload_slide_png(
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Storage upload failed: {e}") from e
     return _public_object_url(settings.supabase_url, RENDERS_BUCKET, path)
+
+
+def _upload_slide_base_png(
+    supabase: Client, settings: Settings, *, client_id: str, session_id: str, idx: int, png: bytes
+) -> str:
+    path = f"{client_id}/carousel_base_{session_id}_{idx:02d}.png"
+    try:
+        supabase.storage.from_(RENDERS_BUCKET).upload(
+            path,
+            png,
+            {"content-type": "image/png", "upsert": "true"},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Storage upload failed: {e}") from e
+    return _public_object_url(settings.supabase_url, RENDERS_BUCKET, path)
+
+
+def _default_carousel_text_box_dict(role: str) -> Dict[str, Any]:
+    r = (role or "body").strip().lower()
+    if r == "cover":
+        return {"x": 0.5, "y": 0.42, "width": 0.88, "align": "center", "scale": 1.05, "card": False}
+    if r == "cta":
+        return {"x": 0.5, "y": 0.85, "width": 0.8, "align": "center", "scale": 1.0, "card": True}
+    return {"x": 0.5, "y": 0.82, "width": 0.84, "align": "center", "scale": 1.0, "card": False}
+
+
+def _merge_carousel_text_box_dict(
+    role: str,
+    body_tb: Any,
+    prev: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    merged = _default_carousel_text_box_dict(role)
+    if body_tb is not None:
+        patch = (
+            body_tb.model_dump(mode="json")
+            if hasattr(body_tb, "model_dump")
+            else (body_tb if isinstance(body_tb, dict) else {})
+        )
+        merged.update({k: v for k, v in patch.items() if v is not None})
+        return merged
+    prev_tb = (prev or {}).get("text_box")
+    if isinstance(prev_tb, dict) and prev_tb:
+        merged.update({k: v for k, v in prev_tb.items() if v is not None})
+    return merged
+
+
+def _default_carousel_background_style_dict() -> Dict[str, Any]:
+    return {"overlay_color": "#ffffff", "overlay_opacity": 0.0}
+
+
+def _merge_carousel_background_style_dict(
+    body_bg: Any,
+    prev: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    merged = _default_carousel_background_style_dict()
+    if body_bg is not None:
+        patch = (
+            body_bg.model_dump(mode="json")
+            if hasattr(body_bg, "model_dump")
+            else (body_bg if isinstance(body_bg, dict) else {})
+        )
+        merged.update({k: v for k, v in patch.items() if v is not None})
+        return merged
+    prev_bg = (prev or {}).get("background_style")
+    if isinstance(prev_bg, dict) and prev_bg:
+        merged.update({k: v for k, v in prev_bg.items() if v is not None})
+    return merged
+
+
+def _use_legacy_carousel_render(prev: Dict[str, Any], body_tb: Any) -> bool:
+    """Slides created before ``text_box`` may only have ``layout`` — keep Pillow layout overlay."""
+    if body_tb is not None:
+        return False
+    prev_tb = prev.get("text_box")
+    if isinstance(prev_tb, dict) and prev_tb:
+        return False
+    lay = prev.get("layout")
+    return isinstance(lay, dict) and bool(lay)
 
 
 def _carousel_hook_text(row: Dict[str, Any]) -> str:
@@ -795,13 +939,21 @@ def _template_slides_from_row(row: Dict[str, Any]) -> List[Dict[str, Any]]:
     if not isinstance(raw, list):
         return []
     slides = [s for s in raw if isinstance(s, dict)]
-    slides.sort(key=lambda s: int(s.get("idx") or 0))
+    slides.sort(key=lambda s: _slide_idx(s, default=0))
     return slides[:10]
 
 
 def _carousel_slide_count_from_request(row: Dict[str, Any], requested_count: int) -> int:
-    """Templates are visual/story references, not hard constraints on slide count."""
-    _ = row
+    """When a carousel template is selected, slide count follows the template (3–10)."""
+    template_slides = _template_slides_from_row(row)
+    if template_slides:
+        n = len(template_slides)
+        if n < 3:
+            raise HTTPException(
+                status_code=400,
+                detail="Selected carousel template must have at least 3 reference slides.",
+            )
+        return max(3, min(10, n))
     return max(3, min(10, int(requested_count or 6)))
 
 
@@ -817,6 +969,19 @@ def _visual_prompt_for_template_slide(slide: Dict[str, Any]) -> str:
     if instruction:
         parts.append(instruction)
     return "; ".join(parts)
+
+
+def _carousel_slide_role_for_idx(
+    idx: int, total: int, template_slide: Dict[str, Any]
+) -> str:
+    r = str(template_slide.get("role") or "").strip().lower()
+    if r in ("cover", "cta", "body"):
+        return r
+    if idx == 0:
+        return "cover"
+    if total > 0 and idx == total - 1:
+        return "cta"
+    return "body"
 
 
 @router.post(
@@ -835,8 +1000,6 @@ def generate_carousel_slides(
     _ = slug
     if not settings.openrouter_api_key:
         raise HTTPException(status_code=503, detail="OPENROUTER_API_KEY not configured")
-    if not settings.freepik_api_key:
-        raise HTTPException(status_code=503, detail="FREEPIK_API_KEY not configured")
     row = _load_session(supabase, client_id, session_id)
     _ensure_carousel_session(row)
 
@@ -850,7 +1013,10 @@ def generate_carousel_slides(
         else None
     )
     template_slides = _template_slides_from_row(row)
+    uses_template_images = bool(template_slides)
     slide_count = _carousel_slide_count_from_request(row, body.count)
+    if not uses_template_images and not settings.freepik_api_key:
+        raise HTTPException(status_code=503, detail="FREEPIK_API_KEY not configured")
     try:
         texts = run_carousel_slide_texts(
             settings,
@@ -865,20 +1031,71 @@ def generate_carousel_slides(
         logger.exception("run_carousel_slide_texts failed")
         raise HTTPException(status_code=502, detail=f"Slide texts generation failed: {e}") from e
 
+    if len(texts) != slide_count:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Slide text generator returned {len(texts)} slides; expected {slide_count}.",
+        )
+
     style = (body.style or "").strip()
+    template_id = (
+        str(selected_template.get("id") or "").strip()
+        if isinstance(selected_template, dict)
+        else ""
+    )
     slides: List[Dict[str, Any]] = []
     for i, text in enumerate(texts):
         template_slide = template_slides[i] if i < len(template_slides) else {}
+        slide_role = _carousel_slide_role_for_idx(i, len(texts), template_slide)
+        text_box_dict = _merge_carousel_text_box_dict(slide_role, None, None)
+        background_style_dict = _merge_carousel_background_style_dict(None, None)
         visual_prompt = _visual_prompt_for_template_slide(template_slide)
         try:
-            png = generate_slide_image(
-                text=text,
-                idx=i,
-                total=len(texts),
-                freepik_key=settings.freepik_api_key,
-                style=style,
-                visual_prompt=visual_prompt,
-            )
+            if uses_template_images:
+                img_bytes = _resolve_template_slide_image_bytes(
+                    supabase, client_id, template_slide, slide_idx=i
+                )
+                base_png = prepare_carousel_base_png_bytes(
+                    img_bytes, wash=False, target_w=1080, target_h=1920
+                )
+                base_url = _upload_slide_base_png(
+                    supabase, settings, client_id=client_id, session_id=session_id, idx=i, png=base_png
+                )
+                png = compose_carousel_final_png(
+                    base_png, text, text_box_dict, carousel_slide_role=slide_role
+                )
+                prompt_meta = (
+                    f"template:{template_id or 'unknown'}:slide:{i}"
+                    if template_id
+                    else f"template_slide:{i}"
+                )
+            else:
+                if not settings.freepik_api_key:
+                    raise HTTPException(status_code=503, detail="FREEPIK_API_KEY not configured")
+                ctx_parts = [
+                    p
+                    for p in (
+                        style,
+                        visual_prompt,
+                        f"slide {i + 1}/{len(texts)} ({slide_role})",
+                    )
+                    if p
+                ]
+                base_png = generate_freepik_washed_background_png(
+                    settings.freepik_api_key,
+                    ", ".join(ctx_parts),
+                    target_w=1080,
+                    target_h=1920,
+                )
+                base_url = _upload_slide_base_png(
+                    supabase, settings, client_id=client_id, session_id=session_id, idx=i, png=base_png
+                )
+                png = compose_carousel_final_png(
+                    base_png, text, text_box_dict, carousel_slide_role=slide_role
+                )
+                prompt_meta = style or visual_prompt or None
+        except HTTPException:
+            raise
         except Exception as e:
             logger.exception("generate_slide_image failed for idx=%d", i)
             raise HTTPException(status_code=502, detail=f"Slide image #{i + 1} failed: {e}") from e
@@ -888,8 +1105,11 @@ def generate_carousel_slides(
         slides.append({
             "idx": i,
             "text": text,
+            "base_image_url": base_url,
+            "text_box": text_box_dict,
+            "background_style": background_style_dict,
             "image_url": url,
-            "prompt": style or visual_prompt or None,
+            "prompt": prompt_meta,
         })
 
     now = _now_iso()
@@ -920,13 +1140,13 @@ def regenerate_carousel_slide(
         raise HTTPException(status_code=400, detail="No carousel_slides yet — call generate first")
 
     target_idx = body.idx
-    if not any(int(s.get("idx") or -1) == target_idx for s in slides):
+    if not any(_slide_idx(s) == target_idx for s in slides):
         raise HTTPException(status_code=404, detail=f"Slide idx={target_idx} not found")
 
     new_text = (body.text or "").strip()
     if not new_text:
         for s in slides:
-            if int(s.get("idx") or -1) == target_idx:
+            if _slide_idx(s) == target_idx:
                 new_text = str(s.get("text") or "").strip()
                 break
     if not new_text:
@@ -935,8 +1155,107 @@ def regenerate_carousel_slide(
     style = (body.prompt or "").strip()
     template_slides = _template_slides_from_row(row)
     template_slide = template_slides[target_idx] if target_idx < len(template_slides) else {}
+    slide_role = _carousel_slide_role_for_idx(target_idx, len(slides), template_slide)
     visual_prompt = _visual_prompt_for_template_slide(template_slide)
+    sel_tpl = row.get("selected_carousel_template")
+    template_id_str = (
+        str(sel_tpl.get("id") or "").strip() if isinstance(sel_tpl, dict) else ""
+    )
+    uses_saved_template_slide = bool(template_slides) and target_idx < len(template_slides)
+
+    prev_target = next(s for s in slides if _slide_idx(s) == target_idx)
+    layout_for_render: Any = None
+    if body.layout is not None:
+        layout_for_render = body.layout.model_dump(mode="json")
+    elif isinstance(prev_target.get("layout"), dict):
+        layout_for_render = prev_target["layout"]
+    layout_to_store = layout_for_render
+
+    use_legacy = _use_legacy_carousel_render(prev_target, body.text_box)
+
     try:
+        if use_legacy:
+            if body.image_source == "client_image":
+                if not body.client_image_id:
+                    raise HTTPException(
+                        status_code=400, detail="client_image_id required when image_source=client_image"
+                    )
+                img_bytes = _fetch_client_image_bytes(
+                    supabase, client_id=client_id, image_id=body.client_image_id.strip()
+                )
+                png = generate_slide_image(
+                    text=new_text,
+                    idx=target_idx,
+                    total=len(slides),
+                    client_image_bytes=img_bytes,
+                    wash_template_base=True,
+                    carousel_slide_role=slide_role,
+                    layout=layout_for_render,
+                )
+                prompt_val = style or visual_prompt or None
+            elif body.image_source == "ai" and uses_saved_template_slide:
+                img_bytes = _resolve_template_slide_image_bytes(
+                    supabase, client_id, template_slide, slide_idx=target_idx
+                )
+                png = generate_slide_image(
+                    text=new_text,
+                    idx=target_idx,
+                    total=len(slides),
+                    freepik_key=settings.freepik_api_key or "",
+                    style=style,
+                    visual_prompt=visual_prompt,
+                    client_image_bytes=img_bytes,
+                    wash_template_base=False,
+                    carousel_slide_role=slide_role,
+                    layout=layout_for_render,
+                )
+                prompt_val = (
+                    f"template:{template_id_str or 'unknown'}:slide:{target_idx}"
+                    if template_id_str
+                    else f"template_slide:{target_idx}"
+                )
+            else:
+                if not settings.freepik_api_key:
+                    raise HTTPException(status_code=503, detail="FREEPIK_API_KEY not configured")
+                png = generate_slide_image(
+                    text=new_text,
+                    idx=target_idx,
+                    total=len(slides),
+                    freepik_key=settings.freepik_api_key,
+                    style=style,
+                    visual_prompt=visual_prompt,
+                    layout=layout_for_render,
+                )
+                prompt_val = style or visual_prompt or None
+
+            url = _upload_slide_png(
+                supabase, settings, client_id=client_id, session_id=session_id, idx=target_idx, png=png
+            )
+
+            updated: List[Dict[str, Any]] = []
+            for s in slides:
+                if _slide_idx(s) == target_idx:
+                    row_out: Dict[str, Any] = {
+                        "idx": target_idx,
+                        "text": new_text,
+                        "image_url": url,
+                        "prompt": prompt_val,
+                    }
+                    if layout_to_store is not None:
+                        row_out["layout"] = layout_to_store
+                    updated.append(row_out)
+                else:
+                    updated.append(s)
+
+            now = _now_iso()
+            supabase.table("generation_sessions").update(
+                {"carousel_slides": updated, "updated_at": now}
+            ).eq("id", session_id).execute()
+            return _row_to_out(_load_session(supabase, client_id, session_id))
+
+        tb_dict = _merge_carousel_text_box_dict(slide_role, body.text_box, prev_target)
+        bg_style_dict = _merge_carousel_background_style_dict(None, prev_target)
+
         if body.image_source == "client_image":
             if not body.client_image_id:
                 raise HTTPException(
@@ -945,52 +1264,106 @@ def regenerate_carousel_slide(
             img_bytes = _fetch_client_image_bytes(
                 supabase, client_id=client_id, image_id=body.client_image_id.strip()
             )
-            png = generate_slide_image(
-                text=new_text,
+            base_png = prepare_carousel_base_png_bytes(
+                img_bytes, wash=False, target_w=1080, target_h=1920
+            )
+            base_url = _upload_slide_base_png(
+                supabase,
+                settings,
+                client_id=client_id,
+                session_id=session_id,
                 idx=target_idx,
-                total=len(slides),
-                client_image_bytes=img_bytes,
+                png=base_png,
+            )
+            png = compose_carousel_final_png(
+                base_png, new_text, tb_dict, carousel_slide_role=slide_role
+            )
+            prompt_val = style or visual_prompt or None
+        elif body.image_source == "ai" and uses_saved_template_slide:
+            img_bytes = _resolve_template_slide_image_bytes(
+                supabase, client_id, template_slide, slide_idx=target_idx
+            )
+            base_png = prepare_carousel_base_png_bytes(
+                img_bytes, wash=False, target_w=1080, target_h=1920
+            )
+            base_url = _upload_slide_base_png(
+                supabase,
+                settings,
+                client_id=client_id,
+                session_id=session_id,
+                idx=target_idx,
+                png=base_png,
+            )
+            png = compose_carousel_final_png(
+                base_png, new_text, tb_dict, carousel_slide_role=slide_role
+            )
+            prompt_val = (
+                f"template:{template_id_str or 'unknown'}:slide:{target_idx}"
+                if template_id_str
+                else f"template_slide:{target_idx}"
             )
         else:
             if not settings.freepik_api_key:
                 raise HTTPException(status_code=503, detail="FREEPIK_API_KEY not configured")
-            png = generate_slide_image(
-                text=new_text,
-                idx=target_idx,
-                total=len(slides),
-                freepik_key=settings.freepik_api_key,
-                style=style,
-                visual_prompt=visual_prompt,
+            ctx_parts = [
+                p
+                for p in (
+                    style,
+                    visual_prompt,
+                    f"slide {target_idx + 1}/{len(slides)} ({slide_role})",
+                )
+                if p
+            ]
+            base_png = generate_freepik_washed_background_png(
+                settings.freepik_api_key,
+                ", ".join(ctx_parts),
+                target_w=1080,
+                target_h=1920,
             )
+            base_url = _upload_slide_base_png(
+                supabase,
+                settings,
+                client_id=client_id,
+                session_id=session_id,
+                idx=target_idx,
+                png=base_png,
+            )
+            png = compose_carousel_final_png(
+                base_png, new_text, tb_dict, carousel_slide_role=slide_role
+            )
+            prompt_val = style or visual_prompt or None
+
+        url = _upload_slide_png(
+            supabase, settings, client_id=client_id, session_id=session_id, idx=target_idx, png=png
+        )
+
+        updated2: List[Dict[str, Any]] = []
+        for s in slides:
+            if _slide_idx(s) == target_idx:
+                row_comp: Dict[str, Any] = {
+                    "idx": target_idx,
+                    "text": new_text,
+                    "base_image_url": base_url,
+                    "image_url": url,
+                    "prompt": prompt_val,
+                    "text_box": tb_dict,
+                    "background_style": bg_style_dict,
+                }
+                updated2.append(row_comp)
+            else:
+                updated2.append(s)
+
+        now2 = _now_iso()
+        supabase.table("generation_sessions").update(
+            {"carousel_slides": updated2, "updated_at": now2}
+        ).eq("id", session_id).execute()
+        return _row_to_out(_load_session(supabase, client_id, session_id))
+
     except HTTPException:
         raise
     except Exception as e:
         logger.exception("regenerate slide failed")
         raise HTTPException(status_code=502, detail=str(e)) from e
-
-    url = _upload_slide_png(
-        supabase, settings, client_id=client_id, session_id=session_id, idx=target_idx, png=png
-    )
-
-    updated: List[Dict[str, Any]] = []
-    for s in slides:
-        if int(s.get("idx") or -1) == target_idx:
-            updated.append(
-                {
-                    "idx": target_idx,
-                    "text": new_text,
-                    "image_url": url,
-                    "prompt": style or visual_prompt or s.get("prompt"),
-                }
-            )
-        else:
-            updated.append(s)
-
-    now = _now_iso()
-    supabase.table("generation_sessions").update(
-        {"carousel_slides": updated, "updated_at": now}
-    ).eq("id", session_id).execute()
-    return _row_to_out(_load_session(supabase, client_id, session_id))
 
 
 @router.patch(
@@ -1008,28 +1381,51 @@ def patch_carousel_slides(
     _ = slug
     row = _load_session(supabase, client_id, session_id)
     _ensure_carousel_session(row)
-    existing = {int(s.get("idx") or -1): s for s in _slides_array_from_row(row)}
+    existing = {_slide_idx(s): s for s in _slides_array_from_row(row)}
 
     merged: List[Dict[str, Any]] = []
     for s in body.slides:
         prev = existing.get(s.idx, {})
-        merged.append(
-            {
-                "idx": s.idx,
-                "text": (s.text or "").strip(),
-                # Image stays; manual text edits don't re-render. Caller must hit
-                # /carousel-slides/regenerate to re-render with the new text.
-                "image_url": s.image_url or prev.get("image_url"),
-                "prompt": s.prompt if s.prompt is not None else prev.get("prompt"),
-            }
-        )
-    merged.sort(key=lambda x: int(x.get("idx") or 0))
+        layout_dict: Optional[Dict[str, Any]] = None
+        if s.layout is not None:
+            layout_dict = s.layout.model_dump(mode="json")
+        elif isinstance(prev.get("layout"), dict):
+            layout_dict = prev["layout"]
+        row_m: Dict[str, Any] = {
+            "idx": s.idx,
+            "text": (s.text or "").strip(),
+            "image_url": s.image_url if s.image_url is not None else prev.get("image_url"),
+            "base_image_url": s.base_image_url
+            if s.base_image_url is not None
+            else prev.get("base_image_url"),
+            "prompt": s.prompt if s.prompt is not None else prev.get("prompt"),
+        }
+        if s.text_box is not None:
+            row_m["text_box"] = s.text_box.model_dump(mode="json")
+        elif isinstance(prev.get("text_box"), dict):
+            row_m["text_box"] = prev["text_box"]
+        if s.background_style is not None:
+            row_m["background_style"] = s.background_style.model_dump(mode="json")
+        elif isinstance(prev.get("background_style"), dict):
+            row_m["background_style"] = prev["background_style"]
+        if layout_dict is not None:
+            row_m["layout"] = layout_dict
+        merged.append(row_m)
+    merged.sort(key=lambda x: _slide_idx(x, default=0))
 
     now = _now_iso()
     supabase.table("generation_sessions").update(
         {"carousel_slides": merged, "updated_at": now}
     ).eq("id", session_id).execute()
     return _row_to_out(_load_session(supabase, client_id, session_id))
+
+
+def _carousel_zip_slide_role(idx: int, total: int) -> str:
+    if idx == 0:
+        return "cover"
+    if total > 1 and idx == total - 1:
+        return "cta"
+    return "body"
 
 
 @router.get("/clients/{slug}/create/sessions/{session_id}/carousel-slides/zip")
@@ -1047,22 +1443,42 @@ def download_carousel_slides_zip(
     if not slides:
         raise HTTPException(status_code=404, detail="No slides to download")
 
+    total_n = len(slides)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        with httpx.Client(timeout=30) as client:
+        with httpx.Client(timeout=60) as client:
             for s in slides:
-                url = str(s.get("image_url") or "").strip()
-                if not url:
-                    continue
-                try:
-                    r = client.get(url)
-                    r.raise_for_status()
-                except Exception as e:
-                    raise HTTPException(
-                        status_code=502, detail=f"Failed to fetch slide {s.get('idx')}: {e}"
-                    ) from e
-                idx = int(s.get("idx") or 0)
-                zf.writestr(f"slide_{idx + 1:02d}.png", r.content)
+                idx = _slide_idx(s, default=0)
+                base_u = str(s.get("base_image_url") or "").strip()
+                tb_raw = s.get("text_box")
+                text = str(s.get("text") or "")
+                png_out: bytes
+                if base_u and isinstance(tb_raw, dict) and tb_raw:
+                    try:
+                        rb = client.get(base_u)
+                        rb.raise_for_status()
+                        role = _carousel_zip_slide_role(idx, total_n)
+                        png_out = compose_carousel_final_png(
+                            rb.content, text, tb_raw, carousel_slide_role=role
+                        )
+                    except Exception as e:
+                        raise HTTPException(
+                            status_code=502,
+                            detail=f"Failed to compose slide {idx} from base + text_box: {e}",
+                        ) from e
+                else:
+                    url = str(s.get("image_url") or "").strip()
+                    if not url:
+                        continue
+                    try:
+                        r = client.get(url)
+                        r.raise_for_status()
+                        png_out = r.content
+                    except Exception as e:
+                        raise HTTPException(
+                            status_code=502, detail=f"Failed to fetch slide {s.get('idx')}: {e}"
+                        ) from e
+                zf.writestr(f"slide_{idx + 1:02d}.png", png_out)
 
     fname = f"carousel_{session_id}.zip"
     return Response(

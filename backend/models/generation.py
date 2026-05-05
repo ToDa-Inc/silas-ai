@@ -4,11 +4,38 @@ from pydantic import BaseModel, ConfigDict, Field
 from models.video_spec import VideoSpecAppearance, VideoSpecLayout, VideoTemplateId, VideoThemeId
 
 
+class CarouselTextBox(BaseModel):
+    """Normalized text frame for carousel composition (editor + export).
+
+    ``x`` / ``y`` are the horizontal / vertical center of the text block (0–1).
+    ``width`` is the fraction of canvas width used for wrapping.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    x: float = Field(0.5, ge=0.0, le=1.0)
+    y: float = Field(0.82, ge=0.0, le=1.0)
+    width: float = Field(0.84, ge=0.25, le=1.0)
+    align: Literal["left", "center", "right"] = "center"
+    scale: float = Field(1.0, ge=0.4, le=2.0)
+    card: bool = False
+    font: Literal["playfair", "inter", "poppins", "georgia"] = "playfair"
+
+
+class CarouselBackgroundStyle(BaseModel):
+    """Visual treatment applied above the base image and below text."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    overlay_color: str = Field("#ffffff", max_length=32)
+    overlay_opacity: float = Field(0.0, ge=0.0, le=1.0)
+
+
 class SelectedCta(BaseModel):
     """Snapshot of the CTA the user picked under the format selector.
 
     Stored on each ``generation_sessions`` row so old sessions stay stable even
-    if the client later edits their CTA library in Context.
+    if the client later edits their CTA library in Settings.
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -122,7 +149,7 @@ class GenerationStartBody(BaseModel):
     selected_carousel_template: Optional[SelectedCarouselTemplate] = Field(
         None,
         description=(
-            "User-picked carousel template from Context. Snapshotted onto carousel "
+            "User-picked carousel template from the client's generation libraries. Snapshotted onto carousel "
             "sessions so slide order and visual references stay stable even if the "
             "template is later edited."
         ),
@@ -130,7 +157,7 @@ class GenerationStartBody(BaseModel):
     selected_cover_template: Optional[SelectedCoverTemplate] = Field(
         None,
         description=(
-            "User-picked cover/thumbnail template from Context. Snapshotted onto "
+            "User-picked cover/thumbnail template from the client's generation libraries. Snapshotted onto "
             "sessions so the cover reference image and instructions stay stable even "
             "if the template is later edited."
         ),
@@ -162,6 +189,20 @@ class GenerationRegenerateBody(BaseModel):
 
 class GenerationFeedbackBody(BaseModel):
     feedback: Optional[str] = Field(None, max_length=4000)
+
+
+class PatchGenerationSessionBody(BaseModel):
+    """PATCH …/generate/sessions/{id} — narrow artifact updates before slide/video assets exist."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    selected_carousel_template: Optional[SelectedCarouselTemplate] = Field(
+        None,
+        description=(
+            "Replace the carousel reference snapshot. Allowed only for carousel sessions "
+            "with no generated carousel slides yet."
+        ),
+    )
 
 
 class GenerateThumbnailBody(BaseModel):
@@ -197,8 +238,13 @@ class CarouselSlide(BaseModel):
 
     idx: int = Field(..., ge=0, le=9)
     text: str = Field("", max_length=600)
+    # Background image without burned-in text (composition base layer).
+    base_image_url: Optional[str] = None
     image_url: Optional[str] = None
     prompt: Optional[str] = Field(None, max_length=2000)
+    layout: Optional[VideoSpecLayout] = None
+    text_box: Optional[CarouselTextBox] = None
+    background_style: Optional[CarouselBackgroundStyle] = None
 
 
 class GenerateCarouselSlidesBody(BaseModel):
@@ -224,10 +270,12 @@ class RegenerateCarouselSlideBody(BaseModel):
     )
     image_source: Literal["ai", "client_image"] = "ai"
     client_image_id: Optional[str] = Field(None, min_length=1, max_length=64)
+    layout: Optional[VideoSpecLayout] = None
+    text_box: Optional[CarouselTextBox] = None
 
 
 class PatchCarouselSlidesBody(BaseModel):
-    """PATCH …/create/sessions/{id}/carousel-slides — manual text-only edits."""
+    """PATCH …/create/sessions/{id}/carousel-slides — manual text/layout edits (no re-render)."""
 
     slides: List[CarouselSlide] = Field(..., min_length=1, max_length=10)
 

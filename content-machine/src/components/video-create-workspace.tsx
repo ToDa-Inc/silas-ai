@@ -2,7 +2,12 @@
 
 import Link from "next/link";
 import type { Operation } from "fast-json-patch";
+import JSZip from "jszip";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { loadFont as loadInter } from "@remotion/google-fonts/Inter";
+import { loadFont as loadPlayfairDisplay } from "@remotion/google-fonts/PlayfairDisplay";
+import { loadFont as loadPoppins } from "@remotion/google-fonts/Poppins";
+import { FabricImage, Rect, StaticCanvas, Textbox } from "fabric";
 import {
   CheckCircle2,
   ChevronDown,
@@ -33,16 +38,17 @@ import {
   carouselSlideRegenerate,
   carouselSlidesGenerate,
   carouselSlidesPatch,
-  carouselSlidesZipUrl,
   clientImagesList,
   creationGenerateBackground,
   creationRenderVideo,
   creationSetBackgroundImage,
   creationSetBroll,
   fetchBackgroundJob,
+  fetchClientGenerationLibraries,
   generationComposeThumbnail,
   generationGenerateThumbnail,
   generationGetSession,
+  generationPatchSession,
   generationRegenerate,
   generationRegenerateCovers,
   patchCreateSession,
@@ -50,11 +56,14 @@ import {
   postFitSessionSpecToBroll,
   promptEditSessionVideoSpec,
   type BrollClipRow,
+  type CarouselBackgroundStyle,
+  type CarouselTextBox,
   type CarouselSlide,
   type ClientImageRow,
   type GenerationSession,
   type TextBlock,
 } from "@/lib/api-client";
+import type { ClientCarouselTemplate } from "@/lib/api";
 import { DEFAULT_COVER_EDIT, coverPayload, type CoverEditState } from "@/lib/cover-edit";
 import {
   buildPreviewSpecFromSession,
@@ -104,8 +113,44 @@ const STYLE_CHIP_ON =
   "border-amber-500 bg-amber-500/15 text-amber-200 shadow-[0_0_0_1px_rgba(245,158,11,0.4)]";
 const STYLE_CHIP_OFF = "border-app-divider text-app-fg-muted hover:border-amber-500/40 hover:text-app-fg";
 
+const { fontFamily: CAROUSEL_PLAYFAIR_FONT } = loadPlayfairDisplay("normal", {
+  weights: ["700", "800"],
+  subsets: ["latin", "latin-ext"],
+});
+const { fontFamily: CAROUSEL_INTER_FONT } = loadInter("normal", {
+  weights: ["600", "700", "800"],
+  subsets: ["latin", "latin-ext"],
+});
+const { fontFamily: CAROUSEL_POPPINS_FONT } = loadPoppins("normal", {
+  weights: ["600", "700", "800"],
+  subsets: ["latin", "latin-ext"],
+});
+const CAROUSEL_FONT_STACKS = {
+  playfair: `"${CAROUSEL_PLAYFAIR_FONT}", Georgia, "Times New Roman", serif`,
+  inter: `"${CAROUSEL_INTER_FONT}", Inter, Arial, sans-serif`,
+  poppins: `"${CAROUSEL_POPPINS_FONT}", Poppins, Arial, sans-serif`,
+  georgia: `Georgia, "Times New Roman", serif`,
+} as const;
+const CAROUSEL_FONT_LABELS: Record<keyof typeof CAROUSEL_FONT_STACKS, string> = {
+  playfair: "Playfair",
+  inter: "Inter",
+  poppins: "Poppins",
+  georgia: "Georgia",
+};
+const CAROUSEL_TEXT_COLOR = "#17110d";
+const CAROUSEL_EDIT_W = 360;
+const CAROUSEL_EXPORT_W = 1080;
+const CAROUSEL_EXPORT_H = 1920;
+const CAROUSEL_FONT_RATIO = 0.061;
 /** Layout format only — bold outline (“CapCut style”) is a separate Style control. */
 type UiFormat = "center" | "card" | "stack";
+
+type CarouselFontId = keyof typeof CAROUSEL_FONT_STACKS;
+
+function carouselFontId(tb: CarouselTextBox): CarouselFontId {
+  const f = tb.font;
+  return f && f in CAROUSEL_FONT_STACKS ? f : "playfair";
+}
 
 function layoutFormatFromTemplateId(id: VideoSpec["templateId"] | undefined | null): UiFormat {
   switch (id) {
@@ -218,6 +263,24 @@ function canonicalFormatKey(k: string | null | undefined): string | null {
   if (!k?.trim()) return null;
   if (k === "b_roll") return "b_roll_reel";
   return k;
+}
+
+const CAROUSEL_ROLE_LABELS: Record<string, string> = {
+  cover: "Cover",
+  body: "Body",
+  screenshot: "Screenshot",
+  quote: "Quote",
+  cta: "CTA",
+  other: "Other",
+};
+
+function carouselTemplateSummary(template: ClientCarouselTemplate | null | undefined): string | null {
+  if (!template?.slides?.length) return null;
+  const roles = [...template.slides]
+    .sort((a, b) => a.idx - b.idx)
+    .map((slide) => CAROUSEL_ROLE_LABELS[slide.role] ?? slide.role)
+    .join(" · ");
+  return `${template.slides.length} slide${template.slides.length === 1 ? "" : "s"} · ${roles}`;
 }
 
 /**
@@ -512,28 +575,328 @@ function ClientImagesPicker({
   );
 }
 
+function mergeCarouselTextBox(slide: CarouselSlide, totalSlides: number): CarouselTextBox {
+  const defaults: CarouselTextBox =
+    slide.idx === 0
+      ? { x: 0.5, y: 0.42, width: 0.88, align: "center", scale: 1.05, card: false, font: "playfair" }
+      : slide.idx === totalSlides - 1
+        ? { x: 0.5, y: 0.85, width: 0.8, align: "center", scale: 1.0, card: true, font: "playfair" }
+        : { x: 0.5, y: 0.82, width: 0.84, align: "center", scale: 1.0, card: false, font: "playfair" };
+  return { ...defaults, ...(slide.text_box ?? {}) };
+}
+
+function mergeCarouselBackgroundStyle(slide: CarouselSlide): CarouselBackgroundStyle {
+  return {
+    overlay_color: "#ffffff",
+    overlay_opacity: 0,
+    ...(slide.background_style ?? {}),
+  };
+}
+
+function clamp01(n: number): number {
+  return Math.min(1, Math.max(0, n));
+}
+
+function clampRange(n: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, n));
+}
+
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
+  const res = await fetch(dataUrl);
+  return await res.blob();
+}
+
+async function addFabricBackground(canvas: StaticCanvas, url: string, width: number, height: number) {
+  const img = await FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+  const scale = Math.max(width / Math.max(1, img.width || width), height / Math.max(1, img.height || height));
+  img.set({
+    left: width / 2,
+    top: height / 2,
+    originX: "center",
+    originY: "center",
+    scaleX: scale,
+    scaleY: scale,
+    selectable: false,
+    evented: false,
+  });
+  canvas.add(img);
+  canvas.sendObjectToBack(img);
+}
+
+function addFabricText(
+  canvas: StaticCanvas,
+  slide: CarouselSlide,
+  tb: CarouselTextBox,
+  width: number,
+  height: number,
+) {
+  const fontSize = Math.round(width * CAROUSEL_FONT_RATIO * tb.scale);
+  const bgStyle = mergeCarouselBackgroundStyle(slide);
+  const textbox = new Textbox(slide.text || "", {
+    left: tb.x * width,
+    top: tb.y * height,
+    originX: "center",
+    originY: "center",
+    width: width * tb.width,
+    fontFamily: CAROUSEL_FONT_STACKS[carouselFontId(tb)],
+    fontSize,
+    fontWeight: "700",
+    fill: CAROUSEL_TEXT_COLOR,
+    textAlign: tb.align,
+    lineHeight: 1.18,
+    backgroundColor: tb.card ? "rgba(255,255,255,0.88)" : "",
+    padding: tb.card ? Math.round(fontSize * 0.35) : 0,
+    selectable: false,
+    evented: false,
+    lockRotation: true,
+    borderColor: "#f59e0b",
+    cornerColor: "#f59e0b",
+    cornerStrokeColor: "#111827",
+    cornerStyle: "circle",
+    transparentCorners: false,
+  });
+  if (bgStyle.overlay_opacity > 0) {
+    const overlay = new Rect({
+      left: 0,
+      top: 0,
+      width,
+      height,
+      fill: bgStyle.overlay_color,
+      opacity: bgStyle.overlay_opacity,
+      selectable: false,
+      evented: false,
+    });
+    canvas.add(overlay);
+  }
+  canvas.add(textbox);
+  return textbox;
+}
+
+async function renderFabricSlideDataUrl(slide: CarouselSlide, totalSlides: number): Promise<string> {
+  const bgUrl = (slide.base_image_url || "").trim();
+  if (!bgUrl) throw new Error("Slide must be made editable before export.");
+  const el = document.createElement("canvas");
+  el.width = CAROUSEL_EXPORT_W;
+  el.height = CAROUSEL_EXPORT_H;
+  const canvas = new StaticCanvas(el, {
+    width: CAROUSEL_EXPORT_W,
+    height: CAROUSEL_EXPORT_H,
+    backgroundColor: "#ffffff",
+    enableRetinaScaling: false,
+  });
+  await addFabricBackground(canvas, bgUrl, CAROUSEL_EXPORT_W, CAROUSEL_EXPORT_H);
+  addFabricText(canvas, slide, mergeCarouselTextBox(slide, totalSlides), CAROUSEL_EXPORT_W, CAROUSEL_EXPORT_H);
+  canvas.renderAll();
+  const dataUrl = canvas.toDataURL({ format: "png", multiplier: 1 });
+  canvas.dispose();
+  return dataUrl;
+}
+
+function CarouselTextLayerEditor({
+  slide,
+  totalSlides,
+  busy,
+  onTextBoxAdjust,
+  onCommit,
+}: {
+  slide: CarouselSlide;
+  totalSlides: number;
+  busy: boolean;
+  onTextBoxAdjust?: (textBox: CarouselTextBox) => void;
+  onCommit?: () => void | Promise<void>;
+}) {
+  const bgUrl = (slide.base_image_url || "").trim() || (slide.image_url || "").trim();
+  const tb = mergeCarouselTextBox(slide, totalSlides);
+  const bgStyle = mergeCarouselBackgroundStyle(slide);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{ startX: number; startY: number; tb0: CarouselTextBox } | null>(null);
+  const resizeRef = useRef<{ startX: number; startY: number; tb0: CarouselTextBox; sx: -1 | 1; sy: -1 | 1 } | null>(null);
+  const [active, setActive] = useState(false);
+
+  useEffect(() => {
+    if (!active) return;
+    const onMove = (e: PointerEvent) => {
+      const stage = stageRef.current;
+      if (!stage) return;
+      const r = stage.getBoundingClientRect();
+      const drag = dragRef.current;
+      if (drag) {
+        onTextBoxAdjust?.({
+          ...drag.tb0,
+          x: clamp01(drag.tb0.x + (e.clientX - drag.startX) / Math.max(1, r.width)),
+          y: clamp01(drag.tb0.y + (e.clientY - drag.startY) / Math.max(1, r.height)),
+        });
+        return;
+      }
+      const resize = resizeRef.current;
+      if (resize) {
+        onTextBoxAdjust?.({
+          ...resize.tb0,
+          width: clampRange(resize.tb0.width + resize.sx * ((e.clientX - resize.startX) / Math.max(1, r.width)) * 2, 0.25, 1),
+          scale: clampRange(resize.tb0.scale + resize.sy * ((e.clientY - resize.startY) / Math.max(1, r.height)) * 1.6, 0.4, 2),
+        });
+      }
+    };
+    const onUp = () => {
+      dragRef.current = null;
+      resizeRef.current = null;
+      setActive(false);
+      void onCommit?.();
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, [active, onCommit, onTextBoxAdjust]);
+
+  const startDrag = (e: React.PointerEvent) => {
+    if (busy || !slide.base_image_url) return;
+    e.preventDefault();
+    dragRef.current = { startX: e.clientX, startY: e.clientY, tb0: { ...tb } };
+    setActive(true);
+  };
+  const startResize = (sx: -1 | 1, sy: -1 | 1) => (e: React.PointerEvent) => {
+    if (busy || !slide.base_image_url) return;
+    e.preventDefault();
+    e.stopPropagation();
+    resizeRef.current = { startX: e.clientX, startY: e.clientY, tb0: { ...tb }, sx, sy };
+    setActive(true);
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (busy || !slide.base_image_url) return;
+    const step = e.shiftKey ? 0.025 : 0.0075;
+    const deltas: Partial<Record<string, { dx: number; dy: number }>> = {
+      ArrowLeft: { dx: -step, dy: 0 },
+      ArrowRight: { dx: step, dy: 0 },
+      ArrowUp: { dx: 0, dy: -step },
+      ArrowDown: { dx: 0, dy: step },
+    };
+    const delta = deltas[e.key];
+    if (!delta) return;
+    e.preventDefault();
+    onTextBoxAdjust?.({
+      ...tb,
+      x: clamp01(tb.x + delta.dx),
+      y: clamp01(tb.y + delta.dy),
+    });
+  };
+
+  return (
+    <div
+      ref={stageRef}
+      tabIndex={slide.base_image_url && !busy ? 0 : -1}
+      onKeyDown={onKeyDown}
+      onBlur={() => void onCommit?.()}
+      aria-label="Carousel text editor. Use arrow keys to nudge the selected text."
+      className="relative h-[640px] w-[360px] overflow-hidden rounded-2xl bg-white shadow-[0_18px_60px_rgba(0,0,0,0.35)] outline-none focus:ring-2 focus:ring-amber-500/45"
+    >
+      {bgUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={bgUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
+      ) : (
+        <div className="absolute inset-0 bg-app-soft" />
+      )}
+      {bgStyle.overlay_opacity > 0 ? (
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{
+            backgroundColor: bgStyle.overlay_color,
+            opacity: bgStyle.overlay_opacity,
+          }}
+        />
+      ) : null}
+      {slide.base_image_url ? (
+        <div
+          className="absolute cursor-grab outline outline-2 outline-amber-400/90 outline-offset-2 active:cursor-grabbing"
+          style={{
+            left: `${tb.x * 100}%`,
+            top: `${tb.y * 100}%`,
+            width: `${tb.width * 100}%`,
+            transform: "translate(-50%, -50%)",
+            color: CAROUSEL_TEXT_COLOR,
+            fontFamily: CAROUSEL_FONT_STACKS[carouselFontId(tb)],
+            fontSize: `${Math.round(CAROUSEL_EDIT_W * CAROUSEL_FONT_RATIO * tb.scale)}px`,
+            fontWeight: 700,
+            lineHeight: 1.18,
+            textAlign: tb.align,
+            background: tb.card ? "rgba(255,255,255,0.88)" : "transparent",
+            borderRadius: tb.card ? "0.45rem" : undefined,
+            padding: tb.card ? "0.35em 0.45em" : undefined,
+          }}
+          onPointerDown={startDrag}
+          title="Drag to move. Use arrow keys to nudge, Shift+Arrow for bigger nudges."
+        >
+          {slide.text || "Text"}
+          {([
+            ["left-0 top-0 -translate-x-1/2 -translate-y-1/2 cursor-nwse-resize", -1, -1],
+            ["right-0 top-0 translate-x-1/2 -translate-y-1/2 cursor-nesw-resize", 1, -1],
+            ["left-0 bottom-0 -translate-x-1/2 translate-y-1/2 cursor-nesw-resize", -1, 1],
+            ["right-0 bottom-0 translate-x-1/2 translate-y-1/2 cursor-nwse-resize", 1, 1],
+          ] as const).map(([klass, sx, sy]) => (
+            <span
+              key={klass}
+              aria-hidden
+              onPointerDown={startResize(sx, sy)}
+              className={`absolute h-3.5 w-3.5 rounded-full border border-zinc-950/60 bg-amber-400 shadow ${klass}`}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function CarouselSection({
-  clientSlug,
   sessionId,
   slides,
   images,
   busy,
   generating,
+  convertingEditable,
   count,
+  countLocked,
+  countHint,
   onCountChange,
   onGenerateAll,
+  onConvertToEditable,
   onRegenerateOne,
   onTextEdit,
+  onLayoutCommit,
+  onTextBoxAdjust,
+  onBackgroundStyleAdjust,
+  onApplyTextStyleToAll,
+  onApplyBackgroundToAll,
+  onError,
 }: {
-  clientSlug: string;
   sessionId: string;
   slides: CarouselSlide[];
   images: ClientImageRow[];
   busy: boolean;
   generating: boolean;
+  convertingEditable: boolean;
   count: number;
+  /** When true, slide count comes from the saved carousel recipe (backend matches template). */
+  countLocked?: boolean;
+  countHint?: string;
   onCountChange: (n: number) => void;
   onGenerateAll: () => void | Promise<void>;
+  onConvertToEditable: () => void | Promise<void>;
   onRegenerateOne: (
     idx: number,
     text: string,
@@ -541,10 +904,50 @@ function CarouselSection({
     clientImageId?: string,
   ) => void | Promise<void>;
   onTextEdit: (idx: number, text: string) => void;
+  onLayoutCommit: (idx: number) => void | Promise<void>;
+  onTextBoxAdjust: (idx: number, text_box: CarouselTextBox) => void;
+  onBackgroundStyleAdjust: (idx: number, background_style: CarouselBackgroundStyle) => void;
+  onApplyTextStyleToAll: (sourceIdx: number) => void | Promise<void>;
+  onApplyBackgroundToAll: (sourceIdx: number) => void | Promise<void>;
+  onError: (message: string) => void;
 }) {
   const [pickerOpenForIdx, setPickerOpenForIdx] = useState<number | null>(null);
-  const zipUrl = slides.length > 0 ? carouselSlidesZipUrl(clientSlug, sessionId) : null;
+  const [exportBusy, setExportBusy] = useState(false);
+  const [selectedIdx, setSelectedIdx] = useState(0);
   const slideCountLabel = `${slides.length} slide${slides.length === 1 ? "" : "s"}`;
+  const needsEditableConversion = slides.some((s) => !(s.base_image_url || "").trim());
+  const selectedSlide = slides.find((s) => s.idx === selectedIdx) ?? slides[0] ?? null;
+  const selectedTextBox = selectedSlide ? mergeCarouselTextBox(selectedSlide, slides.length) : null;
+  const selectedBackgroundStyle = selectedSlide ? mergeCarouselBackgroundStyle(selectedSlide) : null;
+  const selectedHasCleanBase = Boolean((selectedSlide?.base_image_url || "").trim());
+  const selectedPickerOpen = selectedSlide != null && pickerOpenForIdx === selectedSlide.idx;
+
+  useEffect(() => {
+    if (slides.length === 0) return;
+    if (!slides.some((s) => s.idx === selectedIdx)) {
+      setSelectedIdx(slides[0]?.idx ?? 0);
+    }
+  }, [selectedIdx, slides]);
+
+  const onDownloadZip = useCallback(async () => {
+    if (slides.length === 0 || needsEditableConversion) return;
+    setExportBusy(true);
+    try {
+      await document.fonts?.ready;
+      const zip = new JSZip();
+      for (const slide of slides) {
+        const dataUrl = await renderFabricSlideDataUrl(slide, slides.length);
+        const blob = await dataUrlToBlob(dataUrl);
+        zip.file(`slide_${slide.idx + 1}.png`, blob);
+      }
+      const out = await zip.generateAsync({ type: "blob" });
+      downloadBlob(out, `carousel_${sessionId}.zip`);
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Could not export carousel.");
+    } finally {
+      setExportBusy(false);
+    }
+  }, [needsEditableConversion, onError, sessionId, slides]);
 
   return (
     <div className="space-y-4">
@@ -556,6 +959,11 @@ function CarouselSection({
             <label className="text-[11px] font-semibold text-app-fg-muted">
               Slide count
               <span className="ml-1 font-normal">(3–10)</span>
+              {countLocked ? (
+                <span className="ml-1 block font-normal text-app-fg-subtle">
+                  — fixed by your carousel recipe
+                </span>
+              ) : null}
             </label>
             <div className="flex items-center gap-3">
               <input
@@ -565,12 +973,16 @@ function CarouselSection({
                 step={1}
                 value={count}
                 onChange={(e) => onCountChange(Number(e.target.value))}
-                className="w-44 accent-amber-500"
-                disabled={generating}
+                className="w-44 accent-amber-500 disabled:opacity-50"
+                disabled={generating || busy || countLocked}
               />
               <span className="min-w-[2ch] text-sm font-bold text-app-fg">{count}</span>
             </div>
           </div>
+
+          {countHint ? (
+            <p className="w-full text-[11px] leading-relaxed text-app-fg-subtle">{countHint}</p>
+          ) : null}
 
           <button
             type="button"
@@ -582,15 +994,17 @@ function CarouselSection({
             {generating ? "Generating…" : slides.length > 0 ? "Regenerate all slides" : "Generate slides"}
           </button>
 
-          {zipUrl && (
-            <a
-              href={zipUrl}
-              download={`carousel_${sessionId}.zip`}
-              className="ml-auto inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 text-xs font-bold text-zinc-950 shadow-md shadow-emerald-900/25 hover:opacity-90"
+          {slides.length > 0 && (
+            <button
+              type="button"
+              disabled={busy || exportBusy || needsEditableConversion}
+              onClick={() => void onDownloadZip()}
+              className="ml-auto inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 text-xs font-bold text-zinc-950 shadow-md shadow-emerald-900/25 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              title={needsEditableConversion ? "Make slides editable before downloading" : "Download exactly what you see"}
             >
-              <Download className="h-3.5 w-3.5" />
-              Download all (.zip)
-            </a>
+              {exportBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+              {exportBusy ? "Exporting..." : "Download all (.zip)"}
+            </button>
           )}
         </div>
 
@@ -598,94 +1012,324 @@ function CarouselSection({
           <p className="rounded-xl border border-dashed border-app-divider/60 py-8 text-center text-xs text-app-fg-subtle">
             No slides yet — pick a count and hit Generate slides. Slide&nbsp;1 becomes your Instagram cover automatically.
           </p>
-        ) : (
+        ) : selectedSlide && selectedTextBox && selectedBackgroundStyle ? (
           <>
-            <p className="mb-3 text-[11px] text-app-fg-muted">
-              {slideCountLabel} · 9:16 PNGs · Slide&nbsp;1 is the IG cover. Edit text inline; hit{" "}
-              <span className="font-semibold">Re-render</span> to redraw the image with new text or a different source.
-            </p>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-              {slides.map((s) => {
-                const isPickerOpen = pickerOpenForIdx === s.idx;
-                return (
-                  <div
-                    key={s.idx}
-                    className="flex flex-col gap-2 rounded-xl border border-app-divider bg-app-chip-bg/30 p-2"
-                  >
-                    <div
-                      className="overflow-hidden rounded-lg border border-app-divider bg-black/10"
-                      style={{ aspectRatio: "9/16" }}
+            {needsEditableConversion ? (
+              <div className="mb-3 flex flex-wrap items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+                <p className="min-w-0 flex-1 text-[11px] leading-relaxed text-app-fg-muted">
+                  This carousel is a flat PNG. Make it editable once, then the center canvas becomes the source of truth.
+                </p>
+                <button
+                  type="button"
+                  disabled={busy || convertingEditable}
+                  onClick={() => void onConvertToEditable()}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-1.5 text-[11px] font-bold text-zinc-950 hover:opacity-90 disabled:opacity-50"
+                >
+                  {convertingEditable ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5" />
+                  )}
+                  {convertingEditable ? "Converting..." : "Make editable"}
+                </button>
+              </div>
+            ) : (
+              <p className="mb-3 text-[11px] text-app-fg-muted">
+                {slideCountLabel} · Select a slide, drag the text on the big canvas, then download exactly that render.
+              </p>
+            )}
+            <div className="grid gap-5 lg:grid-cols-[132px_minmax(0,420px)_minmax(260px,1fr)]">
+              <div className="flex gap-2 overflow-x-auto pb-2 lg:flex-col lg:overflow-visible lg:pb-0">
+                {slides.map((slide) => {
+                  const active = slide.idx === selectedSlide.idx;
+                  const thumbUrl = (slide.base_image_url || "").trim() || (slide.image_url || "").trim();
+                  return (
+                    <button
+                      key={slide.idx}
+                      type="button"
+                      onClick={() => setSelectedIdx(slide.idx)}
+                      className={`w-24 shrink-0 rounded-xl border p-1 text-left transition lg:w-full ${
+                        active
+                          ? "border-amber-500 bg-amber-500/10 shadow-[0_0_0_1px_rgba(245,158,11,0.4)]"
+                          : "border-app-divider bg-app-chip-bg/30 hover:border-amber-500/40"
+                      }`}
                     >
-                      {s.image_url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={s.image_url}
-                          alt={`Slide ${s.idx + 1}`}
-                          className="block h-full w-full object-cover"
-                        />
-                      ) : (
-                        <div className="flex h-full items-center justify-center text-[10px] text-app-fg-subtle">
-                          (no image)
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-semibold uppercase tracking-wider text-app-fg-muted">
-                        Slide {s.idx + 1}
-                        {s.idx === 0 && (
-                          <span className="ml-1 rounded bg-amber-500/20 px-1 text-amber-700 dark:text-amber-400">
-                            cover
-                          </span>
-                        )}
+                      <div className="overflow-hidden rounded-lg bg-black/10" style={{ aspectRatio: "9/16" }}>
+                        {thumbUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={thumbUrl} alt="" className="h-full w-full object-cover" />
+                        ) : null}
+                      </div>
+                      <p className="mt-1 truncate text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">
+                        Slide {slide.idx + 1}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="flex flex-col items-center gap-3">
+                <CarouselTextLayerEditor
+                  slide={selectedSlide}
+                  totalSlides={slides.length}
+                  busy={busy}
+                  onTextBoxAdjust={(next) => onTextBoxAdjust(selectedSlide.idx, next)}
+                  onCommit={() => void onLayoutCommit(selectedSlide.idx)}
+                />
+                {!selectedHasCleanBase ? (
+                  <p className="max-w-[360px] rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-center text-[11px] leading-relaxed text-app-fg-muted">
+                    This slide is still a flat image. Use <span className="font-semibold">Make editable</span> to split
+                    background and text.
+                  </p>
+                ) : null}
+              </div>
+
+              <div className="space-y-4 rounded-2xl border border-app-divider bg-app-chip-bg/20 p-4">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">
+                    Slide {selectedSlide.idx + 1}
+                    {selectedSlide.idx === 0 ? (
+                      <span className="ml-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-amber-700 dark:text-amber-300">
+                        Cover
                       </span>
+                    ) : null}
+                  </p>
+                  <p className="mt-1 text-xs text-app-fg-muted">
+                    {selectedHasCleanBase
+                      ? "Drag the text on the canvas. These controls fine-tune the same layer."
+                      : "Make the slide editable before moving or styling text."}
+                  </p>
+                </div>
+
+                <label className="block space-y-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Text</span>
+                  <textarea
+                    value={selectedSlide.text}
+                    onChange={(e) => onTextEdit(selectedSlide.idx, e.target.value)}
+                    rows={5}
+                    className="glass-inset w-full resize-y rounded-xl px-3 py-2 text-sm leading-snug text-app-fg placeholder:text-app-fg-subtle focus:outline-none focus:ring-2 focus:ring-amber-500/35"
+                  />
+                </label>
+
+                {selectedHasCleanBase ? (
+                  <>
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Position</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(
+                          [
+                            { label: "Top", patch: { x: 0.5, y: 0.22 } },
+                            { label: "Middle", patch: { x: 0.5, y: 0.5 } },
+                            { label: "Bottom", patch: { x: 0.5, y: 0.82 } },
+                          ] as const
+                        ).map((opt) => (
+                          <button
+                            key={opt.label}
+                            type="button"
+                            disabled={busy}
+                            onClick={() => {
+                              onTextBoxAdjust(selectedSlide.idx, { ...selectedTextBox, ...opt.patch });
+                              void onLayoutCommit(selectedSlide.idx);
+                            }}
+                            className="rounded-lg border border-app-divider px-3 py-1.5 text-xs font-semibold text-app-fg-muted hover:text-app-fg disabled:opacity-40"
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => {
+                            onTextBoxAdjust(selectedSlide.idx, { ...selectedTextBox, x: 0.5 });
+                            void onLayoutCommit(selectedSlide.idx);
+                          }}
+                          className="rounded-lg border border-app-divider px-3 py-1.5 text-xs font-semibold text-app-fg-muted hover:text-app-fg disabled:opacity-40"
+                        >
+                          Center horizontally
+                        </button>
+                      </div>
+                      <p className="text-[10px] leading-relaxed text-app-fg-subtle">
+                        Drag freely on the canvas. Use presets when you want a clean starting point.
+                      </p>
                     </div>
-                    <textarea
-                      value={s.text}
-                      onChange={(e) => onTextEdit(s.idx, e.target.value)}
-                      rows={3}
-                      className="glass-inset w-full resize-y rounded-lg px-2 py-1.5 text-[11px] leading-snug text-app-fg placeholder:text-app-fg-subtle focus:outline-none focus:ring-2 focus:ring-amber-500/35"
+
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Font</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(Object.keys(CAROUSEL_FONT_STACKS) as CarouselFontId[]).map((font) => {
+                          const active = carouselFontId(selectedTextBox) === font;
+                          return (
+                            <button
+                              key={font}
+                              type="button"
+                              aria-pressed={active}
+                              onClick={() => {
+                                onTextBoxAdjust(selectedSlide.idx, { ...selectedTextBox, font });
+                                void onLayoutCommit(selectedSlide.idx);
+                              }}
+                              className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+                                active ? STYLE_CHIP_ON : STYLE_CHIP_OFF
+                              }`}
+                              style={{ fontFamily: CAROUSEL_FONT_STACKS[font] }}
+                            >
+                              {CAROUSEL_FONT_LABELS[font]}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Alignment</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(["left", "center", "right"] as const).map((align) => {
+                          const active = selectedTextBox.align === align;
+                          return (
+                            <button
+                              key={align}
+                              type="button"
+                              aria-pressed={active}
+                              onClick={() => {
+                                onTextBoxAdjust(selectedSlide.idx, { ...selectedTextBox, align });
+                                void onLayoutCommit(selectedSlide.idx);
+                              }}
+                              className={`rounded-lg border px-3 py-1.5 text-xs font-semibold capitalize transition ${
+                                active ? STYLE_CHIP_ON : STYLE_CHIP_OFF
+                              }`}
+                            >
+                              {align}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <label className="flex cursor-pointer items-center gap-2 text-xs text-app-fg-muted">
+                      <input
+                        type="checkbox"
+                        checked={selectedTextBox.card}
+                        disabled={busy}
+                        onChange={(e) => {
+                          onTextBoxAdjust(selectedSlide.idx, { ...selectedTextBox, card: e.target.checked });
+                          void onLayoutCommit(selectedSlide.idx);
+                        }}
+                        className="rounded border-app-divider"
+                      />
+                      Card behind text
+                    </label>
+
+                    <LayoutSlider
+                      label="Text box width"
+                      leftHint="Narrow"
+                      rightHint="Wide"
+                      min={0.25}
+                      max={1}
+                      step={0.01}
+                      value={selectedTextBox.width}
+                      disabled={busy}
+                      formatValue={(v) => `${Math.round(v * 100)}%`}
+                      onChange={(v) => onTextBoxAdjust(selectedSlide.idx, { ...selectedTextBox, width: v })}
+                      onCommit={() => void onLayoutCommit(selectedSlide.idx)}
                     />
-                    <div className="flex items-center gap-1.5">
+                    <p className="text-[10px] leading-relaxed text-app-fg-subtle">
+                      Width changes wrapping. Size changes the letter scale.
+                    </p>
+                    <LayoutSlider
+                      label="Text size"
+                      leftHint="Smaller"
+                      rightHint="Larger"
+                      min={0.4}
+                      max={2}
+                      step={0.05}
+                      value={selectedTextBox.scale}
+                      disabled={busy}
+                      formatValue={(v) => `${Math.round(v * 100)}%`}
+                      onChange={(v) => onTextBoxAdjust(selectedSlide.idx, { ...selectedTextBox, scale: v })}
+                      onCommit={() => void onLayoutCommit(selectedSlide.idx)}
+                    />
+                  </>
+                ) : null}
+
+                <div className="flex flex-wrap gap-2 border-t border-app-divider/50 pt-4">
+                  <div className="w-full space-y-3">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Background</p>
+                    <LayoutSlider
+                      label="Background wash"
+                      leftHint="Original"
+                      rightHint="Washed"
+                      min={0}
+                      max={1}
+                      step={0.025}
+                      value={selectedBackgroundStyle.overlay_opacity}
+                      disabled={busy}
+                      formatValue={(v) => `${Math.round(v * 100)}%`}
+                      onChange={(v) =>
+                        onBackgroundStyleAdjust(selectedSlide.idx, {
+                          ...selectedBackgroundStyle,
+                          overlay_opacity: v,
+                        })
+                      }
+                      onCommit={() => void onLayoutCommit(selectedSlide.idx)}
+                    />
+                    <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
                         disabled={busy}
-                        onClick={() =>
-                          void onRegenerateOne(s.idx, s.text || "", "ai")
-                        }
-                        className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg border border-app-divider px-2 py-1 text-[10px] font-semibold text-app-fg-muted hover:text-app-fg disabled:opacity-40"
+                        onClick={() => void onApplyBackgroundToAll(selectedSlide.idx)}
+                        className="rounded-lg border border-app-divider px-3 py-1.5 text-xs font-semibold text-app-fg-muted hover:text-app-fg disabled:opacity-40"
                       >
-                        <RefreshCw className="h-3 w-3" /> Re-render
+                        Apply background fade to all
                       </button>
                       <button
                         type="button"
-                        disabled={busy || images.length === 0}
-                        onClick={() => setPickerOpenForIdx(isPickerOpen ? null : s.idx)}
-                        className="inline-flex items-center justify-center gap-1 rounded-lg border border-app-divider px-2 py-1 text-[10px] font-semibold text-app-fg-muted hover:text-app-fg disabled:opacity-40"
-                        title={images.length === 0 ? "No client images uploaded" : "Use a client image"}
+                        disabled={busy}
+                        onClick={() => void onApplyTextStyleToAll(selectedSlide.idx)}
+                        className="rounded-lg border border-app-divider px-3 py-1.5 text-xs font-semibold text-app-fg-muted hover:text-app-fg disabled:opacity-40"
                       >
-                        <ImageIcon className="h-3 w-3" />
+                        Apply text style to all
                       </button>
                     </div>
-                    {isPickerOpen && (
-                      <div className="mt-1 rounded-lg border border-app-divider/60 bg-app-chip-bg/40 p-1.5">
-                        <ClientImagesPicker
-                          images={images}
-                          selectedImageId=""
-                          busy={busy}
-                          onPick={(id) => {
-                            setPickerOpenForIdx(null);
-                            void onRegenerateOne(s.idx, s.text || "", "client_image", id);
-                          }}
-                          emptyHint="No client images yet."
-                        />
-                      </div>
-                    )}
                   </div>
-                );
-              })}
+
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void onRegenerateOne(selectedSlide.idx, selectedSlide.text || "", "ai")}
+                    className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-app-divider px-3 py-2 text-xs font-bold text-app-fg-muted hover:text-app-fg disabled:opacity-40"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    {selectedHasCleanBase ? "Regenerate background" : "Make editable"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy || images.length === 0}
+                    onClick={() => setPickerOpenForIdx(selectedPickerOpen ? null : selectedSlide.idx)}
+                    className="inline-flex items-center justify-center gap-1 rounded-xl border border-app-divider px-3 py-2 text-xs font-bold text-app-fg-muted hover:text-app-fg disabled:opacity-40"
+                    title={images.length === 0 ? "No client images uploaded" : "Use a client image"}
+                  >
+                    <ImageIcon className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+
+                {selectedPickerOpen ? (
+                  <div className="rounded-xl border border-app-divider/60 bg-app-chip-bg/40 p-2">
+                    <ClientImagesPicker
+                      images={images}
+                      selectedImageId=""
+                      busy={busy}
+                      onPick={(id) => {
+                        setPickerOpenForIdx(null);
+                        void onRegenerateOne(selectedSlide.idx, selectedSlide.text || "", "client_image", id);
+                      }}
+                      emptyHint="No client images yet."
+                    />
+                  </div>
+                ) : null}
+              </div>
             </div>
+
           </>
-        )}
+        ) : null}
       </div>
     </div>
   );
@@ -1508,10 +2152,14 @@ export function VideoCreateWorkspace({
   const [carouselCount, setCarouselCount] = useState(6);
   const [carouselGenBusy, setCarouselGenBusy] = useState(false);
   const [carouselSlideBusy, setCarouselSlideBusy] = useState(false);
+  const [carouselConvertBusy, setCarouselConvertBusy] = useState(false);
   const [carouselDraft, setCarouselDraft] = useState<CarouselSlide[]>([]);
   const carouselDraftDirty = useRef(false);
   const carouselDraftRef = useRef<CarouselSlide[]>([]);
   const carouselSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Generation carousel templates — same library GET as Generate; used to swap snapshots before slides exist. */
+  const [carouselTemplateLibrary, setCarouselTemplateLibrary] = useState<ClientCarouselTemplate[]>([]);
+  const [carouselTemplateBusy, setCarouselTemplateBusy] = useState(false);
 
   useEffect(() => {
     carouselDraftRef.current = carouselDraft;
@@ -1539,10 +2187,19 @@ export function VideoCreateWorkspace({
       const sorted = [...s.carousel_slides].sort((a, b) => a.idx - b.idx);
       // Server is source of truth unless the user is mid-edit on the same slide set.
       if (!carouselDraftDirty.current) {
-        setCarouselDraft(sorted.map((sl) => ({ ...sl })));
+        const next = sorted.map((sl) => {
+          const row = sl as CarouselSlide;
+          return {
+            ...row,
+            text_box: row.text_box ?? mergeCarouselTextBox(row, sorted.length),
+          };
+        });
+        carouselDraftRef.current = next;
+        setCarouselDraft(next);
         if (sorted.length > 0) setCarouselCount(sorted.length);
       }
     } else if (!carouselDraftDirty.current) {
+      carouselDraftRef.current = [];
       setCarouselDraft([]);
     }
     onSessionUpdatedRef.current?.(s);
@@ -1555,12 +2212,16 @@ export function VideoCreateWorkspace({
     if (!cs || !os || !sessionId) return;
     setBootstrapDone(false);
     void (async () => {
-      const [sRes, bRes, iRes] = await Promise.all([
+      const [sRes, bRes, iRes, libRes] = await Promise.all([
         generationGetSession(cs, os, sessionId),
         brollList(cs, os),
         clientImagesList(cs, os),
+        fetchClientGenerationLibraries(cs, os),
       ]);
       if (cancelled) return;
+      if (libRes.ok) {
+        setCarouselTemplateLibrary(libRes.data.carouselTemplates);
+      }
       if (!sRes.ok) {
         show(sRes.error, "error");
       } else {
@@ -1646,6 +2307,27 @@ export function VideoCreateWorkspace({
   const isCarousel = fk === "carousel";
   const isBroll = fk === "b_roll_reel";
   const isTalkingHead = fk === "talking_head";
+  /** PNG slides exist — carousel reference snapshot is immutable (backend + product). */
+  const carouselSlidesLocked = useMemo(() => {
+    const slides = session?.carousel_slides;
+    return Array.isArray(slides) && slides.length > 0;
+  }, [session?.carousel_slides]);
+
+  /** When a carousel recipe is snapshotted on the session, backend uses its slide count (3–10). */
+  const templateSnapshotSlideCount = useMemo(() => {
+    const snap = session?.selected_carousel_template as { slides?: unknown } | null | undefined;
+    if (!snap || typeof snap !== "object") return null;
+    const slides = snap.slides;
+    if (!Array.isArray(slides) || slides.length < 3) return null;
+    return Math.min(10, Math.max(3, slides.length));
+  }, [session?.selected_carousel_template]);
+
+  useEffect(() => {
+    if (!isCarousel || carouselSlidesLocked) return;
+    if (templateSnapshotSlideCount != null) {
+      setCarouselCount(templateSnapshotSlideCount);
+    }
+  }, [carouselSlidesLocked, isCarousel, templateSnapshotSlideCount]);
 
   /** Sync the active bg-source tab with the session's background_type until the user
    *  explicitly clicks a tab; from then on the user's choice wins. b_roll_reel formats
@@ -2632,6 +3314,111 @@ export function VideoCreateWorkspace({
     }
   }, [applySession, carouselCount, clientSlug, orgSlug, session, show]);
 
+  const onPatchCarouselTemplate = useCallback(
+    async (templateId: string) => {
+      const tpl = carouselTemplateLibrary.find((t) => t.id === templateId);
+      const cs = clientSlug.trim();
+      const os = orgSlug.trim();
+      if (!tpl || !session || !cs || !os || carouselSlidesLocked) return;
+      setCarouselTemplateBusy(true);
+      try {
+        const res = await generationPatchSession(cs, os, session.id, {
+          selected_carousel_template: tpl,
+        });
+        if (!res.ok) {
+          show(res.error, "error");
+          return;
+        }
+        applySession(res.data);
+        show("Carousel reference updated.", "success");
+      } finally {
+        setCarouselTemplateBusy(false);
+      }
+    },
+    [
+      applySession,
+      carouselSlidesLocked,
+      carouselTemplateLibrary,
+      clientSlug,
+      orgSlug,
+      session,
+      show,
+    ],
+  );
+
+  const onCarouselTextBoxAdjust = useCallback((idx: number, text_box: CarouselTextBox) => {
+    const current = carouselDraftRef.current;
+    const next = current.map((s) => (s.idx === idx ? { ...s, text_box } : s));
+    carouselDraftRef.current = next;
+    setCarouselDraft(next);
+    carouselDraftDirty.current = true;
+  }, []);
+
+  const onCarouselBackgroundStyleAdjust = useCallback(
+    (idx: number, background_style: CarouselBackgroundStyle) => {
+      const current = carouselDraftRef.current;
+      const next = current.map((s) => (s.idx === idx ? { ...s, background_style } : s));
+      carouselDraftRef.current = next;
+      setCarouselDraft(next);
+      carouselDraftDirty.current = true;
+    },
+    [],
+  );
+
+  const commitCarouselDraft = useCallback(async () => {
+    const cs = clientSlug.trim();
+    const os = orgSlug.trim();
+    if (!session || !cs || !os) return false;
+    const res = await carouselSlidesPatch(cs, os, session.id, carouselDraftRef.current);
+    if (!res.ok) {
+      show(res.error, "error");
+      return false;
+    }
+    carouselDraftDirty.current = false;
+    applySession(res.data);
+    return true;
+  }, [applySession, clientSlug, orgSlug, session, show]);
+
+  const onApplyCarouselTextStyleToAll = useCallback(
+    async (sourceIdx: number) => {
+      const source = carouselDraftRef.current.find((s) => s.idx === sourceIdx);
+      if (!source) return;
+      const sourceTb = mergeCarouselTextBox(source, carouselDraftRef.current.length);
+      const next = carouselDraftRef.current.map((s) => {
+        const tb = mergeCarouselTextBox(s, carouselDraftRef.current.length);
+        return {
+          ...s,
+          text_box: {
+            ...tb,
+            align: sourceTb.align,
+            scale: sourceTb.scale,
+            card: sourceTb.card,
+            font: sourceTb.font,
+          },
+        };
+      });
+      carouselDraftRef.current = next;
+      setCarouselDraft(next);
+      carouselDraftDirty.current = true;
+      if (await commitCarouselDraft()) show("Text style applied to all slides.", "success");
+    },
+    [commitCarouselDraft, show],
+  );
+
+  const onApplyCarouselBackgroundToAll = useCallback(
+    async (sourceIdx: number) => {
+      const source = carouselDraftRef.current.find((s) => s.idx === sourceIdx);
+      if (!source) return;
+      const background_style = mergeCarouselBackgroundStyle(source);
+      const next = carouselDraftRef.current.map((s) => ({ ...s, background_style }));
+      carouselDraftRef.current = next;
+      setCarouselDraft(next);
+      carouselDraftDirty.current = true;
+      if (await commitCarouselDraft()) show("Background fade applied to all slides.", "success");
+    },
+    [commitCarouselDraft, show],
+  );
+
   const onRegenerateCarouselSlide = useCallback(
     async (
       idx: number,
@@ -2644,11 +3431,15 @@ export function VideoCreateWorkspace({
       if (!session || !cs || !os) return;
       setCarouselSlideBusy(true);
       try {
+        const slideRow = carouselDraftRef.current.find((s) => s.idx === idx);
+        const nSlides = carouselDraftRef.current.length;
         const res = await carouselSlideRegenerate(cs, os, session.id, {
           idx,
           text,
           image_source: source,
           client_image_id: clientImageId,
+          layout: null,
+          text_box: slideRow ? mergeCarouselTextBox(slideRow, nSlides) : null,
         });
         if (!res.ok) {
           show(res.error, "error");
@@ -2664,11 +3455,53 @@ export function VideoCreateWorkspace({
     [applySession, clientSlug, orgSlug, session, show],
   );
 
+  const onConvertCarouselToEditable = useCallback(async () => {
+    const cs = clientSlug.trim();
+    const os = orgSlug.trim();
+    if (!session || !cs || !os) return;
+
+    const current = carouselDraftRef.current;
+    const flatSlides = current.filter((s) => !(s.base_image_url || "").trim());
+    if (flatSlides.length === 0) return;
+
+    setCarouselConvertBusy(true);
+    setCarouselSlideBusy(true);
+    try {
+      let latestSession: GenerationSession | null = null;
+      for (const slide of flatSlides) {
+        const res = await carouselSlideRegenerate(cs, os, session.id, {
+          idx: slide.idx,
+          text: slide.text,
+          image_source: "ai",
+          layout: null,
+          text_box: mergeCarouselTextBox(slide, current.length),
+        });
+        if (!res.ok) {
+          show(res.error, "error");
+          return;
+        }
+        latestSession = res.data;
+      }
+      if (latestSession) {
+        carouselDraftDirty.current = false;
+        applySession(latestSession);
+        show("Carousel is editable now.", "success");
+      }
+    } finally {
+      setCarouselSlideBusy(false);
+      setCarouselConvertBusy(false);
+    }
+  }, [applySession, clientSlug, orgSlug, session, show]);
+
+  const onCarouselLayoutCommit = useCallback(async () => {
+    await commitCarouselDraft();
+  }, [commitCarouselDraft]);
+
   const onCarouselTextEdit = useCallback(
     (idx: number, text: string) => {
-      setCarouselDraft((prev) =>
-        prev.map((s) => (s.idx === idx ? { ...s, text } : s)),
-      );
+      const next = carouselDraftRef.current.map((s) => (s.idx === idx ? { ...s, text } : s));
+      carouselDraftRef.current = next;
+      setCarouselDraft(next);
       carouselDraftDirty.current = true;
       const cs = clientSlug.trim();
       const os = orgSlug.trim();
@@ -2755,7 +3588,7 @@ export function VideoCreateWorkspace({
           </div>
           <p className="mb-3 text-xs leading-relaxed text-app-fg-muted">
             Talking-head format — film yourself reading this script. Edit freely; markdown headings
-            (##&nbsp;Hook, ##&nbsp;Build-up, ##&nbsp;Reframe, ##&nbsp;Clarity, ##&nbsp;CTA) match the Silas brief.
+            (##&nbsp;Hook, ##&nbsp;Build-up, ##&nbsp;Reframe, ##&nbsp;Clarity, ##&nbsp;CTA) match the content brief.
           </p>
           <textarea
             value={scriptDraft}
@@ -2827,20 +3660,157 @@ export function VideoCreateWorkspace({
 
   // ─────────────────────────────── carousel flow (PNG slides → ZIP) ───────────────────────────────
   if (isCarousel) {
+    const snap = session.selected_carousel_template;
+    const snapId = snap && typeof snap === "object" && typeof snap.id === "string" ? snap.id : "";
+    const snapInLibrary =
+      snapId !== "" && carouselTemplateLibrary.some((t) => t.id === snapId);
+    const selectedTemplateSelectValue = snapInLibrary ? snapId : "";
+    const snapSummary = carouselTemplateSummary(snap);
+    const snapDescription =
+      typeof snap?.description === "string" && snap.description.trim()
+        ? snap.description.trim()
+        : "";
+    const snapSlides = snap?.slides?.length
+      ? [...snap.slides].sort((a, b) => a.idx - b.idx)
+      : [];
+
     return (
       <div className="space-y-4">
+        <div className="glass rounded-2xl border border-app-divider/80 p-4 md:p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-app-fg-muted">
+                Carousel style
+              </p>
+              <p className="mt-1 text-[11px] leading-relaxed text-app-fg-muted">
+                Sets the slide structure for this carousel. You can change it until you generate slides.
+              </p>
+            </div>
+            <Link
+              href="/settings#content-defaults"
+              className="shrink-0 text-[11px] font-semibold text-amber-600 hover:underline dark:text-amber-400"
+            >
+              Edit styles →
+            </Link>
+          </div>
+          {snap && typeof snap === "object" && typeof snap.name === "string" && snap.name.trim() ? (
+            <div className="mt-3 space-y-2">
+              <p className="text-sm font-semibold text-app-fg">{snap.name.trim()}</p>
+              {snapSummary ? (
+                <p className="text-xs font-medium text-app-fg-muted">{snapSummary}</p>
+              ) : null}
+              {snapDescription ? (
+                <p className="text-[11px] leading-relaxed text-app-fg-subtle">
+                  {snapDescription}
+                </p>
+              ) : null}
+              {snapSlides.some((slide) => slide.reference_image_url) ? (
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {snapSlides.map((slide) => (
+                    <div
+                      key={`${slide.idx}-${slide.reference_image_id ?? slide.reference_image_url ?? "slide"}`}
+                      className="w-20 shrink-0 overflow-hidden rounded-lg border border-app-divider/70 bg-surface-container/70"
+                    >
+                      {slide.reference_image_url ? (
+                        <div
+                          role="img"
+                          aria-label={`Slide ${slide.idx + 1} ${CAROUSEL_ROLE_LABELS[slide.role] ?? slide.role}`}
+                          className="h-24 w-full bg-cover bg-center"
+                          style={{ backgroundImage: `url(${slide.reference_image_url})` }}
+                        />
+                      ) : (
+                        <div className="h-24 w-full bg-app-soft" />
+                      )}
+                      <p className="truncate px-1.5 py-1 text-center text-[10px] font-semibold text-app-fg-muted">
+                        {slide.idx + 1}. {CAROUSEL_ROLE_LABELS[slide.role] ?? slide.role}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <p className="mt-3 text-xs text-app-fg-muted">
+              No reference sequence — generation runs without a structured template.
+            </p>
+          )}
+          {snapId !== "" && !snapInLibrary && carouselTemplateLibrary.length > 0 ? (
+            <p className="mt-2 text-[11px] leading-relaxed text-amber-800 dark:text-amber-300/90">
+              This snapshot is not in your current recipe library. Pick a template below to replace it.
+            </p>
+          ) : null}
+          {carouselTemplateLibrary.length > 0 && !carouselSlidesLocked ? (
+            <label className="mt-3 block">
+              <span className="sr-only">Carousel reference template</span>
+              <div className="relative">
+                <select
+                  className="w-full appearance-none rounded-xl border border-zinc-200/90 bg-white px-3 py-2.5 pr-9 text-sm text-zinc-900 shadow-sm disabled:opacity-60 dark:border-white/10 dark:bg-zinc-900/80 dark:text-app-fg"
+                  value={selectedTemplateSelectValue}
+                  onChange={(e) => void onPatchCarouselTemplate(e.target.value)}
+                  disabled={
+                    carouselTemplateBusy || carouselGenBusy || carouselSlideBusy || loading
+                  }
+                >
+                  {!snapInLibrary && snapId !== "" ? (
+                    <option value="" disabled>
+                      — Choose a template to replace snapshot —
+                    </option>
+                  ) : (
+                    <option value="" disabled={snapInLibrary}>
+                      {snapInLibrary ? "Change reference…" : "Choose a reference…"}
+                    </option>
+                  )}
+                  {carouselTemplateLibrary.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown
+                  className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-app-fg-muted"
+                  aria-hidden
+                />
+              </div>
+            </label>
+          ) : null}
+          {carouselSlidesLocked ? (
+            <p className="mt-3 text-[11px] text-app-fg-subtle">
+              Locked — slides already generated; reference cannot change.
+            </p>
+          ) : null}
+          {carouselTemplateBusy ? (
+            <p className="mt-2 flex items-center gap-2 text-[11px] text-app-fg-muted">
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+              Updating reference…
+            </p>
+          ) : null}
+        </div>
+
         <CarouselSection
-          clientSlug={clientSlug}
           sessionId={session.id}
           slides={carouselDraft}
           images={images}
           busy={carouselSlideBusy || loading}
           generating={carouselGenBusy}
+          convertingEditable={carouselConvertBusy}
           count={carouselCount}
+          countLocked={templateSnapshotSlideCount != null}
+          countHint={
+            templateSnapshotSlideCount != null
+              ? `This session uses your saved recipe — ${templateSnapshotSlideCount} slides match the template references.`
+              : undefined
+          }
           onCountChange={setCarouselCount}
           onGenerateAll={onGenerateCarouselSlides}
+          onConvertToEditable={onConvertCarouselToEditable}
           onRegenerateOne={onRegenerateCarouselSlide}
           onTextEdit={onCarouselTextEdit}
+          onLayoutCommit={onCarouselLayoutCommit}
+          onTextBoxAdjust={onCarouselTextBoxAdjust}
+          onBackgroundStyleAdjust={onCarouselBackgroundStyleAdjust}
+          onApplyTextStyleToAll={onApplyCarouselTextStyleToAll}
+          onApplyBackgroundToAll={onApplyCarouselBackgroundToAll}
+          onError={(message) => show(message, "error")}
         />
 
         <CaptionSection

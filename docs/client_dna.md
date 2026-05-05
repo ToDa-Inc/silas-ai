@@ -37,7 +37,7 @@ Stored as `clients.client_dna` JSONB column:
   "voice_brief": "...",
   "source_hash": "a1b2c3d4e5f6g7h8",
   "compiled_at": "2026-03-27T14:30:00Z",
-  "compiled_by": "google/gemini-2.0-flash-001"
+  "compiled_by": "google/gemini-3-flash-preview"
 }
 ```
 

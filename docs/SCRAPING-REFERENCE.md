@@ -215,7 +215,7 @@ Upserted into `competitors` table on `UNIQUE (client_id, username)`. If the acco
     "reel_actor": "xMc5Ga1oCONPmWJIa",
     "reference": "services/apify.py"
   },
-  "openrouter_model": "google/gemini-2.0-flash-001",
+  "openrouter_model": "google/gemini-3-flash-preview",
   "keywords_planned": ["leadership coach", "toxic workplace"],
   "keyword_runs": [
     {

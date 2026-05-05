@@ -144,11 +144,11 @@ export type ClientContextData = Partial<
     ClientContextSection
   >
 > & {
-  /** Per-client CTA library — adapted into captions, scripts, and visual CTA blocks. */
+  /** Legacy location; prefer ``ClientRow.generation_libraries`` for new writes. */
   cta_library?: ClientCta[];
-  /** Per-client carousel templates — visual reference sequences for carousel generation. */
+  /** Legacy location; prefer ``ClientRow.generation_libraries`` for new writes. */
   carousel_templates?: ClientCarouselTemplate[];
-  /** Per-client cover/thumbnail templates — single Media image references for cover creation. */
+  /** Legacy location; prefer ``ClientRow.generation_libraries`` for new writes. */
   cover_thumbnail_templates?: ClientCoverTemplate[];
 };
 
@@ -162,7 +162,7 @@ export type ClientCtaType =
   | "other";
 
 /** One CTA the user can pick under the Generate format selector. Persisted under
- *  ``client_context.cta_library`` and snapshotted onto ``generation_sessions.selected_cta``. */
+ *  ``generation_libraries.cta_library`` and snapshotted onto ``generation_sessions.selected_cta``. */
 export type ClientCta = {
   id: string;
   label: string;
@@ -205,6 +205,15 @@ export type ClientCoverTemplate = {
   instruction: string;
 };
 
+export type ClientGenerationLibraries = {
+  /** CTAs adapted into captions, scripts, and visual CTA blocks. */
+  cta_library?: ClientCta[];
+  /** Visual reference sequences for carousel generation. */
+  carousel_templates?: ClientCarouselTemplate[];
+  /** Single Media image references for cover creation. */
+  cover_thumbnail_templates?: ClientCoverTemplate[];
+};
+
 /** Active client row from `GET /api/v1/clients/{slug}` — niche_config drives discovery copy. */
 export type ClientRow = {
   id: string;
@@ -217,6 +226,7 @@ export type ClientRow = {
   icp: Record<string, unknown>;
   products: Record<string, unknown>;
   client_context?: ClientContextData | null;
+  generation_libraries?: ClientGenerationLibraries | null;
   /** Pre-compiled briefs for AI (analysis, generation, voice). See docs/client_dna.md. */
   client_dna?: Record<string, unknown> | null;
   is_active: boolean;

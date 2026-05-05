@@ -43,7 +43,10 @@ from models.reel import (
     TopicSearchBody,
 )
 from services.apify import run_keyword_reel_search
-from services.instagram_post_url import canonical_instagram_post_url
+from services.instagram_post_url import (
+    canonical_instagram_post_url,
+    instagram_post_url_lookup_variants,
+)
 from services.breakout_recompute import recompute_breakouts_for_client
 from services.competitor_manual import add_manual_competitor, preview_manual_competitor
 from services.job_queue import (
@@ -2553,6 +2556,44 @@ def adapt_preview_reels(
 
     rows.sort(key=_cvr_sort_key, reverse=False)
     return rows[:limit]
+
+
+@router.get("/clients/{slug}/reels/source-preview", response_model=ScrapedReelOut)
+def reel_source_preview(
+    slug: str,
+    client_id: Annotated[str, Depends(resolve_client_id)],
+    supabase: Annotated[Client, Depends(get_supabase)],
+    url: str = Query("", min_length=12, max_length=2048, description="Instagram reel, post, or tv URL."),
+) -> ScrapedReelOut:
+    """One scraped_reels row for this client when the URL is already in the workspace (thumbnail for Generate)."""
+    _ = slug
+    raw = (url or "").strip()
+    if not raw or not instagram_reel_url_is_valid(raw):
+        raise HTTPException(status_code=400, detail="Valid Instagram post or reel URL required")
+    keys = instagram_post_url_lookup_variants(raw)
+    if not keys:
+        raise HTTPException(status_code=404, detail="Could not parse Instagram URL")
+    try:
+        res = (
+            supabase.table("scraped_reels")
+            .select("*")
+            .eq("client_id", client_id)
+            .in_("post_url", keys)
+            .limit(1)
+            .execute()
+        )
+    except Exception as e:
+        logger.warning("reel_source_preview: fetch failed: %s", e)
+        raise HTTPException(status_code=500, detail="Database error") from e
+    if not res.data:
+        raise HTTPException(
+            status_code=404,
+            detail="This reel is not in your workspace yet. Analyze it in Intelligence first, or pick a quick pick.",
+        )
+    row = dict(res.data[0])
+    enrich_engagement_metrics(row)
+    normalize_scraped_reel_row_for_api(row)
+    return ScrapedReelOut.model_validate(row)
 
 
 # ---------------------------------------------------------------------------

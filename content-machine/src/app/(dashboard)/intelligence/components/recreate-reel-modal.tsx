@@ -2,12 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Loader2, Sparkles, X } from "lucide-react";
+import { FileText, Images, Loader2, Sparkles, UserRound, Video, X } from "lucide-react";
 import { ReelThumbnail } from "@/components/reel-thumbnail";
 import type { ClientCarouselTemplate, ClientCoverTemplate, ScrapedReelRow } from "@/lib/api";
 import {
-  fetchClientCarouselTemplates,
-  fetchClientCoverTemplates,
+  fetchClientGenerationLibraries,
   generationStart,
 } from "@/lib/api-client";
 
@@ -32,6 +31,52 @@ const RECREATE_FORMAT_OPTIONS: ReadonlyArray<{ key: RecreateFormatChoice; label:
   { key: "carousel", label: "Carousel", hint: "Swipeable PNG slides (not a video)" },
 ];
 
+function sourceMediaLabel(reel: ScrapedReelRow): {
+  icon: typeof Video;
+  label: string;
+  detail: string;
+} {
+  const rawFormat = (reel.format ?? "").trim();
+  const format = rawFormat.toLowerCase();
+  const duration = typeof reel.video_duration === "number" && reel.video_duration > 0
+    ? Math.round(reel.video_duration)
+    : null;
+
+  if (format === "carousel") {
+    return {
+      icon: Images,
+      label: "Carousel source",
+      detail: rawFormat || "Instagram carousel",
+    };
+  }
+  if (duration != null && duration < 15) {
+    return {
+      icon: FileText,
+      label: "Short video source",
+      detail: `${duration}s · under 15s`,
+    };
+  }
+  if (duration != null) {
+    return {
+      icon: UserRound,
+      label: "Long video source",
+      detail: `${duration}s · 15s+`,
+    };
+  }
+  if (rawFormat) {
+    return {
+      icon: Video,
+      label: "Source format",
+      detail: rawFormat.replace(/_/g, " "),
+    };
+  }
+  return {
+    icon: Video,
+    label: "Source media",
+    detail: "Duration/type unavailable",
+  };
+}
+
 function CarouselTemplatePicker({
   templates,
   selectedId,
@@ -47,16 +92,16 @@ function CarouselTemplatePicker({
     <div className="mt-4">
       <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-2">
         <p className="text-xs font-semibold text-app-fg">
-          Carousel template <span className="font-normal text-app-fg-muted">(required)</span>
+          Carousel style <span className="font-normal text-app-fg-muted">(required)</span>
         </p>
         <Link
-          href="/context"
+          href="/settings#content-defaults"
           className="text-[10px] font-semibold text-amber-700 hover:underline dark:text-amber-400"
         >
-          Edit templates →
+          Edit styles →
         </Link>
       </div>
-      <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Carousel template">
+      <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Carousel style">
         {templates.map((template) => {
           const active = selectedId === template.id;
           return (
@@ -100,16 +145,16 @@ function CoverTemplatePicker({
     <div className="mt-4">
       <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-2">
         <p className="text-xs font-semibold text-app-fg">
-          Cover template <span className="font-normal text-app-fg-muted">(required)</span>
+          Cover style <span className="font-normal text-app-fg-muted">(required)</span>
         </p>
         <Link
-          href="/context"
+          href="/settings#content-defaults"
           className="text-[10px] font-semibold text-amber-700 hover:underline dark:text-amber-400"
         >
-          Edit templates →
+          Edit styles →
         </Link>
       </div>
-      <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Cover template">
+      <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Cover style">
         {templates.map((template) => {
           const active = selectedId === template.id;
           return (
@@ -169,6 +214,7 @@ export function RecreateReelModal({
   const [selectedCarouselTemplateId, setSelectedCarouselTemplateId] = useState<string | null>(null);
   const [coverTemplates, setCoverTemplates] = useState<ClientCoverTemplate[]>([]);
   const [selectedCoverTemplateId, setSelectedCoverTemplateId] = useState<string | null>(null);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
   const phaseTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const hasAnalysis = Boolean(reel?.analysis);
 
@@ -192,6 +238,7 @@ export function RecreateReelModal({
       setSelectedCarouselTemplateId(null);
       setCoverTemplates([]);
       setSelectedCoverTemplateId(null);
+      setTemplatesLoading(false);
       setBusy(false);
       if (phaseTimerRef.current) {
         clearInterval(phaseTimerRef.current);
@@ -203,22 +250,18 @@ export function RecreateReelModal({
   useEffect(() => {
     if (!open || !clientSlug.trim() || !orgSlug.trim()) return;
     let cancelled = false;
-    void Promise.all([
-      fetchClientCarouselTemplates(clientSlug, orgSlug),
-      fetchClientCoverTemplates(clientSlug, orgSlug),
-    ]).then(([carouselRes, coverRes]) => {
+    setTemplatesLoading(true);
+    void fetchClientGenerationLibraries(clientSlug, orgSlug).then((res) => {
       if (cancelled) return;
-      if (carouselRes.ok) {
-        setCarouselTemplates(carouselRes.data);
-        if (carouselRes.data.length === 1) {
-          setSelectedCarouselTemplateId(carouselRes.data[0].id);
-        }
+      setTemplatesLoading(false);
+      if (!res.ok) return;
+      setCarouselTemplates(res.data.carouselTemplates);
+      if (res.data.carouselTemplates.length === 1) {
+        setSelectedCarouselTemplateId(res.data.carouselTemplates[0].id);
       }
-      if (coverRes.ok) {
-        setCoverTemplates(coverRes.data);
-        if (coverRes.data.length === 1) {
-          setSelectedCoverTemplateId(coverRes.data[0].id);
-        }
+      setCoverTemplates(res.data.coverTemplates);
+      if (res.data.coverTemplates.length === 1) {
+        setSelectedCoverTemplateId(res.data.coverTemplates[0].id);
       }
     });
     return () => {
@@ -284,11 +327,11 @@ export function RecreateReelModal({
       return;
     }
     if (formatChoice === "carousel" && carouselTemplates.length > 0 && !selectedCarouselTemplateId) {
-      setMsg("Pick a carousel template first.");
+      setMsg("Pick a carousel style first.");
       return;
     }
     if (formatChoice !== "carousel" && coverTemplates.length > 0 && !selectedCoverTemplateId) {
-      setMsg("Pick a cover template first.");
+      setMsg("Pick a cover style first.");
       return;
     }
     const selectedCarouselTemplate =
@@ -338,6 +381,8 @@ export function RecreateReelModal({
   const excerpt =
     (reel.hook_text || reel.caption || "").trim().slice(0, 160) ||
     "No caption stored — structure still comes from video when analyzed.";
+  const mediaLabel = sourceMediaLabel(reel);
+  const MediaIcon = mediaLabel.icon;
 
   return (
     <div
@@ -383,10 +428,16 @@ export function RecreateReelModal({
               {reel.views != null ? `${reel.views.toLocaleString()} views` : "—"}{" "}
               {reel.comments != null ? `· ${reel.comments.toLocaleString()} comments` : ""}
             </p>
+            <div className="mt-1.5 inline-flex max-w-full items-center gap-1.5 rounded-full border border-zinc-200/80 bg-zinc-50 px-2 py-1 text-[10px] font-semibold text-app-fg-muted dark:border-white/10 dark:bg-zinc-950/70">
+              <MediaIcon className="h-3 w-3 shrink-0" aria-hidden />
+              <span className="truncate text-app-fg">{mediaLabel.label}</span>
+              <span className="shrink-0 text-app-fg-subtle">·</span>
+              <span className="truncate font-medium">{mediaLabel.detail}</span>
+            </div>
             <p className="mt-1 line-clamp-3 text-[11px] leading-snug text-app-fg-secondary">{excerpt}</p>
             {hasAnalysis ? (
               <p className="mt-1.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300/90">
-                Existing Silas analysis — faster path (no full video re-download when already in your DB).
+                Existing analysis — faster path (no full video re-download when already in your DB).
               </p>
             ) : (
               <p className="mt-1.5 text-[10px] text-app-fg-subtle">
@@ -394,6 +445,27 @@ export function RecreateReelModal({
                 Generate.
               </p>
             )}
+            {postUrl ? (
+              <div className="mt-1.5 min-w-0 border-t border-zinc-200/80 pt-1.5 dark:border-white/10">
+                <p className="text-[9px] font-bold uppercase tracking-wider text-app-fg-subtle">Source URL</p>
+                <p
+                  className="mt-0.5 truncate font-mono text-[10px] leading-tight text-app-fg-muted"
+                  title={postUrl}
+                >
+                  {postUrl}
+                </p>
+                <p className="mt-0.5">
+                  <a
+                    href={postUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[10px] font-semibold text-amber-600 underline-offset-2 hover:underline dark:text-amber-400"
+                  >
+                    Open original on Instagram ↗
+                  </a>
+                </p>
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -435,24 +507,29 @@ export function RecreateReelModal({
               </p>
             </div>
 
-            {formatChoice === "carousel" ? (
+            {templatesLoading ? (
+              <div className="mt-4 flex items-center gap-2 rounded-xl border border-zinc-200/80 bg-white/70 px-3 py-3 text-[11px] text-app-fg-muted dark:border-white/10 dark:bg-zinc-900/50">
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+                Loading styles…
+              </div>
+            ) : formatChoice === "carousel" ? (
               carouselTemplates.length > 0 ? (
                 <CarouselTemplatePicker
                   templates={carouselTemplates}
                   selectedId={selectedCarouselTemplateId}
                   onSelect={setSelectedCarouselTemplateId}
-                  disabled={busy}
+                  disabled={busy || templatesLoading}
                 />
               ) : (
                 <div className="mt-4 rounded-xl border border-dashed border-zinc-200/90 bg-white/60 p-3 text-[11px] leading-relaxed text-app-fg-muted dark:border-white/10 dark:bg-zinc-900/50">
-                  No carousel templates configured yet.{" "}
+                  No carousel styles configured yet.{" "}
                   <Link
-                    href="/context"
+                    href="/settings#content-defaults"
                     className="font-semibold text-amber-700 hover:underline dark:text-amber-400"
                   >
-                    Add one in Context
+                    Add in Settings
                   </Link>{" "}
-                  to guide carousel structure from Media references.
+                  to reuse a slide structure from example images.
                 </div>
               )
             ) : formatChoice ? (
@@ -461,18 +538,18 @@ export function RecreateReelModal({
                   templates={coverTemplates}
                   selectedId={selectedCoverTemplateId}
                   onSelect={setSelectedCoverTemplateId}
-                  disabled={busy}
+                  disabled={busy || templatesLoading}
                 />
               ) : (
                 <div className="mt-4 rounded-xl border border-dashed border-zinc-200/90 bg-white/60 p-3 text-[11px] leading-relaxed text-app-fg-muted dark:border-white/10 dark:bg-zinc-900/50">
-                  No cover/thumbnail templates configured yet.{" "}
+                  No cover styles configured yet.{" "}
                   <Link
-                    href="/context"
+                    href="/settings#content-defaults"
                     className="font-semibold text-amber-700 hover:underline dark:text-amber-400"
                   >
-                    Add one in Context
+                    Add in Settings
                   </Link>{" "}
-                  to preload cover creation from Media references.
+                  to start covers from a saved example.
                 </div>
               )
             ) : null}
@@ -492,7 +569,7 @@ export function RecreateReelModal({
 
             <button
               type="button"
-              disabled={busy || !postUrl || disabled || !formatChoice}
+              disabled={busy || templatesLoading || !postUrl || disabled || !formatChoice}
               onClick={() => void submit()}
               className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-amber-500 py-2.5 text-sm font-bold text-zinc-950 disabled:opacity-50"
             >
@@ -510,6 +587,11 @@ export function RecreateReelModal({
             <p className="text-xs text-app-fg-muted">
               Open Generate to pick an angle, then get script and captions for your client.
             </p>
+            {postUrl ? (
+              <p className="truncate font-mono text-[10px] text-app-fg-muted" title={postUrl}>
+                {postUrl}
+              </p>
+            ) : null}
             <Link
               href={`/generate?session=${encodeURIComponent(sessionId)}`}
               className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-amber-500 py-2.5 text-sm font-bold text-zinc-950"

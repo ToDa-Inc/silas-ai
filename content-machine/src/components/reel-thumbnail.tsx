@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { cn } from "@/lib/cn";
 
-type Size = "sm" | "md";
+type Size = "sm" | "md" | "lg";
 
 /** Same-origin proxy: IG signed URLs 403 if stripped; browser embed is flaky. */
 function thumbnailImgSrc(raw: string): string {
@@ -33,6 +33,8 @@ type Props = {
 const dim: Record<Size, string> = {
   sm: "h-12 w-8 rounded",
   md: "h-24 w-16 rounded-lg",
+  /** ~9:16 cover at readable size (Generate reference preview). */
+  lg: "h-40 w-[90px] rounded-xl",
 };
 
 export function ReelThumbnail({ src, alt = "Reel thumbnail", href, size = "md", className }: Props) {

@@ -1,7 +1,7 @@
 -- Phase 23: Carousel templates
 --
 -- Stores the selected carousel template snapshot on generation sessions. The
--- editable template library lives under clients.client_context.carousel_templates.
+-- editable template library lives under clients.generation_libraries.carousel_templates.
 
 ALTER TABLE generation_sessions
   ADD COLUMN IF NOT EXISTS selected_carousel_template jsonb;

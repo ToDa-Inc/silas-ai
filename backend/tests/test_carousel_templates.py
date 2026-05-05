@@ -1,8 +1,9 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+from fastapi import HTTPException
 from models.generation import GenerationStartBody, SelectedCarouselTemplate, SelectedCoverTemplate
-from routers.creation import _carousel_slide_count_from_request
+from routers.creation import _carousel_slide_count_from_request, _resolve_template_slide_image_bytes
 from services.content_generation import run_carousel_slide_texts
 from services.image_generation import generate_slide_image
 
@@ -69,7 +70,7 @@ class CarouselTemplateModelsTest(unittest.TestCase):
 
 
 class CarouselTemplatePromptTest(unittest.TestCase):
-    def test_template_does_not_override_requested_slide_count(self):
+    def test_template_sets_slide_count_from_recipe(self):
         row = {
             "selected_carousel_template": {
                 "id": "template_three_refs",
@@ -82,7 +83,30 @@ class CarouselTemplatePromptTest(unittest.TestCase):
             }
         }
 
-        self.assertEqual(_carousel_slide_count_from_request(row, requested_count=6), 6)
+        self.assertEqual(_carousel_slide_count_from_request(row, requested_count=6), 3)
+
+    def test_template_five_slides_uses_five(self):
+        row = {
+            "selected_carousel_template": {
+                "slides": [{"idx": i, "role": "body"} for i in range(5)],
+            }
+        }
+        self.assertEqual(_carousel_slide_count_from_request(row, requested_count=6), 5)
+
+    def test_template_with_under_three_slides_raises(self):
+        from fastapi import HTTPException
+
+        row = {
+            "selected_carousel_template": {
+                "slides": [
+                    {"idx": 0, "role": "cover"},
+                    {"idx": 1, "role": "body"},
+                ],
+            }
+        }
+        with self.assertRaises(HTTPException) as ctx:
+            _carousel_slide_count_from_request(row, 6)
+        self.assertEqual(ctx.exception.status_code, 400)
 
     def test_slide_text_prompt_includes_template_sequence(self):
         captured = {}
@@ -156,6 +180,45 @@ class CarouselTemplateImagePromptTest(unittest.TestCase):
 
         self.assertEqual(result, b"png")
         self.assertIn("Tweet-style screenshot", generate.call_args.kwargs["angle_context"])
+
+    def test_generate_slide_image_exact_base_disables_wash(self):
+        with patch("services.image_generation.compose_thumbnail_from_image") as compose:
+            compose.return_value = b"png"
+            generate_slide_image(
+                text="Hook",
+                idx=0,
+                total=3,
+                freepik_key="freepik-key",
+                client_image_bytes=b"fake-jpeg",
+                wash_template_base=False,
+            )
+        self.assertIs(compose.call_args.kwargs.get("wash"), False)
+        self.assertIs(compose.call_args.kwargs.get("carousel_exact_base"), True)
+        self.assertEqual(compose.call_args.kwargs.get("carousel_slide_role"), "cover")
+
+    def test_generate_slide_image_forwards_layout_to_compose(self):
+        with patch("services.image_generation.compose_thumbnail_from_image") as compose:
+            compose.return_value = b"png"
+            layout = {"scale": 0.88, "verticalOffset": -0.06, "sidePadding": 0.08}
+            generate_slide_image(
+                text="Hook",
+                idx=1,
+                total=3,
+                client_image_bytes=b"jpeg",
+                wash_template_base=False,
+                carousel_slide_role="body",
+                layout=layout,
+            )
+        self.assertEqual(compose.call_args.kwargs.get("layout"), layout)
+
+
+class CarouselTemplateResolveTest(unittest.TestCase):
+    def test_resolve_template_slide_missing_reference_raises(self):
+        supabase = MagicMock()
+        with self.assertRaises(HTTPException) as ctx:
+            _resolve_template_slide_image_bytes(supabase, "cli_1", {}, slide_idx=0)
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("slide 1", ctx.exception.detail)
 
 
 if __name__ == "__main__":

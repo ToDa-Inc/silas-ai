@@ -329,16 +329,17 @@ def _format_carousel_template_block(selected_carousel_template: Optional[Dict[st
         return ""
     slides.sort(key=lambda s: int(s.get("idx") or 0))
     lines = [
-        "\n=== CAROUSEL_TEMPLATE (visual/story reference, not a fixed slide count) ===",
+        "\n=== CAROUSEL_TEMPLATE (layout + story pattern) ===",
         f"name: {name}",
     ]
     desc = str(selected_carousel_template.get("description") or "").strip()
     if desc:
         lines.append(f"description: {desc}")
     lines.append(
-        "Reference images are visual references only. Generate NEW carousel slides; "
-        "do not copy or reuse the original media image as final output. The number "
-        "of reference slides does NOT determine the number of output slides."
+        "Each template slide has a reference image that defines the visual frame for that "
+        "slide index: write copy that fits the role (cover / body / screenshot / CTA). "
+        "When this recipe is selected, the carousel uses the same slide count as the template "
+        "(between 3 and 10 slides)."
     )
     for slide in slides[:10]:
         idx = int(slide.get("idx") or 0)
