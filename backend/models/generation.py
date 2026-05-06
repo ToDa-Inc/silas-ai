@@ -208,6 +208,8 @@ class PatchGenerationSessionBody(BaseModel):
 class GenerateThumbnailBody(BaseModel):
     """Optional override for the text rendered on the reel cover."""
     hook_text: Optional[str] = Field(None, max_length=500)
+    # Keep generated backgrounds in full colour unless the user explicitly chooses a washed look.
+    wash: bool = False
     template_id: VideoTemplateId = "centered-pop"
     theme_id: VideoThemeId = "bold-modern"
     text_treatment: Optional[Literal["bold-outline"]] = None
@@ -220,8 +222,8 @@ class ComposeThumbnailBody(BaseModel):
     client_image_id: str = Field(..., min_length=1, max_length=64)
     hook_text: Optional[str] = Field(None, max_length=500)
     # Whether to apply the editorial wash (desaturate + white blend) before drawing text.
-    # Default True keeps the same look as the AI cover; pass False to keep original colours.
-    wash: bool = True
+    # Default False preserves the original colours; pass True only for an explicit washed look.
+    wash: bool = False
     crop_y: float = Field(0.5, ge=0.0, le=1.0)
     zoom: float = Field(1.0, ge=1.0, le=2.0)
     template_id: VideoTemplateId = "centered-pop"

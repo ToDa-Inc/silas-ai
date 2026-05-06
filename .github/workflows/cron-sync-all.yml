@@ -1,4 +1,5 @@
-# Triggers POST /api/v1/cron/sync-all on Railway (enqueue baseline + competitor scrapes).
+# Triggers POST /api/v1/cron/sync-all — daily own + competitor profile discovery only
+# (2-day lookback, results cap). Baseline and niche keyword discovery are separate crons.
 #
 # Required repo secrets (Settings → Secrets and variables → Actions):
 #   SYNC_ALL_URL  — full URL, e.g. https://silas-content-system-production.up.railway.app/api/v1/cron/sync-all

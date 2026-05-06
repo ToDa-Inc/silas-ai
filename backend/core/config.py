@@ -44,18 +44,17 @@ class Settings(BaseSettings):
     )
 
     apify_include_shares_count: bool = Field(
-        default=True,
+        default=False,
         validation_alias=AliasChoices("APIFY_INCLUDE_SHARES_COUNT"),
-        description="Sets includeSharesCount on Instagram Reel Scraper (requires paid Apify plan for real values).",
+        description="Sets paid includeSharesCount on Instagram Reel Scraper when explicitly enabled.",
     )
 
     own_reels_sync_results_limit: int = Field(
-        default=5000,
+        default=100,
         validation_alias=AliasChoices("OWN_REELS_SYNC_RESULTS_LIMIT"),
         description=(
             "resultsLimit passed to Apify when syncing the client's own reels. "
-            "High default approximates 'all available history' while staying explicit "
-            "for Apify cost / runtime budgets."
+            "Keep this capped; daily syncs use a recency window instead of full history."
         ),
     )
 

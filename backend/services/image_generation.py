@@ -30,6 +30,10 @@ _FLUX_TURBO_PATH = "/v1/ai/text-to-image/flux-2-turbo"
 _POLL_INTERVAL_S = 3.0
 _POLL_MAX_WAIT_S = 120.0
 
+# Instagram feed carousel slides — 4:5 portrait (matches export + UI)
+CAROUSEL_SLIDE_W = 1080
+CAROUSEL_SLIDE_H = 1350
+
 # Playfair Display Bold — Google Fonts CDN, ~75 KB, cached on first use
 _FONT_URL = (
     "https://github.com/google/fonts/raw/main/ofl/playfairdisplay/"
@@ -148,13 +152,13 @@ def _wrap_lines_pixel_width(
 def prepare_carousel_base_png_bytes(
     image_bytes: bytes,
     *,
-    target_w: int = 1080,
-    target_h: int = 1920,
+    target_w: int = CAROUSEL_SLIDE_W,
+    target_h: int = CAROUSEL_SLIDE_H,
     wash: bool = False,
     crop_y: float = 0.5,
     zoom: float = 1.0,
 ) -> bytes:
-    """Resize (and optionally wash) to 9:16 without drawing text — composition base layer."""
+    """Resize (and optionally wash) to 4:5 without drawing text — composition base layer."""
     if not _PILLOW_AVAILABLE:
         raise RuntimeError("Pillow is not installed. Run: pip install Pillow")
     img = Image.open(io.BytesIO(image_bytes))
@@ -280,10 +284,16 @@ def compose_carousel_final_png(
     *,
     carousel_slide_role: str = "body",
 ) -> bytes:
-    """Burn ``text`` onto the base 9:16 PNG using a normalized ``text_box``."""
+    """Burn ``text`` onto a 4:5 PNG using a normalized ``text_box``.
+
+    The base is normalized here as a final guard so ZIP export and old saved bases
+    still emit the current carousel size.
+    """
     if not _PILLOW_AVAILABLE:
         raise RuntimeError("Pillow is not installed. Run: pip install Pillow")
     img = Image.open(io.BytesIO(base_image_png_bytes)).convert("RGB")
+    if img.size != (CAROUSEL_SLIDE_W, CAROUSEL_SLIDE_H):
+        img = _resize_cover(img, CAROUSEL_SLIDE_W, CAROUSEL_SLIDE_H)
     img = _overlay_carousel_text_box(
         img,
         text,
@@ -299,8 +309,8 @@ def generate_freepik_washed_background_png(
     freepik_key: str,
     angle_context: str,
     *,
-    target_w: int = 1080,
-    target_h: int = 1920,
+    target_w: int = CAROUSEL_SLIDE_W,
+    target_h: int = CAROUSEL_SLIDE_H,
     wash: bool = False,
 ) -> bytes:
     """Download a Freepik flux background for carousel composition — no text overlay."""
@@ -318,7 +328,8 @@ def generate_freepik_washed_background_png(
             headers=headers,
             json={
                 "prompt": prompt,
-                "image_size": {"width": 864, "height": 1536},
+                # Request ~4:5 portrait; cropped/washed to CAROUSEL_SLIDE_W×CAROUSEL_SLIDE_H
+                "image_size": {"width": 864, "height": 1080},
                 "output_format": "jpeg",
                 "enable_safety_checker": True,
             },
@@ -549,11 +560,12 @@ def generate_thumbnail_freepik_pillow(
     text_treatment: Optional[str] = None,
     layout: Any = None,
     appearance: Any = None,
+    wash: bool = False,
 ) -> bytes:
     """Generate a reel thumbnail using Freepik + Pillow.
 
     Step 1: Freepik flux-2-turbo → soft 9:16 lifestyle background (no AI text)
-    Step 2: Pillow → desaturate + white wash + centered serif headline
+    Step 2: Pillow → optional wash + centered serif headline
     Returns PNG bytes ready for upload.
     """
     if not _PILLOW_AVAILABLE:
@@ -611,9 +623,12 @@ def generate_thumbnail_freepik_pillow(
         dl.raise_for_status()
         bg_bytes = dl.content
 
-    # 4. Wash + overlay text with Pillow
+    # 4. Optional wash + overlay text with Pillow
     bg = Image.open(io.BytesIO(bg_bytes))
-    bg = _wash_image(bg, target_w, target_h)
+    if wash:
+        bg = _wash_image(bg, target_w, target_h)
+    else:
+        bg = _resize_cover(bg, target_w, target_h)
     bg = _overlay_text(
         bg,
         text,
@@ -703,10 +718,10 @@ def generate_slide_image(
     layout: Any = None,
     appearance: Any = None,
     text_box: Any = None,
-    target_w: int = 1080,
-    target_h: int = 1920,
+    target_w: int = CAROUSEL_SLIDE_W,
+    target_h: int = CAROUSEL_SLIDE_H,
 ) -> bytes:
-    """Render one carousel slide as a 9:16 PNG (1080×1920 by default).
+    """Render one carousel slide as a 4:5 PNG (1080×1350 by default).
 
     Two modes (mutually exclusive):
     - ``client_image_bytes`` provided → uses :func:`compose_thumbnail_from_image` (same editorial

@@ -1615,6 +1615,7 @@ export async function generationGenerateThumbnail(
         headers: { ...headers, "Content-Type": "application/json" },
         body: JSON.stringify({
           hook_text: hookText ?? null,
+          wash: options?.wash ?? false,
           template_id: options?.templateId ?? "centered-pop",
           theme_id: options?.themeId ?? "bold-modern",
           text_treatment: options?.textTreatment ?? null,
@@ -1915,7 +1916,7 @@ export async function generationComposeThumbnail(
         body: JSON.stringify({
           client_image_id: clientImageId,
           hook_text: hookText ?? null,
-          wash: options?.wash ?? true,
+          wash: options?.wash ?? false,
           crop_y: options?.cropY ?? 0.5,
           zoom: options?.zoom ?? 1,
           template_id: options?.templateId ?? "centered-pop",

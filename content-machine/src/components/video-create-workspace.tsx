@@ -78,12 +78,10 @@ import {
 import {
   autoBlockDurationSec,
   autoHookDurationSec,
-  computeTimingChange,
   segmentDurationRange,
   segmentDurationSec,
   segmentExcerpt,
   segmentLabel,
-  type CascadeMode,
 } from "@/lib/video-spec-timing";
 import { effectivePausesSec, relayoutTimeline } from "@/lib/video-spec-timeline";
 import {
@@ -138,10 +136,30 @@ const CAROUSEL_FONT_LABELS: Record<keyof typeof CAROUSEL_FONT_STACKS, string> = 
   georgia: "Georgia",
 };
 const CAROUSEL_TEXT_COLOR = "#17110d";
-const CAROUSEL_EDIT_W = 360;
 const CAROUSEL_EXPORT_W = 1080;
-const CAROUSEL_EXPORT_H = 1920;
+const CAROUSEL_EXPORT_H = 1350;
+const CAROUSEL_EDIT_W = 360;
+const CAROUSEL_EDIT_H = Math.round((CAROUSEL_EDIT_W * CAROUSEL_EXPORT_H) / CAROUSEL_EXPORT_W);
 const CAROUSEL_FONT_RATIO = 0.061;
+
+/** Duration slider: hook length or block end only — other layers keep their timeline positions. */
+function beatDurationToLayerTiming(
+  spec: VideoSpec,
+  segmentId: string,
+  newDurationSec: number,
+): { startSec?: number; endSec?: number } {
+  const range = segmentDurationRange(segmentId);
+  const dur = Math.min(range.max, Math.max(range.min, newDurationSec));
+  if (segmentId === "hook") {
+    return { endSec: dur };
+  }
+  const b = spec.blocks.find((x) => x.id === segmentId);
+  if (!b) {
+    return { endSec: dur };
+  }
+  return { endSec: Math.round((b.startSec + dur) * 100) / 100 };
+}
+
 /** Layout format only — bold outline (“CapCut style”) is a separate Style control. */
 type UiFormat = "center" | "card" | "stack";
 
@@ -804,7 +822,8 @@ function CarouselTextLayerEditor({
       onKeyDown={onKeyDown}
       onBlur={() => void onCommit?.()}
       aria-label="Carousel text editor. Use arrow keys to nudge the selected text."
-      className="relative h-[640px] w-[360px] overflow-hidden rounded-2xl bg-white shadow-[0_18px_60px_rgba(0,0,0,0.35)] outline-none focus:ring-2 focus:ring-amber-500/45"
+      className="relative overflow-hidden rounded-2xl bg-white shadow-[0_18px_60px_rgba(0,0,0,0.35)] outline-none focus:ring-2 focus:ring-amber-500/45"
+      style={{ width: CAROUSEL_EDIT_W, height: CAROUSEL_EDIT_H }}
     >
       {bgUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
@@ -1539,8 +1558,8 @@ function ReelCoverSection({
           </div>
           <p className="text-xs leading-relaxed text-app-fg-muted">
             {mode === "ai"
-              ? "AI generates a 9:16 background with the hook burned in."
-              : "Pick a client photo and we overlay the hook in the same editorial style."}
+              ? "AI generates a 9:16 background and overlays the hook. Colour is preserved unless Wash is enabled."
+              : "Pick a client photo and we overlay the hook. Colour is preserved unless Wash is enabled."}
           </p>
 
           {chipItems.length > 0 && (
@@ -1913,11 +1932,12 @@ function ReelCoverSection({
                 <button
                   type="button"
                   onClick={() => onCoverEditChange({ ...coverEdit, wash: !coverEdit.wash })}
+                  title="Optional: desaturate and fade the background for a softer editorial look"
                   className={`rounded-md border px-2 py-1 text-[10px] font-semibold ${
                     coverEdit.wash ? STYLE_CHIP_ON : STYLE_CHIP_OFF
                   }`}
                 >
-                  Washed
+                  Wash background
                 </button>
               </div>
               {mode === "image" ? (
@@ -2290,19 +2310,6 @@ export function VideoCreateWorkspace({
   const [pauseDraft, setPauseDraft] = useState<{ idx: number; sec: number } | null>(null);
   /** Which inter-beat gap the compact Timing panel is editing (dropdown). */
   const [selectedGapIdx, setSelectedGapIdx] = useState(0);
-  /** Cascade behavior on duration changes. Persisted to localStorage so the
-   *  user's preference (most pick "push" once and never look back) survives
-   *  reloads. */
-  const [cascadeMode, setCascadeMode] = useState<CascadeMode>("push");
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const v = window.localStorage.getItem("silas:cascadeMode");
-    if (v === "push" || v === "compress") setCascadeMode(v);
-  }, []);
-  const setCascadeModePersisted = useCallback((m: CascadeMode) => {
-    setCascadeMode(m);
-    if (typeof window !== "undefined") window.localStorage.setItem("silas:cascadeMode", m);
-  }, []);
   const isTextOverlay = fk === "text_overlay";
   const isCarousel = fk === "carousel";
   const isBroll = fk === "b_roll_reel";
@@ -2428,12 +2435,15 @@ export function VideoCreateWorkspace({
       appearance: appearanceDraft,
       pausesSec,
     };
-    // Apply in-flight timing drag through the same cascade math the server will
-    // run — guarantees what the user sees during the drag matches what gets
-    // persisted on release.
+    // Apply in-flight duration drag by trimming/extending the selected layer only
+    // (hook duration or block endSec) — same math as `computeLayerTimingChange` PATCH.
     const durationAdjusted =
       timingDraft != null
-        ? computeTimingChange(base, timingDraft.id, timingDraft.durationSec, cascadeMode).spec
+        ? computeLayerTimingChange(
+            base,
+            timingDraft.id,
+            beatDurationToLayerTiming(base, timingDraft.id, timingDraft.durationSec),
+          ).spec
         : base;
     const raw =
       layerTimingDraft != null
@@ -2465,7 +2475,6 @@ export function VideoCreateWorkspace({
     layerTimingDraft?.id,
     layerTimingDraft?.timing.startSec,
     layerTimingDraft?.timing.endSec,
-    cascadeMode,
   ]);
 
   const styleThemeForCard = (pendingTheme ?? previewVideoSpec?.themeId ?? "bold-modern") as VideoThemeId;
@@ -3036,19 +3045,16 @@ export function VideoCreateWorkspace({
     if (!exists) setSelectedSegmentId("hook");
   }, [previewVideoSpec, selectedSegmentId]);
 
-  /** Persist a duration edit. Generates the same atomic multi-op patch that
-   *  the live preview math used (push-cascade or compress-cascade), so what
-   *  the user releases on is exactly what gets stored. Stale-guard same as
-   *  layout/template/look so rapid edits don't clobber each other. */
+  /** Persist a duration edit: only the selected layer's window changes (hook
+   *  length or block end); other beats keep their absolute positions. */
   const onCommitTiming = useCallback(
     async (segmentId: string, newDurationSec: number) => {
       const cs = clientSlug.trim();
       const os = orgSlug.trim();
       if (!session || !cs || !os || !previewVideoSpec) return;
-      const result = computeTimingChange(previewVideoSpec, segmentId, newDurationSec, cascadeMode);
-      // No-op if the requested duration ended up matching the saved value
-      // (e.g. user released the slider on the same tick they started, or the
-      // cascade-clamp made it identical). Prevents an empty PATCH.
+      const timing = beatDurationToLayerTiming(previewVideoSpec, segmentId, newDurationSec);
+      const result = computeLayerTimingChange(previewVideoSpec, segmentId, timing);
+      // No-op if nothing changed (prevents an empty PATCH).
       if (result.ops.length === 0) {
         setTimingDraft(null);
         return;
@@ -3069,7 +3075,7 @@ export function VideoCreateWorkspace({
         setSpecInFlight((n) => Math.max(0, n - 1));
       }
     },
-    [applySession, cascadeMode, clientSlug, orgSlug, previewVideoSpec, session, show],
+    [applySession, clientSlug, orgSlug, previewVideoSpec, session, show],
   );
 
   const onCommitLayerTiming = useCallback(
@@ -4734,9 +4740,8 @@ export function VideoCreateWorkspace({
                   </div>
                 </div>
 
-                {/* Timing: select a segment in the timeline strip above and tune its
-                    on-screen duration with cascade behavior. Mirrors the layout pattern:
-                    optimistic preview, single PATCH on release, multi-op cascade. */}
+                {/* Timing: select a segment in the timeline strip, then trim/extend
+                    its on-screen window. Duration changes end only — other beats stay put. */}
                 {(() => {
                   if (!previewVideoSpec) return null;
                   const segId = selectedSegmentId;
@@ -4749,11 +4754,6 @@ export function VideoCreateWorkspace({
                   const savedDur = segmentDurationSec(previewVideoSpec, segId);
                   const label = segmentLabel(previewVideoSpec, segId);
                   const excerpt = segmentExcerpt(previewVideoSpec, segId);
-                  const isLastBlock = segId !== "hook"
-                    && previewVideoSpec.blocks.findIndex((b) => b.id === segId)
-                       === previewVideoSpec.blocks.length - 1;
-                  const compressIneffective = cascadeMode === "compress"
-                    && (segId === "hook" ? previewVideoSpec.blocks.length === 0 : isLastBlock);
                   const autoFor = (id: string): number => {
                     if (id === "hook") return autoHookDurationSec();
                     const b = previewVideoSpec.blocks.find((x) => x.id === id);
@@ -5024,56 +5024,6 @@ export function VideoCreateWorkspace({
                           </div>
                         );
                       })()}
-                      <div className="flex items-center justify-between gap-2">
-                        <span
-                          className="text-[9px] font-semibold uppercase tracking-wide text-app-fg-muted"
-                          title="What happens when you change a beat’s length"
-                        >
-                          Ripple mode
-                        </span>
-                        <div className="inline-flex overflow-hidden rounded-md border border-app-divider/60 text-[9px] font-bold uppercase tracking-wide">
-                          {(
-                            [
-                              {
-                                id: "push" as const,
-                                label: "Push later",
-                                title: "Later blocks shift right; total grows",
-                              },
-                              {
-                                id: "compress" as const,
-                                label: "Compress next",
-                                title: "Next block absorbs the change; total stays",
-                              },
-                            ] as const
-                          ).map((m) => (
-                            <button
-                              key={m.id}
-                              type="button"
-                              aria-pressed={cascadeMode === m.id}
-                              onClick={() => setCascadeModePersisted(m.id)}
-                              title={m.title}
-                              className={`px-1.5 py-0.5 transition ${
-                                cascadeMode === m.id
-                                  ? "bg-amber-500/20 text-amber-200"
-                                  : "text-app-fg-muted hover:bg-app-chip-bg/40 hover:text-app-fg"
-                              }`}
-                            >
-                              {m.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      <p
-                        className="text-[9px] leading-snug text-app-fg-subtle"
-                        title="Push: timeline grows and shifts following beats. Compress: the next beat shortens so total length stays the same when possible."
-                      >
-                        Hover labels for detail. Compress needs a following beat.
-                      </p>
-                      {compressIneffective ? (
-                        <p className="text-[9px] italic text-app-fg-subtle">
-                          No segment after this one — Compress falls back to Push.
-                        </p>
-                      ) : null}
                         </div>
                       </details>
                     </div>

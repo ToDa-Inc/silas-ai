@@ -10,6 +10,18 @@ from supabase import Client
 from core.id_generator import generate_job_id
 from services.job_queue import fail_stale_running_jobs, has_active_job
 
+# Daily sync-all / tick: small recency window + overlap so a late cron does not miss posts.
+DAILY_DISCOVERY_ONLY_NEWER_THAN = "2 days"
+DAILY_DISCOVERY_RESULTS_LIMIT = 30
+
+# Stale competitor scrape (tiers 1–3 not scraped in 7–30d): wider window to catch up.
+STALE_DISCOVERY_ONLY_NEWER_THAN = "30 days"
+
+# Metric refresh: align with product window; avoid double-fetch right after profile scrape.
+REFRESH_MAX_AGE_DAYS = 30
+REFRESH_BATCH_LIMIT = 500
+DEFAULT_SKIP_RECENTLY_UPDATED_HOURS = 20
+
 
 def _parse_ts(value: Any) -> datetime | None:
     if value is None:
@@ -96,7 +108,11 @@ def enqueue_stale_profile_scrapes(
                 "org_id": org_id,
                 "client_id": client_id,
                 "job_type": "profile_scrape",
-                "payload": {"competitor_id": comp_id},
+                "payload": {
+                    "competitor_id": comp_id,
+                    "only_newer_than": STALE_DISCOVERY_ONLY_NEWER_THAN,
+                    "results_limit": DAILY_DISCOVERY_RESULTS_LIMIT,
+                },
                 "status": "queued",
             }
         ).execute()
@@ -146,26 +162,36 @@ def enqueue_sync_all_jobs_for_client(
     org_id: str,
     client_id: str,
 ) -> Dict[str, int]:
-    """Queue baseline_scrape (own reels) + profile_scrape for every competitor (cron/worker)."""
-    baseline_queued = 0
-    baseline_skipped = 0
+    """Queue daily profile discovery: own handle + every competitor (niche is separate cron)."""
+    own_profile_queued = 0
+    own_profile_skipped = 0
     profile_queued = 0
     profile_skipped = 0
 
-    if has_active_job(supabase, client_id=client_id, job_type="baseline_scrape"):
-        baseline_skipped = 1
+    discovery_payload_base = {
+        "only_newer_than": DAILY_DISCOVERY_ONLY_NEWER_THAN,
+        "results_limit": DAILY_DISCOVERY_RESULTS_LIMIT,
+    }
+
+    if has_active_job(
+        supabase,
+        client_id=client_id,
+        job_type="profile_scrape",
+        payload_match={"scrape_own": True},
+    ):
+        own_profile_skipped = 1
     else:
         supabase.table("background_jobs").insert(
             {
                 "id": generate_job_id(),
                 "org_id": org_id,
                 "client_id": client_id,
-                "job_type": "baseline_scrape",
-                "payload": {},
+                "job_type": "profile_scrape",
+                "payload": {"scrape_own": True, **discovery_payload_base},
                 "status": "queued",
             }
         ).execute()
-        baseline_queued = 1
+        own_profile_queued = 1
 
     cres = supabase.table("competitors").select("id").eq("client_id", client_id).execute()
     for row in cres.data or []:
@@ -184,36 +210,36 @@ def enqueue_sync_all_jobs_for_client(
                 "org_id": org_id,
                 "client_id": client_id,
                 "job_type": "profile_scrape",
-                "payload": {"competitor_id": comp_id},
+                "payload": {
+                    "competitor_id": comp_id,
+                    **discovery_payload_base,
+                },
                 "status": "queued",
             }
         ).execute()
         profile_queued += 1
 
-    kw_stats = enqueue_keyword_reel_similarity_for_client(
-        supabase, org_id=org_id, client_id=client_id
-    )
-
     return {
-        "baseline_queued": baseline_queued,
-        "baseline_skipped": baseline_skipped,
+        "own_profile_queued": own_profile_queued,
+        "own_profile_skipped": own_profile_skipped,
         "profile_queued": profile_queued,
         "profile_skipped": profile_skipped,
         "competitors_considered": len(cres.data or []),
-        "niche_discovery_queued": kw_stats.get("queued", 0),
-        "niche_discovery_skipped": kw_stats.get("skipped", 0),
+        # Back-compat: baseline + niche no longer run from sync-all.
+        "baseline_queued": 0,
+        "baseline_skipped": 0,
+        "niche_discovery_queued": 0,
+        "niche_discovery_skipped": 0,
     }
 
 
 def enqueue_sync_all_jobs_all_clients(supabase: Client) -> Dict[str, Any]:
-    """For each active client, enqueue own-reel baseline + all competitor profile scrapes."""
+    """For each active client, enqueue own profile_scrape + competitor profile_scrapes (discovery only)."""
     clients = supabase.table("clients").select("id, org_id").eq("is_active", True).execute()
-    total_baseline_queued = 0
-    total_baseline_skipped = 0
+    total_own_profile_queued = 0
+    total_own_profile_skipped = 0
     total_profile_queued = 0
     total_profile_skipped = 0
-    total_niche_queued = 0
-    total_niche_skipped = 0
     clients_checked = 0
 
     for c in clients.data or []:
@@ -223,21 +249,21 @@ def enqueue_sync_all_jobs_all_clients(supabase: Client) -> Dict[str, Any]:
             org_id=c["org_id"],
             client_id=c["id"],
         )
-        total_baseline_queued += stats["baseline_queued"]
-        total_baseline_skipped += stats["baseline_skipped"]
+        total_own_profile_queued += stats["own_profile_queued"]
+        total_own_profile_skipped += stats["own_profile_skipped"]
         total_profile_queued += stats["profile_queued"]
         total_profile_skipped += stats["profile_skipped"]
-        total_niche_queued += stats.get("niche_discovery_queued", 0)
-        total_niche_skipped += stats.get("niche_discovery_skipped", 0)
 
     return {
         "clients_checked": clients_checked,
-        "baseline_jobs_queued": total_baseline_queued,
-        "baseline_jobs_skipped": total_baseline_skipped,
+        "own_profile_jobs_queued": total_own_profile_queued,
+        "own_profile_jobs_skipped": total_own_profile_skipped,
         "profile_jobs_queued": total_profile_queued,
         "profile_jobs_skipped": total_profile_skipped,
-        "niche_discovery_jobs_queued": total_niche_queued,
-        "niche_discovery_jobs_skipped": total_niche_skipped,
+        "baseline_jobs_queued": 0,
+        "baseline_jobs_skipped": 0,
+        "niche_discovery_jobs_queued": 0,
+        "niche_discovery_jobs_skipped": 0,
     }
 
 
@@ -298,8 +324,9 @@ def enqueue_scraped_reels_refresh_for_client(
     *,
     org_id: str,
     client_id: str,
-    max_age_days: int = 60,
-    batch_limit: int = 500,
+    max_age_days: int = REFRESH_MAX_AGE_DAYS,
+    batch_limit: int = REFRESH_BATCH_LIMIT,
+    skip_recently_updated_hours: int = DEFAULT_SKIP_RECENTLY_UPDATED_HOURS,
 ) -> Dict[str, Any]:
     """Queue scraped_reels_refresh if none is already queued/running for this client."""
     fail_stale_running_jobs(
@@ -319,6 +346,7 @@ def enqueue_scraped_reels_refresh_for_client(
                 "client_id": client_id,
                 "max_age_days": max_age_days,
                 "batch_limit": batch_limit,
+                "skip_recently_updated_hours": skip_recently_updated_hours,
             },
             "status": "queued",
         }

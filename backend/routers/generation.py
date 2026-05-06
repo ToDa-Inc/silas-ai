@@ -43,6 +43,7 @@ from services.content_generation import (
     run_adaptation_synthesis,
     run_auto_video_idea,
     run_angle_generation,
+    run_carousel_copy_package,
     run_content_package,
     run_cover_text_options,
     run_format_recommendation,
@@ -574,6 +575,14 @@ def generation_start(
             detail="Model returned too few angles; retry or adjust inputs.",
         )
 
+    # Carousel vs video template snapshots are mutually exclusive (avoid wrong-format sessions).
+    if source_format_key:
+        ck_ins = canonicalize_stored_format_key(source_format_key) or source_format_key.strip()
+        if ck_ins == "carousel":
+            cover_template_payload = None
+        else:
+            carousel_template_payload = None
+
     sid = generate_generation_session_id()
     now = _now_iso()
     insert_row: Dict[str, Any] = {
@@ -654,6 +663,75 @@ def generation_choose_angle(
     raw_fk = str(row.get("source_format_key") or "").strip()
     fk = canonicalize_stored_format_key(raw_fk) or raw_fk or None
     selected_cta = row.get("selected_cta") if isinstance(row.get("selected_cta"), dict) else None
+
+    if fk == "carousel":
+        # Carousel: hooks + caption only, then build slide PNGs immediately (no Reel script / cover headlines).
+        try:
+            copy_pkg = run_carousel_copy_package(
+                settings,
+                client_row=client_row,
+                synthesized_patterns=patterns,
+                chosen_angle=chosen,
+                adapt_single_reference_reel=_session_adapts_single_reference_reel(row),
+                selected_cta=selected_cta,
+            )
+        except Exception as e:
+            logger.exception("generation choose-angle failed (carousel copy)")
+            raise HTTPException(status_code=502, detail=str(e)) from e
+
+        from models.generation import GenerateCarouselSlidesBody
+        from routers.creation import build_carousel_slides_payload
+
+        temp_row = dict(row)
+        temp_row["chosen_angle_index"] = body.angle_index
+        temp_row["hooks"] = copy_pkg["hooks"]
+        try:
+            slides = build_carousel_slides_payload(
+                supabase,
+                settings,
+                client_id=client_id,
+                session_id=session_id,
+                row=temp_row,
+                body=GenerateCarouselSlidesBody(count=6, style=None),
+            )
+        except Exception as e:
+            logger.exception("generation choose-angle failed (carousel slides)")
+            raise HTTPException(status_code=502, detail=str(e)) from e
+
+        script_outline = "\n\n".join(
+            f"## Slide {int(s.get('idx', i)) + 1}\n{str(s.get('text') or '').strip()}"
+            for i, s in enumerate(slides)
+            if isinstance(s, dict)
+        )
+
+        now = _now_iso()
+        patch = {
+            "chosen_angle_index": body.angle_index,
+            "hooks": copy_pkg["hooks"],
+            "script": script_outline or None,
+            "caption_body": copy_pkg["caption_body"],
+            "hashtags": copy_pkg["hashtags"],
+            "story_variants": copy_pkg.get("story_variants") or [],
+            "text_blocks": None,
+            "carousel_slides": slides,
+            "cover_text_options": None,
+            "status": "content_ready",
+            "updated_at": now,
+        }
+        supabase.table("generation_sessions").update(patch).eq("id", session_id).execute()
+        out = _load_session(supabase, client_id, session_id)
+        merged = dict(out)
+        clin = {"brand_theme": client_row.get("brand_theme"), "language": client_row.get("language")}
+        persist_finalize_spec(
+            supabase,
+            session_id=session_id,
+            client_id=client_id,
+            session_row=merged,
+            client_row=clin,
+            updated_at_iso=_now_iso(),
+        )
+        return _row_to_out(_load_session(supabase, client_id, session_id))
+
     try:
         package = run_content_package(
             settings,
@@ -1054,8 +1132,8 @@ def generation_generate_thumbnail(
 ) -> Dict[str, Any]:
     """Generate a 9:16 reel cover thumbnail.
 
-    Uses Freepik flux-2-turbo for the background + Pillow for text overlay,
-    matching Conny's editorial style (soft washed-out photo + serif headline).
+    Uses Freepik flux-2-turbo for the background + Pillow for text overlay.
+    Backgrounds preserve their colour unless the request explicitly enables wash.
 
     Pass ``hook_text`` in the body to control which text appears on the cover.
     Falls back to the session's first hook, then chosen angle title.
@@ -1102,6 +1180,7 @@ def generation_generate_thumbnail(
             text_treatment=body.text_treatment,
             layout=body.layout,
             appearance=body.appearance,
+            wash=body.wash,
         )
     except Exception as e:
         logger.exception("Thumbnail generation failed")

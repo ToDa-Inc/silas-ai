@@ -1,17 +1,14 @@
 """daily_intelligence_tick — per-client fan-out job enqueued by the scheduler.
 
-Single source of truth for the "what runs daily" question. Enqueues (in order,
-but as independent queued jobs so one failure doesn't block the others):
+Enqueues (in order, as independent queued jobs):
 
-    1. profile_scrape (scrape_own=true)          → client's own reels
-    2. profile_scrape × N competitors             → competitor reels
-    3. keyword_reel_similarity (last-2-days)      → niche discovery
-    4. scraped_reels_refresh                      → growth snapshots
+    1. profile_scrape (scrape_own=true)     → own-handle discovery (short lookback)
+    2. profile_scrape × N competitors       → competitor discovery
+    3. keyword_reel_similarity              → niche keyword discovery (same window as niche cron)
+    4. scraped_reels_refresh                → metrics + snapshots (30d window, skips very recent rows)
 
-Each sub-job is idempotent — upserts on (client_id, post_url), reel_snapshots
-is append-only. A re-run of the tick within the same 24h window enqueues
-duplicate jobs but has_active_job() gates 1/3/4; competitors are not gated
-intentionally (several competitors in flight is fine and each fails-safe).
+Discovery windows and refresh policy match :mod:`services.scrape_cycle` / GitHub crons.
+Each sub-job is idempotent. ``has_active_job()`` gates 1/3/4; competitors are not gated.
 """
 
 from __future__ import annotations
@@ -24,18 +21,18 @@ from core.config import Settings
 from core.database import get_supabase_for_settings
 from core.id_generator import generate_job_id
 from services.job_queue import has_active_job
+from services.scrape_cycle import (
+    DAILY_DISCOVERY_ONLY_NEWER_THAN,
+    DAILY_DISCOVERY_RESULTS_LIMIT,
+    DEFAULT_SKIP_RECENTLY_UPDATED_HOURS,
+    REFRESH_BATCH_LIMIT,
+    REFRESH_MAX_AGE_DAYS,
+)
 
 logger = logging.getLogger(__name__)
 
-
-# Safety buffer on recency windows: cadence is 24h but we look back 2-4 days so
-# a missed tick (worker down, Apify outage) doesn't cause permanent data loss.
-_OWN_ONLY_NEWER_THAN = "4 days"
-_COMPETITOR_ONLY_NEWER_THAN = "4 days"
 _KEYWORD_SEARCH_WINDOW = "last-2-days"   # Sasky enum
 _KEYWORD_DAYS = 3                         # client-side recency + enrichment onlyPostsNewerThan
-_REFRESH_MAX_AGE_DAYS = 60
-_REFRESH_BATCH_LIMIT = 500
 
 
 def _enqueue(
@@ -99,7 +96,8 @@ def run_daily_intelligence_tick(settings: Settings, job: Dict[str, Any]) -> None
                 job_type="profile_scrape",
                 payload={
                     "scrape_own": True,
-                    "only_newer_than": _OWN_ONLY_NEWER_THAN,
+                    "only_newer_than": DAILY_DISCOVERY_ONLY_NEWER_THAN,
+                    "results_limit": DAILY_DISCOVERY_RESULTS_LIMIT,
                 },
                 priority=10,  # run before competitors
             )
@@ -133,7 +131,8 @@ def run_daily_intelligence_tick(settings: Settings, job: Dict[str, Any]) -> None
                 job_type="profile_scrape",
                 payload={
                     "competitor_id": cid,
-                    "only_newer_than": _COMPETITOR_ONLY_NEWER_THAN,
+                    "only_newer_than": DAILY_DISCOVERY_ONLY_NEWER_THAN,
+                    "results_limit": DAILY_DISCOVERY_RESULTS_LIMIT,
                 },
                 priority=5,
             )
@@ -162,7 +161,7 @@ def run_daily_intelligence_tick(settings: Settings, job: Dict[str, Any]) -> None
         except Exception as e:
             progress["skipped"]["keyword_similarity"] = f"{type(e).__name__}: {e!s}"[:400]
 
-    # ── Step 4: growth-snapshot refresh for all reels <60d old ──────────────
+    # ── Step 4: metric refresh (30d window; skip rows just updated by discovery) ─
     if has_active_job(supabase, client_id=client_id, job_type="scraped_reels_refresh"):
         progress["skipped"]["refresh"] = "active_job_exists"
     else:
@@ -174,8 +173,9 @@ def run_daily_intelligence_tick(settings: Settings, job: Dict[str, Any]) -> None
                 job_type="scraped_reels_refresh",
                 payload={
                     "client_id": client_id,
-                    "max_age_days": _REFRESH_MAX_AGE_DAYS,
-                    "batch_limit": _REFRESH_BATCH_LIMIT,
+                    "max_age_days": REFRESH_MAX_AGE_DAYS,
+                    "batch_limit": REFRESH_BATCH_LIMIT,
+                    "skip_recently_updated_hours": DEFAULT_SKIP_RECENTLY_UPDATED_HOURS,
                 },
                 priority=1,  # lowest — runs after fresh scrapes land
             )

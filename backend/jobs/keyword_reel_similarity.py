@@ -13,7 +13,11 @@ import httpx
 from core.config import Settings
 from core.database import get_supabase_for_settings
 from core.id_generator import generate_reel_id
-from services.apify import enrich_reel_urls_direct, run_keyword_reel_search_batch
+from services.apify import (
+    ApifyUsageLimitError,
+    enrich_reel_urls_direct,
+    run_keyword_reel_search_batch,
+)
 from services.apify_posted_at import apify_instagram_item_posted_at_iso
 from services.reel_thumbnail_url import reel_thumbnail_url_from_apify_item
 from services.instagram_post_url import (
@@ -42,9 +46,9 @@ DEFAULT_MIN_VIEWS_PER_DAY = 2000.0  # views/day floor — raised since we score 
 # Apify / model cost telemetry (USD).
 # Verified against actor pricing pages:
 #   apify~instagram-scraper (directUrls enrichment): $0.0023 / result = $2.30 / 1K
-#   sasky/instagram-keyword-reels-urls-scraper:      ~$2.00 / 1K reel URLs returned
+#   sasky/instagram-keyword-reels-urls-scraper:      ~$0.40 / 1K results (actor store pricing)
 #   Gemini video analysis (via OpenRouter):          ~$0.03 / reel (ballpark, model-dependent)
-_COST_SASKY_PER_1K = 2.0
+_COST_SASKY_PER_1K = 0.4
 _COST_ENRICH_PER_1K = 2.3
 _COST_GEMINI_PER_REEL = 0.03
 
@@ -549,6 +553,10 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
             max_items_total=total_limit,
             date=search_window,
         )
+    except ApifyUsageLimitError as e:
+        progress["keywords_run"].append({"error": str(e)[:200]})
+        supabase.table("background_jobs").update({"result": dict(progress)}).eq("id", job_id).execute()
+        raise
     except Exception as e:
         progress["keywords_run"].append({"error": str(e)[:200]})
         _complete_job(supabase, job_id, progress, f"Keyword search failed: {e!s}")

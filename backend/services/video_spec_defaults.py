@@ -14,6 +14,7 @@ from models.video_spec import (
     VideoSpecLayout,
     VideoSpecV1,
     parse_video_spec,
+    validate_video_spec_dict,
 )
 from services.format_classifier import canonicalize_stored_format_key
 from services.video_spec_timing import (
@@ -400,13 +401,15 @@ def hydrate_video_spec_broll_duration_if_needed(
         dur = probe_http_video_duration_sec(str(spec.background.url or "").strip())
     if dur is None or not math.isfinite(dur) or dur <= 0:
         return spec
-    return relayout_spec(
-        spec.model_copy(
-            update={
-                "background": spec.background.model_copy(update={"durationSec": float(dur)}),
-            }
-        )
+    merged = spec.model_copy(
+        update={
+            "background": spec.background.model_copy(update={"durationSec": float(dur)}),
+        }
     )
+    # Do not run ``relayout_spec`` here: it rebuilds block windows from pauses and
+    # would erase independently authored layer timing. Pydantic validation only
+    # clamps ends to the clip cap.
+    return validate_video_spec_dict(merged.model_dump(mode="json"))
 
 
 def persist_healed_session_video_spec_row(
@@ -416,7 +419,7 @@ def persist_healed_session_video_spec_row(
     session_id: str,
     row: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Hydrate missing B-roll ``durationSec`` + relayout; persist when the spec changed."""
+    """Hydrate missing B-roll ``durationSec`` (no full relayout); persist when the spec changed."""
     from datetime import datetime, timezone
 
     raw = row.get("video_spec")

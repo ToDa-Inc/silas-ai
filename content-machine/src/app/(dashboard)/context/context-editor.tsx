@@ -1092,7 +1092,7 @@ export function ContextEditor({
       </ul>
 
       <p className="mt-8 rounded-xl border border-outline-variant/15 bg-surface-container-low/50 px-4 py-3 text-xs leading-relaxed text-zinc-500 dark:border-white/10">
-        <span className="font-semibold text-on-surface">Links, offers, and visual styles</span>{" "}
+        <span className="font-semibold text-on-surface">Next steps and visual styles</span>{" "}
         now live under{" "}
         <a href="/settings#content-defaults" className="font-semibold text-amber-700 hover:underline dark:text-amber-400">
           Settings → Content defaults

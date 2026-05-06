@@ -24,7 +24,7 @@ export type CoverEditState = {
 export const DEFAULT_COVER_EDIT: CoverEditState = {
   cropY: 0.5,
   zoom: 1,
-  wash: true,
+  wash: false,
   templateId: "centered-pop",
   themeId: "bold-modern",
   layout: DEFAULT_COVER_LAYOUT,

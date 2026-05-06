@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { FileText, Images, Loader2, Sparkles, UserRound, Video, X } from "lucide-react";
 import { ReelThumbnail } from "@/components/reel-thumbnail";
-import type { ClientCarouselTemplate, ClientCoverTemplate, ScrapedReelRow } from "@/lib/api";
+import type { ClientCarouselTemplate, ClientCoverTemplate, ClientCta, ScrapedReelRow } from "@/lib/api";
 import {
   fetchClientGenerationLibraries,
   generationStart,
@@ -20,16 +20,23 @@ type Props = {
   disabledHint?: string | null;
 };
 
-/** Target production format the user wants to recreate the source reel as.
- * `auto` keeps the legacy behavior (use the source reel's original format). */
-type RecreateFormatChoice = "auto" | "text_overlay" | "talking_head" | "carousel";
+/** Target production format — explicit choice only (server routes by format_key). */
+type RecreateFormatChoice = "text_overlay" | "talking_head" | "carousel";
 
 const RECREATE_FORMAT_OPTIONS: ReadonlyArray<{ key: RecreateFormatChoice; label: string; hint: string }> = [
-  { key: "auto", label: "Auto", hint: "Keep source reel's original format" },
   { key: "text_overlay", label: "Text overlay", hint: "Static visuals + on-screen text blocks" },
   { key: "talking_head", label: "Talking head", hint: "You speak to camera the whole reel" },
   { key: "carousel", label: "Carousel", hint: "Swipeable PNG slides (not a video)" },
 ];
+
+const CTA_TYPE_LABEL: Record<string, string> = {
+  website: "Website",
+  newsletter: "Newsletter",
+  video: "Video",
+  lead_magnet: "Free resource",
+  booking: "Booking",
+  other: "Other",
+};
 
 function sourceMediaLabel(reel: ScrapedReelRow): {
   icon: typeof Video;
@@ -183,6 +190,62 @@ function CoverTemplatePicker({
   );
 }
 
+function NextStepPicker({
+  library,
+  selectedId,
+  onSelect,
+  disabled,
+}: {
+  library: ClientCta[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="mt-4">
+      <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-2">
+        <p className="text-xs font-semibold text-app-fg">
+          Next step <span className="font-normal text-app-fg-muted">(required)</span>
+        </p>
+        <Link
+          href="/settings#content-defaults"
+          className="text-[10px] font-semibold text-amber-700 hover:underline dark:text-amber-400"
+        >
+          Edit next steps →
+        </Link>
+      </div>
+      <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Next step">
+        {library.map((cta) => {
+          const active = selectedId === cta.id;
+          const typeLabel = CTA_TYPE_LABEL[cta.type] ?? cta.type;
+          return (
+            <button
+              key={cta.id}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              title={cta.traffic_goal ? `${typeLabel} · ${cta.traffic_goal}` : typeLabel}
+              disabled={disabled}
+              onClick={() => onSelect(cta.id)}
+              className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-50 ${
+                active
+                  ? "border-amber-500/55 bg-amber-500/10 text-app-fg"
+                  : "border-zinc-200/90 bg-white text-zinc-700 hover:border-zinc-300 dark:border-white/10 dark:bg-zinc-900/60 dark:text-app-fg-muted dark:hover:border-white/20"
+              }`}
+            >
+              {cta.label}
+              <span className="ml-1 font-normal text-app-fg-subtle">· {typeLabel}</span>
+            </button>
+          );
+        })}
+      </div>
+      <p className="mt-1.5 text-[10px] leading-relaxed text-app-fg-subtle">
+        Caption, script, and on-screen text will adapt to this destination.
+      </p>
+    </div>
+  );
+}
+
 function isLikelyInstagramReelUrl(s: string): boolean {
   const t = s.trim().toLowerCase();
   return (
@@ -214,6 +277,8 @@ export function RecreateReelModal({
   const [selectedCarouselTemplateId, setSelectedCarouselTemplateId] = useState<string | null>(null);
   const [coverTemplates, setCoverTemplates] = useState<ClientCoverTemplate[]>([]);
   const [selectedCoverTemplateId, setSelectedCoverTemplateId] = useState<string | null>(null);
+  const [ctaLibrary, setCtaLibrary] = useState<ClientCta[]>([]);
+  const [selectedCtaId, setSelectedCtaId] = useState<string | null>(null);
   const [templatesLoading, setTemplatesLoading] = useState(false);
   const phaseTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const hasAnalysis = Boolean(reel?.analysis);
@@ -238,6 +303,8 @@ export function RecreateReelModal({
       setSelectedCarouselTemplateId(null);
       setCoverTemplates([]);
       setSelectedCoverTemplateId(null);
+      setCtaLibrary([]);
+      setSelectedCtaId(null);
       setTemplatesLoading(false);
       setBusy(false);
       if (phaseTimerRef.current) {
@@ -262,6 +329,10 @@ export function RecreateReelModal({
       setCoverTemplates(res.data.coverTemplates);
       if (res.data.coverTemplates.length === 1) {
         setSelectedCoverTemplateId(res.data.coverTemplates[0].id);
+      }
+      setCtaLibrary(res.data.ctaLibrary);
+      if (res.data.ctaLibrary.length === 1) {
+        setSelectedCtaId(res.data.ctaLibrary[0].id);
       }
     });
     return () => {
@@ -334,6 +405,10 @@ export function RecreateReelModal({
       setMsg("Pick a cover style first.");
       return;
     }
+    if (ctaLibrary.length > 0 && !selectedCtaId) {
+      setMsg("Pick a next step first.");
+      return;
+    }
     const selectedCarouselTemplate =
       formatChoice === "carousel" && selectedCarouselTemplateId
         ? carouselTemplates.find((template) => template.id === selectedCarouselTemplateId) ?? null
@@ -342,6 +417,8 @@ export function RecreateReelModal({
       formatChoice !== "carousel" && selectedCoverTemplateId
         ? coverTemplates.find((template) => template.id === selectedCoverTemplateId) ?? null
         : null;
+    const selectedCta =
+      selectedCtaId ? ctaLibrary.find((cta) => cta.id === selectedCtaId) ?? null : null;
 
     setBusy(true);
     setMsg(null);
@@ -353,9 +430,10 @@ export function RecreateReelModal({
         source_type: "url_adapt",
         url,
         extra_instruction: extraInstruction.trim() || undefined,
-        format_key: formatChoice === "auto" ? undefined : formatChoice,
+        format_key: formatChoice,
         selected_carousel_template: selectedCarouselTemplate ?? undefined,
         selected_cover_template: selectedCoverTemplate ?? undefined,
+        selected_cta: selectedCta ?? undefined,
       });
       clearPhaseTimer();
       setPhase(null);
@@ -402,9 +480,8 @@ export function RecreateReelModal({
               Adapt this reel for your client
             </h2>
             <p className="mt-1 text-[11px] leading-relaxed text-app-fg-subtle">
-              Same core video idea as the competitor reel — pick the production format you want
-              (or Auto to keep the source&apos;s). Examples, setting, and copy rewritten for your client.
-              You pick one of five angles on Generate, then get script and caption.
+              Same core idea as the competitor reel — pick the production format (routes generation on the server).
+              You pick an angle on Generate; carousel sessions build slides after you choose an angle.
             </p>
           </div>
           <button
@@ -499,11 +576,9 @@ export function RecreateReelModal({
                 })}
               </div>
               <p className="mt-1.5 text-[10px] leading-relaxed text-app-fg-subtle">
-                {formatChoice && formatChoice !== "auto"
-                  ? "We'll keep the source reel's idea + viewer payoff, but rebuild beats and on-screen language for this format."
-                  : formatChoice === "auto"
-                  ? "We'll mirror the source reel's original production format."
-                  : "Pick a target format — Auto keeps the source reel's format, the others re-format the same idea."}
+                {formatChoice
+                  ? "We keep the source reel's idea + viewer payoff, but rebuild beats and on-screen language for this format."
+                  : "Pick a target format — each option is sent to the API as format_key (no silent Auto)."}
               </p>
             </div>
 
@@ -553,6 +628,26 @@ export function RecreateReelModal({
                 </div>
               )
             ) : null}
+
+            {ctaLibrary.length > 0 ? (
+              <NextStepPicker
+                library={ctaLibrary}
+                selectedId={selectedCtaId}
+                onSelect={setSelectedCtaId}
+                disabled={busy || templatesLoading}
+              />
+            ) : (
+              <div className="mt-4 rounded-xl border border-dashed border-zinc-200/90 bg-white/60 p-3 text-[11px] leading-relaxed text-app-fg-muted dark:border-white/10 dark:bg-zinc-900/50">
+                No next steps configured yet.{" "}
+                <Link
+                  href="/settings#content-defaults"
+                  className="font-semibold text-amber-700 hover:underline dark:text-amber-400"
+                >
+                  Add in Settings
+                </Link>{" "}
+                so adapted posts know where to send viewers.
+              </div>
+            )}
 
             <label htmlFor="recreate-extra" className="mt-4 block text-xs font-semibold text-app-fg">
               Extra focus <span className="font-normal text-app-fg-muted">(optional)</span>

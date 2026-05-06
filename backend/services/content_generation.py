@@ -262,7 +262,8 @@ _CTA_TYPE_GUIDANCE = {
     "lead_magnet": (
         "Free resource, usually delivered via comment keyword. On-screen CTA should "
         "show the keyword clearly; caption should tease the resource and tell the user "
-        "to comment the keyword."
+        "to comment the keyword. Wrap comment keywords in language-native quotation "
+        'marks: German output uses „KEYWORD“; other languages use "KEYWORD".'
     ),
     "booking": (
         "Books a call / demo / consultation. Caption should qualify the right viewer "
@@ -309,7 +310,9 @@ def _format_selected_cta_block(selected_cta: Optional[Dict[str, Any]]) -> str:
         "(c) text_blocks item 4 / final visual CTA, and "
         "(d) any carousel final-slide CTA. Keep wording native to the platform "
         "(no raw URLs in script narration). When destination is a URL, refer to it "
-        "as the link in bio / link below / tap the link, not by spelling the URL out."
+        "as the link in bio / link below / tap the link, not by spelling the URL out. "
+        "For comment-keyword CTAs, preserve the exact keyword but render quotation "
+        'marks in the output language: German uses „KEYWORD“; otherwise use "KEYWORD".'
     )
     return "\n".join(lines)
 
@@ -1143,6 +1146,87 @@ def run_cover_text_options(
     return options
 
 
+def run_carousel_copy_package(
+    settings: Settings,
+    *,
+    client_row: Dict[str, Any],
+    synthesized_patterns: Dict[str, Any],
+    chosen_angle: Dict[str, Any],
+    adapt_single_reference_reel: bool = False,
+    selected_cta: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Hooks + caption + hashtags only — no video script. Used when choosing an angle for carousel."""
+    lang = _lang_instruction(str(client_row.get("language") or "de"))
+    adapt_block = ""
+    if adapt_single_reference_reel:
+        adapt_block = (
+            "\nREFERENCE_REEL_ADAPTATION (non-negotiable):\n"
+            "PATTERNS_JSON comes from a single source reel or pasted script. Preserve the core payoff "
+            "and blueprint family for THIS adaptation—hooks and caption must stay faithful to "
+            "CHOSEN_ANGLE_JSON, not a generic new topic.\n\n"
+        )
+    ref_note = ""
+    if adapt_single_reference_reel and isinstance(synthesized_patterns, dict):
+        sr0 = synthesized_patterns.get("source_reference")
+        if isinstance(sr0, dict) and str(sr0.get("source_caption") or "").strip():
+            ref_note = (
+                "\nSOURCE_REFERENCE: When source_reference.source_caption exists, align caption strategy "
+                "(without copying phrasing) with that caption's role.\n"
+            )
+    blueprint_note = ""
+    if adapt_single_reference_reel and str(chosen_angle.get("angle_role") or "").strip().lower() == "blueprint":
+        blueprint_note = (
+            "\nBLUEPRINT_ANGLE: Maximize fidelity to CHOSEN_ANGLE_JSON — same narrative spine as the source blueprint.\n"
+        )
+    caption_src_tail = ""
+    if isinstance(synthesized_patterns, dict):
+        sr1 = synthesized_patterns.get("source_reference")
+        if isinstance(sr1, dict) and str(sr1.get("source_caption") or "").strip():
+            caption_src_tail = (
+                " Ground caption_body in source_reference strategic cues when helpful."
+            )
+    json_shape = (
+        "{\n"
+        '  "hooks": [{"text": string}],\n'
+        '  "caption_body": string,\n'
+        '  "hashtags": [string]\n'
+        "}\n"
+    )
+    user = (
+        f"{lang}\n\n"
+        "TASK: Write companion copy for ONE Instagram CAROUSEL post (swipeable PNG slides — NOT a Reel).\n"
+        "Do NOT write a spoken video script or slide-by-slide slide text here.\n\n"
+        f"{adapt_block}{ref_note}{blueprint_note}"
+        "Output JSON with this exact shape:\n"
+        f"{json_shape}"
+        "Rules:\n"
+        "- hooks: exactly 5 alternative first-slide lines for the SAME carousel idea (same angle spine). "
+        "Each hook must stand alone as slide 1 copy — punchy, scroll-stopping. Mix styles.\n"
+        "- caption_body: IG caption for the carousel post in the output language. Deepen the angle with "
+        "psychological insight; align CTA with SELECTED_CTA when present. "
+        f"1–3 emojis max if natural.{caption_src_tail}\n"
+        "- hashtags: at most 5 niche tags.\n\n"
+        f"CLIENT_CONTEXT:\n{_pack_client_row_for_llm(client_row, selected_cta)[:100_000]}\n\n"
+        f"PATTERNS_JSON:\n{json.dumps(synthesized_patterns, ensure_ascii=False)[:52_000]}\n\n"
+        f"CHOSEN_ANGLE_JSON:\n{json.dumps(chosen_angle, ensure_ascii=False)[:8000]}\n"
+    )
+    data = chat_json_completion(
+        settings.openrouter_api_key,
+        settings.openrouter_model,
+        system=_SYSTEM_JSON,
+        user=user,
+        max_tokens=8192,
+        temperature=0.45,
+    )
+    out: Dict[str, Any] = {
+        "hooks": _normalize_hooks(data.get("hooks")),
+        "caption_body": str(data.get("caption_body") or "").strip(),
+        "hashtags": _normalize_hashtags(data.get("hashtags")),
+        "story_variants": [],
+    }
+    return _apply_german_natural_polish(settings, client_row, out, mode="full")
+
+
 def run_content_package(
     settings: Settings,
     *,
@@ -1218,7 +1302,7 @@ def run_content_package(
             "    • newsletter → frame the value of subscribing in 1 line, e.g.\n"
             "      \"Hol dir den Brief ↓\". If destination is a comment keyword, use it.\n"
             "    • lead_magnet → comment-keyword CTA in the output language, e.g.\n"
-            "      \"👇 Schreib 'KEYWORD' für …\".\n"
+            "      German: \"👇 Schreib „KEYWORD“ für …\"; otherwise use \"KEYWORD\".\n"
             "    • video → tease the next video as the natural next step, e.g.\n"
             "      \"Teil 2 wartet auf dich ↓\".\n"
             "    • booking → push toward the booking link, e.g.\n"
@@ -1367,7 +1451,8 @@ def run_content_package(
         "(5) Authority transition — solution direction without over-explaining; "
         "(6) CTA — clear action aligned with SELECTED_CTA (use its destination + traffic_goal; "
         "match type guidance — e.g. native link push for website, value-of-subscribing line for newsletter, "
-        "comment keyword for lead_magnet). Fall back to OFFER_DOCUMENTATION-driven wording only when "
+        "comment keyword for lead_magnet, with German quotation marks like „KEYWORD“ in German output). "
+        "Fall back to OFFER_DOCUMENTATION-driven wording only when "
         "no SELECTED_CTA block is present. "
         "Tone: direct, emotionally precise, psychologically sharp; slight provocation where it fits; "
         f"1–3 emojis max if natural. Final check: would this stop a scroll and make the ICP feel understood?{caption_src_tail}\n"
@@ -1709,19 +1794,24 @@ def run_carousel_slide_texts(
         icp = client_row.get("icp") if isinstance(client_row.get("icp"), dict) else {}
         gen_brief = json.dumps(icp, ensure_ascii=False, default=str)[:4000] if icp else "(no ICP brief on file)"
 
+    draft_hook_raw = str(chosen_angle.get("draft_hook") or "").strip()
     angle_topic = (
         f"- Title: {str(chosen_angle.get('title') or '').strip()}\n"
         f"- Situation: {str(chosen_angle.get('situation') or '').strip()}\n"
         f"- Emotional trigger: {str(chosen_angle.get('emotional_trigger') or '').strip()}\n"
-        f"- Mechanism (why it works — context only, never write this on a slide): "
-        f"{str(chosen_angle.get('mechanism_note') or '').strip()}"
+        f"- Mechanism (why it works — adapt across body slides, never paste verbatim): "
+        f"{str(chosen_angle.get('mechanism_note') or '').strip()}\n"
+        f"- Draft hook / spine (preserve this idea on slide 1 — shorten only for poster length):\n"
+        f"{draft_hook_raw[:4000] or '(use HOOK_SEED below)'}"
     )
 
     fb = f"\n\nFEEDBACK_FROM_HUMAN:\n{feedback.strip()[:2000]}\n" if feedback and feedback.strip() else ""
     cta_block = _format_selected_cta_block(selected_cta)
     cta_block_for_user = (
         f"\n{cta_block}\n\nThe final slide MUST point at this destination + traffic_goal in a "
-        "platform-native way (link in bio, comment keyword, etc.); never paste raw URLs.\n"
+        "platform-native way (link in bio, comment keyword, etc.); never paste raw URLs. "
+        "For comment keywords, use German quotation marks like „KEYWORD“ in German output "
+        'and regular double quotes like "KEYWORD" otherwise.\n'
         if cta_block
         else ""
     )
@@ -1746,9 +1836,17 @@ def run_carousel_slide_texts(
         "- reward every swipe with a new, complete thought\n"
         "- feel highly relevant to one specific person\n"
         "- end with a clear next action\n\n"
+        "FIDELITY (non-negotiable):\n"
+        "- You are SPLITTING ONE chosen angle into exactly N slides — not inventing a different story.\n"
+        "- Slide 1 MUST preserve the same hook/spine as CHOSEN_ANGLE_JSON.draft_hook (and HOOK_SEED); "
+        "only shorten or line-break for poster readability; same protagonist, same tension, same incident.\n"
+        "- Slides 2..N-1 MUST unpack situation → emotional_trigger → mechanism_note as sequential beats "
+        "(one beat per slide when N is small; split finer when N is larger). Do not introduce unrelated frameworks.\n"
+        "- Slide N MUST deliver the CTA aligned with SELECTED_CTA / traffic_goal.\n"
+        "- Do NOT flatten the angle into three generic platitudes unless N=3 and the angle truly has only three beats.\n\n"
         "CONTEXT INPUT:\n"
-        f"Hook of the reel (slide-1 seed — you may rewrite it to fit a poster, but keep the same idea):\n- {hook_text.strip()[:300] or '(none — derive purely from the topic below)'}\n\n"
-        "Topic (chosen angle — INTERNAL CONTEXT ONLY, not slide copy):\n"
+        f"HOOK_SEED (first-line anchor — keep slide 1 aligned with this):\n- {hook_text.strip()[:400] or '(derive from CHOSEN_ANGLE_JSON below)'}\n\n"
+        "CHOSEN_ANGLE_JSON (source of truth — split this story across slides):\n"
         f"{angle_topic}\n\n"
         f"{template_rules}"
         "Target Audience (ICP):\n"

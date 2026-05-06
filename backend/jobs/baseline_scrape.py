@@ -14,6 +14,9 @@ from services.reel_snapshots import insert_snapshots_for_scrape_job
 from services.competitor_tier_backfill import backfill_competitor_tiers
 from services.format_digest_jobs import enqueue_auto_analyze_scraped, enqueue_format_digest_recompute
 
+BASELINE_ONLY_NEWER_THAN = "30 days"
+BASELINE_MAX_RESULTS_LIMIT = 100
+
 
 def _avg(arr: list[int]) -> int:
     return round(sum(arr) / len(arr)) if arr else 0
@@ -50,14 +53,19 @@ def run_baseline_scrape(settings: Settings, job: Dict[str, Any]) -> None:
     if not ig:
         raise RuntimeError("Client has no instagram_handle")
 
-    results_limit = max(1, int(settings.own_reels_sync_results_limit or 30))
+    results_limit = max(
+        1,
+        min(BASELINE_MAX_RESULTS_LIMIT, int(settings.own_reels_sync_results_limit or BASELINE_MAX_RESULTS_LIMIT)),
+    )
     items = run_actor(
         settings.apify_api_token,
         settings.apify_reel_actor,
         instagram_reel_scraper_input(
             [ig.replace("@", "")],
             results_limit,
-            include_shares_count=settings.apify_include_shares_count,
+            include_shares_count=False,
+            only_newer_than=BASELINE_ONLY_NEWER_THAN,
+            skip_pinned_posts=True,
         ),
     )
     videos = [
@@ -68,10 +76,24 @@ def run_baseline_scrape(settings: Settings, job: Dict[str, Any]) -> None:
     views = [int(v["videoViewCount"]) for v in videos]
     likes = [int(v.get("likesCount") or 0) for v in videos]
 
-    if not views:
-        raise RuntimeError("No reels with view counts returned from Apify for baseline")
-
     scraped_at = datetime.now(timezone.utc)
+    if not views:
+        supabase.table("background_jobs").update(
+            {
+                "status": "completed",
+                "completed_at": scraped_at.isoformat(),
+                "result": {
+                    "pipeline": "baseline_scrape",
+                    "skipped": "no_recent_reels",
+                    "only_newer_than": BASELINE_ONLY_NEWER_THAN,
+                    "apify_items": len(items),
+                    "reels_analyzed": 0,
+                    "own_reels_stored": 0,
+                },
+            }
+        ).eq("id", job_id).execute()
+        return
+
     expires_at = scraped_at + timedelta(days=7)
 
     row = {
@@ -117,6 +139,9 @@ def run_baseline_scrape(settings: Settings, job: Dict[str, Any]) -> None:
                     "input": {
                         "username": [ig.replace("@", "").strip()],
                         "resultsLimit": results_limit,
+                        "onlyPostsNewerThan": BASELINE_ONLY_NEWER_THAN,
+                        "skipPinnedPosts": True,
+                        "includeSharesCount": False,
                     },
                     "reference": "scripts/competitor-eval.js scrapeBaseline — same REEL_ACTOR as services/apify.py",
                 },

@@ -1,5 +1,6 @@
-# Enqueues scraped_reels_refresh for every active client (re-fetch views/likes/comments
-# for reels still in the retention window; appends reel_snapshots).
+# Enqueues scraped_reels_refresh per active client: 30-day retention window by default,
+# skips rows updated in the last ~20h (avoids double Apify with morning profile discovery),
+# appends reel_snapshots for metric changes.
 #
 # Secrets:
 #   CRON_SECRET — required; same as CRON_SECRET on the API service.

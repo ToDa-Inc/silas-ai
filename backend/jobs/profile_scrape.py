@@ -27,6 +27,15 @@ from services.format_digest_jobs import enqueue_auto_analyze_scraped, enqueue_fo
 
 logger = logging.getLogger(__name__)
 
+# apify~instagram-reel-scraper: $0.0023 per returned reel (= $2.30 / 1K)
+_COST_REEL_ACTOR_PER_RESULT_USD = 0.0023
+# apify~instagram-scraper: same order of magnitude for directUrls profile posts
+_COST_INSTAGRAM_SCRAPER_PER_RESULT_USD = 0.0023
+
+# Daily own-reel discovery: short lookback + overlap for missed cron runs.
+_DEFAULT_OWN_ONLY_NEWER_THAN = "2 days"
+_DEFAULT_OWN_RESULTS_LIMIT = 30
+
 # When `clients.outlier_ratio_threshold` is null, use this (also the recommended DB default).
 DEFAULT_OUTLIER_RATIO_THRESHOLD = 5.0
 
@@ -146,8 +155,10 @@ def run_profile_scrape(settings: Settings, job: Dict[str, Any]) -> None:
     threshold = float(
         clres.data[0].get("outlier_ratio_threshold") or DEFAULT_OUTLIER_RATIO_THRESHOLD
     )
+    only_newer_than = payload.get("only_newer_than")
     raw_limit = int(payload.get("results_limit") or payload.get("limit") or 30)
     results_limit = max(1, min(50, raw_limit))
+    only_nt_str = str(only_newer_than) if only_newer_than else None
 
     items = run_actor(
         settings.apify_api_token,
@@ -156,17 +167,25 @@ def run_profile_scrape(settings: Settings, job: Dict[str, Any]) -> None:
             [username],
             results_limit,
             include_shares_count=settings.apify_include_shares_count,
+            only_newer_than=only_nt_str,
+            skip_pinned_posts=bool(only_newer_than),
         ),
     )
     videos = _reel_items(items)
 
     carousel_posts: List[dict] = []
+    posts_scrape_n = 0
     try:
         raw_posts = run_actor(
             settings.apify_api_token,
             INSTAGRAM_SCRAPER,
-            instagram_profile_posts_input([username], min(20, results_limit)),
+            instagram_profile_posts_input(
+                [username],
+                min(20, results_limit),
+                only_newer_than=only_nt_str,
+            ),
         )
+        posts_scrape_n = len(raw_posts or [])
         carousel_posts = _carousel_items(raw_posts or [])
     except Exception:
         logger.warning(
@@ -299,6 +318,9 @@ def run_profile_scrape(settings: Settings, job: Dict[str, Any]) -> None:
         batch.append(row)
 
     done_at = datetime.now(timezone.utc)
+    ts_upsert = done_at.isoformat()
+    for row in batch:
+        row["last_updated_at"] = ts_upsert
     if batch:
         existing_res = (
             supabase.table("scraped_reels")
@@ -361,9 +383,17 @@ def run_profile_scrape(settings: Settings, job: Dict[str, Any]) -> None:
             "result": {
                 "competitor_id": competitor_id,
                 "username": username,
+                "only_newer_than": only_nt_str,
+                "results_limit": results_limit,
                 "apify_items": len(items),
+                "posts_scrape_items": posts_scrape_n,
                 "reels_processed": len(batch),
                 "carousel_posts_found": len(carousel_posts),
+                "estimated_cost_usd": round(
+                    len(items) * _COST_REEL_ACTOR_PER_RESULT_USD
+                    + posts_scrape_n * _COST_INSTAGRAM_SCRAPER_PER_RESULT_USD,
+                    4,
+                ),
             },
         }
     ).eq("id", job_id).execute()
@@ -378,15 +408,6 @@ def run_profile_scrape(settings: Settings, job: Dict[str, Any]) -> None:
 
 
 # ── own-handle scrape (recurring, called via scrape_own=true) ──────────────────
-
-
-# apify~instagram-reel-scraper: $0.0023 per returned reel (= $2.30 / 1K)
-_COST_REEL_ACTOR_PER_RESULT_USD = 0.0023
-
-# Safety buffer: cron enqueues with window slightly wider than cadence so a late
-# or missed run doesn't lose posts. 4 days covers a daily cron with 3 days of slack.
-_DEFAULT_OWN_ONLY_NEWER_THAN = "4 days"
-_DEFAULT_OWN_RESULTS_LIMIT = 15
 
 
 def _run_own_scrape(
@@ -443,8 +464,9 @@ def _run_own_scrape(
         instagram_reel_scraper_input(
             [ig],
             results_limit,
-            include_shares_count=settings.apify_include_shares_count,
+            include_shares_count=False,
             only_newer_than=only_newer_than,
+            skip_pinned_posts=True,
         ),
     )
     videos = _reel_items(items)
@@ -487,6 +509,7 @@ def _run_own_scrape(
         )
 
     done_at = datetime.now(timezone.utc)
+    ts_upsert = done_at.isoformat()
     if batch:
         # Preserve stable id per (client_id, post_url) so reel_snapshots keeps tracking.
         existing_res = (
@@ -504,6 +527,7 @@ def _run_own_scrape(
 
         id_for_url: Dict[str, str] = {}
         for row in batch:
+            row["last_updated_at"] = ts_upsert
             pu = str(row["post_url"])
             if pu not in id_for_url:
                 id_for_url[pu] = id_by_canon.get(pu) or generate_reel_id()
@@ -525,6 +549,7 @@ def _run_own_scrape(
                 "pipeline": "profile_scrape.own",
                 "username": ig,
                 "only_newer_than": only_newer_than,
+                "results_limit": results_limit,
                 "apify_items": len(items),
                 "reels_upserted": len(batch),
                 "estimated_cost_usd": round(len(items) * _COST_REEL_ACTOR_PER_RESULT_USD, 4),

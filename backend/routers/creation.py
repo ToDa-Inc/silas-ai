@@ -36,6 +36,8 @@ from routers.generation import _load_session, _now_iso, _row_to_out
 from services.content_generation import get_chosen_angle, run_carousel_slide_texts
 from services.format_classifier import canonicalize_stored_format_key
 from services.image_generation import (
+    CAROUSEL_SLIDE_H,
+    CAROUSEL_SLIDE_W,
     build_background_image_prompt,
     compose_carousel_final_png,
     generate_freepik_washed_background_png,
@@ -984,24 +986,18 @@ def _carousel_slide_role_for_idx(
     return "body"
 
 
-@router.post(
-    "/clients/{slug}/create/sessions/{session_id}/carousel-slides/generate",
-    response_model=GenerationSessionOut,
-)
-def generate_carousel_slides(
-    slug: str,
+def build_carousel_slides_payload(
+    supabase: Client,
+    settings: Settings,
+    *,
+    client_id: str,
     session_id: str,
+    row: Dict[str, Any],
     body: GenerateCarouselSlidesBody,
-    client_id: Annotated[str, Depends(resolve_client_id)],
-    supabase: Annotated[Client, Depends(get_supabase)],
-    settings: Annotated[Settings, Depends(get_settings)],
-) -> dict:
-    """Generate ``count`` carousel slides (text + image). Replaces any existing slides."""
-    _ = slug
+) -> List[Dict[str, Any]]:
+    """Build ``carousel_slides`` rows (text + composed PNGs). Caller persists to DB."""
     if not settings.openrouter_api_key:
         raise HTTPException(status_code=503, detail="OPENROUTER_API_KEY not configured")
-    row = _load_session(supabase, client_id, session_id)
-    _ensure_carousel_session(row)
 
     client_row = _client_row_for_session(supabase, client_id)
     chosen = _chosen_angle(row)
@@ -1056,7 +1052,7 @@ def generate_carousel_slides(
                     supabase, client_id, template_slide, slide_idx=i
                 )
                 base_png = prepare_carousel_base_png_bytes(
-                    img_bytes, wash=False, target_w=1080, target_h=1920
+                    img_bytes, wash=False, target_w=CAROUSEL_SLIDE_W, target_h=CAROUSEL_SLIDE_H
                 )
                 base_url = _upload_slide_base_png(
                     supabase, settings, client_id=client_id, session_id=session_id, idx=i, png=base_png
@@ -1084,8 +1080,8 @@ def generate_carousel_slides(
                 base_png = generate_freepik_washed_background_png(
                     settings.freepik_api_key,
                     ", ".join(ctx_parts),
-                    target_w=1080,
-                    target_h=1920,
+                    target_w=CAROUSEL_SLIDE_W,
+                    target_h=CAROUSEL_SLIDE_H,
                 )
                 base_url = _upload_slide_base_png(
                     supabase, settings, client_id=client_id, session_id=session_id, idx=i, png=base_png
@@ -1111,6 +1107,36 @@ def generate_carousel_slides(
             "image_url": url,
             "prompt": prompt_meta,
         })
+    return slides
+
+
+@router.post(
+    "/clients/{slug}/create/sessions/{session_id}/carousel-slides/generate",
+    response_model=GenerationSessionOut,
+)
+def generate_carousel_slides(
+    slug: str,
+    session_id: str,
+    body: GenerateCarouselSlidesBody,
+    client_id: Annotated[str, Depends(resolve_client_id)],
+    supabase: Annotated[Client, Depends(get_supabase)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict:
+    """Generate ``count`` carousel slides (text + image). Replaces any existing slides."""
+    _ = slug
+    if not settings.openrouter_api_key:
+        raise HTTPException(status_code=503, detail="OPENROUTER_API_KEY not configured")
+    row = _load_session(supabase, client_id, session_id)
+    _ensure_carousel_session(row)
+
+    slides = build_carousel_slides_payload(
+        supabase,
+        settings,
+        client_id=client_id,
+        session_id=session_id,
+        row=row,
+        body=body,
+    )
 
     now = _now_iso()
     supabase.table("generation_sessions").update(
@@ -1265,7 +1291,7 @@ def regenerate_carousel_slide(
                 supabase, client_id=client_id, image_id=body.client_image_id.strip()
             )
             base_png = prepare_carousel_base_png_bytes(
-                img_bytes, wash=False, target_w=1080, target_h=1920
+                img_bytes, wash=False, target_w=CAROUSEL_SLIDE_W, target_h=CAROUSEL_SLIDE_H
             )
             base_url = _upload_slide_base_png(
                 supabase,
@@ -1284,7 +1310,7 @@ def regenerate_carousel_slide(
                 supabase, client_id, template_slide, slide_idx=target_idx
             )
             base_png = prepare_carousel_base_png_bytes(
-                img_bytes, wash=False, target_w=1080, target_h=1920
+                img_bytes, wash=False, target_w=CAROUSEL_SLIDE_W, target_h=CAROUSEL_SLIDE_H
             )
             base_url = _upload_slide_base_png(
                 supabase,
@@ -1317,8 +1343,8 @@ def regenerate_carousel_slide(
             base_png = generate_freepik_washed_background_png(
                 settings.freepik_api_key,
                 ", ".join(ctx_parts),
-                target_w=1080,
-                target_h=1920,
+                target_w=CAROUSEL_SLIDE_W,
+                target_h=CAROUSEL_SLIDE_H,
             )
             base_url = _upload_slide_base_png(
                 supabase,

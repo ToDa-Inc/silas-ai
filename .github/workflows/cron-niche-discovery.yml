@@ -1,4 +1,5 @@
-# Triggers keyword-reel-similarity cron (enqueue niche keyword + similarity job per active client).
+# Expensive niche path: Sasky keyword URLs + Apify enrich + Gemini similarity per active client.
+# Kept separate from sync-all so cost and scheduling are explicit.
 #
 # Secrets (Settings → Secrets and variables → Actions):
 #   CRON_SECRET — required; same as CRON_SECRET on the service you POST to.

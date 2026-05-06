@@ -1,10 +1,12 @@
-"""scraped_reels_refresh — daily re-fetch of views/likes/comments for active reels.
+"""scraped_reels_refresh — scheduled re-fetch of views/likes/comments for active reels.
 
 Covers ALL sources (profile, keyword_similarity, etc.) for reels younger than
-`max_age_days` (default 60). Updates scraped_reels with fresh numbers and appends
-a snapshot to reel_snapshots (the existing append-only growth table).
+``max_age_days`` (default 30). Skips rows whose ``last_updated_at`` is within
+``skip_recently_updated_hours`` (default 20) so the same morning's profile
+discovery does not double-pay Apify. Updates ``scraped_reels`` and appends to
+``reel_snapshots``.
 
-Cost: Apify directUrls at ~$0.0015/1000 items — negligible at any realistic scale.
+Cost: Apify directUrls ~$0.0023/result at current actor pricing.
 """
 
 from __future__ import annotations
@@ -18,8 +20,11 @@ from services.apify import enrich_reel_urls_direct
 from services.instagram_post_url import canonical_instagram_post_url
 from services.reel_thumbnail_url import reel_thumbnail_url_from_apify_item
 
-DEFAULT_MAX_AGE_DAYS = 60
+DEFAULT_MAX_AGE_DAYS = 30
 DEFAULT_BATCH_LIMIT = 500  # max reels refreshed per run (cost guard)
+DEFAULT_SKIP_RECENTLY_UPDATED_HOURS = 20
+_CANDIDATE_FETCH_MULTIPLIER = 25
+_MAX_CANDIDATE_FETCH = 5000
 
 # apify~instagram-scraper: $0.0023 per returned result (= $2.30 / 1K)
 _COST_ENRICH_PER_RESULT_USD = 0.0023
@@ -47,23 +52,59 @@ def _canon_url(item: dict) -> str:
     return ""
 
 
-def _fetch_active_reels(
+def _parse_ts_iso(value: Any) -> Optional[datetime]:
+    if value is None:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+
+def _fetch_reels_in_age_window(
     supabase: Any,
     *,
     client_id: Optional[str],
     cutoff: datetime,
-    limit: int,
+    fetch_limit: int,
 ) -> List[Dict[str, Any]]:
     q = (
         supabase.table("scraped_reels")
-        .select("id, post_url, views, likes, comments")
+        .select("id, post_url, views, likes, comments, last_updated_at")
         .gte("posted_at", cutoff.isoformat())
         .order("posted_at", desc=True)
-        .limit(limit)
+        .limit(fetch_limit)
     )
     if client_id:
         q = q.eq("client_id", client_id)
     return q.execute().data or []
+
+
+def select_refresh_candidates(
+    rows: List[Dict[str, Any]],
+    *,
+    now_utc: datetime,
+    batch_limit: int,
+    skip_recently_updated_hours: int,
+) -> tuple[List[Dict[str, Any]], int]:
+    """Pick up to ``batch_limit`` rows, skipping those updated within the recent window.
+
+    ``rows`` must be ordered newest-first (e.g. by ``posted_at``). Returns
+    ``(selected, skipped_recent_count)``.
+    """
+    threshold = now_utc - timedelta(hours=skip_recently_updated_hours)
+    selected: List[Dict[str, Any]] = []
+    skipped_recent = 0
+    for r in rows:
+        lu = r.get("last_updated_at")
+        parsed = _parse_ts_iso(lu) if lu else None
+        if parsed is not None and parsed >= threshold:
+            skipped_recent += 1
+            continue
+        selected.append(r)
+        if len(selected) >= batch_limit:
+            break
+    return selected, skipped_recent
 
 
 # ── main job ──────────────────────────────────────────────────────────────────
@@ -80,6 +121,9 @@ def run_scraped_reels_refresh(settings: Settings, job: Dict[str, Any]) -> None:
     client_id: Optional[str] = job.get("client_id") or payload.get("client_id")
     max_age_days = int(payload.get("max_age_days") or DEFAULT_MAX_AGE_DAYS)
     batch_limit = int(payload.get("batch_limit") or DEFAULT_BATCH_LIMIT)
+    skip_recently_updated_hours = int(
+        payload.get("skip_recently_updated_hours") or DEFAULT_SKIP_RECENTLY_UPDATED_HOURS
+    )
 
     now_utc = datetime.now(timezone.utc)
     supabase.table("background_jobs").update(
@@ -97,12 +141,25 @@ def run_scraped_reels_refresh(settings: Settings, job: Dict[str, Any]) -> None:
         "enrich_errors": [],
         "client_id": client_id or "all",
         "max_age_days": max_age_days,
+        "batch_limit": batch_limit,
+        "skip_recently_updated_hours": skip_recently_updated_hours,
     }
     _save(supabase, job_id, progress)
 
     cutoff = now_utc - timedelta(days=max_age_days)
-    rows = _fetch_active_reels(supabase, client_id=client_id, cutoff=cutoff, limit=batch_limit)
+    fetch_limit = min(batch_limit * _CANDIDATE_FETCH_MULTIPLIER, _MAX_CANDIDATE_FETCH)
+    pool = _fetch_reels_in_age_window(
+        supabase, client_id=client_id, cutoff=cutoff, fetch_limit=fetch_limit
+    )
+    rows, skipped_recent = select_refresh_candidates(
+        pool,
+        now_utc=now_utc,
+        batch_limit=batch_limit,
+        skip_recently_updated_hours=skip_recently_updated_hours,
+    )
 
+    progress["candidates_pool"] = len(pool)
+    progress["skipped_recently_updated"] = skipped_recent
     progress["candidates"] = len(rows)
     if not rows:
         _complete(supabase, job_id, progress, "No active reels in window")

@@ -52,7 +52,7 @@ Optional: `backend/.env` or `config/.env` for overrides (see load order in root 
    - [Apify Console](https://console.apify.com/) → **Settings** → **Integrations** → API token.  
    - Same value as `APIFY_API_TOKEN` in `config/.env` if you already use the Node scripts.  
    - **403 Forbidden** from `api.apify.com/v2/acts/.../runs`: token invalid/revoked, no Apify credits, or wrong actor. Create a new token, confirm billing, then restart the API. The backend uses actor **`apify~instagram-reel-scraper`** by default (override with **`APIFY_REEL_ACTOR`** in `.env` if needed).
-   - **Saves / shares show 0:** Instagram often does not expose save counts in scraped public data. **Shares** need Apify’s **`includeSharesCount`** (enabled by default via **`APIFY_INCLUDE_SHARES_COUNT=true`**) and typically a **paid Apify plan** — see [Instagram Reel Scraper pricing](https://apify.com/apify/instagram-reel-scraper/pricing). Re-sync after changing plan.
+   - **Saves / shares show 0:** Instagram often does not expose save counts in scraped public data. **Shares** need Apify’s paid **`includeSharesCount`** add-on and are disabled by default (`APIFY_INCLUDE_SHARES_COUNT=false`) to avoid daily sync over-spend. Re-sync after changing plan.
    - **Duration missing for some reels:** The actor only fills **`videoDuration`** when Instagram returns it for that item; we also read a few alternate fields. Gaps are normal for some post types.
 
 6. **`OPENROUTER_API_KEY`** (needed for **worker**: Gemini relevance scoring)  
@@ -69,6 +69,18 @@ Optional: `backend/.env` or `config/.env` for overrides (see load order in root 
 10. **`CRON_SECRET`** — set a long random string to enable cron routes (`POST /api/v1/cron/scrape-cycle`, `POST /api/v1/cron/sync-all`, `POST /api/v1/cron/recompute-breakouts`, `POST /api/v1/cron/cleanup-renders`) with header `X-Cron-Secret`. If unset, those routes return 503 (safe default). Use the **same** value in Vercel as `CRON_SECRET` for `/api/cron/daily-sync`.
 
 11. **Save** the file. Load order is **repo `.env` → `backend/.env` → `config/.env`** (each overrides the previous). Put shared keys in repo `.env`; keep `config/.env` only if Node scripts still read it.
+
+## Scheduled scraping (GitHub Actions / cron)
+
+Three responsibilities, three schedules (see `.github/workflows/cron-*.yml`):
+
+| Cron | Route | Role |
+|------|--------|------|
+| **sync-all** | `POST /api/v1/cron/sync-all` | Daily **discovery**: `profile_scrape` for the client’s own handle + each competitor (`2 days`, capped results). No baseline, no niche keyword job. |
+| **niche discovery** | `POST /api/v1/cron/keyword-reel-similarity` | **Keyword / similarity** pipeline only (Sasky + enrich + Gemini). |
+| **scraped-reels-refresh** | `POST /api/v1/cron/scraped-reels-refresh` | **Metrics refresh** for reels in the last **30** days; skips rows updated in the last **~20h** so profile discovery and refresh don’t double-fetch the same URLs. |
+
+Stale competitor catch-up (tiers 1–3) stays on **`POST /api/v1/cron/scrape-cycle`** with a wider lookback.
 
 ## One-time data migration
 

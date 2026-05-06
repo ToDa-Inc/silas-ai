@@ -1,12 +1,12 @@
-import React from 'react';
-import { AbsoluteFill } from 'remotion';
-import type { VideoSpecWithTimeline } from '../templateProps';
-import { resolveAppearance } from '../appearance';
-import { blockEntranceStyle } from '../animations';
-import { flexAlignForTextAlign } from '../alignLayout';
-import { resolveLayoutPx } from '../layout';
-import { cardBoldOutlineCaptionStyle, isBoldOutlineTreatment } from '../textTreatment';
-import { activeCaptionLayers, type ActiveCaptionLayer } from '../activeLayers';
+import React from "react";
+import { AbsoluteFill } from "remotion";
+import type { VideoSpecWithTimeline } from "../templateProps";
+import { resolveAppearance } from "../appearance";
+import { blockEntranceStyle } from "../animations";
+import { flexAlignForTextAlign } from "../alignLayout";
+import { resolveLayoutPx } from "../layout";
+import { cardBoldOutlineCaptionStyle, isBoldOutlineTreatment } from "../textTreatment";
+import { activeCaptionLayers, type ActiveCaptionLayer } from "../activeLayers";
 
 export default function StackedCardsTemplate({ spec, frame, fps }: VideoSpecWithTimeline) {
   const sec = frame / fps;
@@ -18,7 +18,7 @@ export default function StackedCardsTemplate({ spec, frame, fps }: VideoSpecWith
   const baseSize = 60;
   const ta = layout.textAlign;
   const colAlign = flexAlignForTextAlign(ta);
-  const pad = '160px';
+  const pad = "160px";
 
   const card = (row: ActiveCaptionLayer) => {
     const startFrame = Math.round(row.startSec * fps);
@@ -28,10 +28,10 @@ export default function StackedCardsTemplate({ spec, frame, fps }: VideoSpecWith
       <div
         key={row.key}
         style={{
-          display: 'inline-block',
-          backgroundColor: theme.cardBg === 'transparent' ? '#ffffff' : theme.cardBg,
-          borderRadius: '12px',
-          padding: '24px 32px',
+          display: "inline-block",
+          backgroundColor: theme.cardBg === "transparent" ? "#ffffff" : theme.cardBg,
+          borderRadius: "12px",
+          padding: "24px 32px",
           maxWidth: layout.innerWidth,
           opacity: animStyle.opacity,
           transform: animStyle.transform,
@@ -45,12 +45,12 @@ export default function StackedCardsTemplate({ spec, frame, fps }: VideoSpecWith
             color: theme.cardText,
             margin: 0,
             lineHeight: 1.25,
-            letterSpacing: '-0.01em',
+            letterSpacing: "-0.01em",
             ...(isBoldOutlineTreatment(spec) ? cardBoldOutlineCaptionStyle(spec) : {}),
-            WebkitFontSmoothing: 'antialiased',
-            textRendering: 'optimizeLegibility',
-            wordWrap: 'break-word',
-            overflowWrap: 'break-word',
+            WebkitFontSmoothing: "antialiased",
+            textRendering: "optimizeLegibility",
+            wordWrap: "break-word",
+            overflowWrap: "break-word",
             textAlign: ta,
           }}
         >
@@ -60,138 +60,156 @@ export default function StackedCardsTemplate({ spec, frame, fps }: VideoSpecWith
     );
   };
 
-  const stack =
+  const stackColumn =
     rows.length === 0 ? null : (
       <div
         style={{
-          display: 'flex',
-          flexDirection: 'column',
+          display: "flex",
+          flexDirection: "column",
           alignItems: colAlign,
           gap: layout.stackGapPx,
-          width: '100%',
+          width: "100%",
         }}
       >
         {rows.map((r) => card(r))}
       </div>
     );
 
-  const bottomGradient = stack ? (
+  const bottomGradient = stackColumn ? (
     <div
       style={{
-        position: 'absolute',
+        position: "absolute",
         left: 0,
         right: 0,
         bottom: 0,
-        height: '48%',
-        background: 'linear-gradient(to top, rgba(0,0,0,0.22) 0%, rgba(0,0,0,0) 100%)',
-        pointerEvents: 'none',
+        height: "48%",
+        background: "linear-gradient(to top, rgba(0,0,0,0.22) 0%, rgba(0,0,0,0) 100%)",
+        pointerEvents: "none",
       }}
     />
   ) : null;
 
   /** Same visual weight as the 48% edge bands — avoids full-frame scrim when Pin = middle. */
-  const centerBandOverlay = stack ? (
+  const centerBandOverlay = stackColumn ? (
     <div
       style={{
-        position: 'absolute',
+        position: "absolute",
         left: 0,
         right: 0,
-        top: '26%',
-        height: '48%',
-        background: 'radial-gradient(ellipse at center, rgba(0,0,0,0.05) 0%, rgba(0,0,0,0.12) 55%, rgba(0,0,0,0) 100%)',
-        pointerEvents: 'none',
+        top: "26%",
+        height: "48%",
+        background: "radial-gradient(ellipse at center, rgba(0,0,0,0.05) 0%, rgba(0,0,0,0.12) 55%, rgba(0,0,0,0) 100%)",
+        pointerEvents: "none",
       }}
     />
   ) : null;
 
-  const topGradient = stack ? (
+  const topGradient = stackColumn ? (
     <div
       style={{
-        position: 'absolute',
+        position: "absolute",
         left: 0,
         right: 0,
         top: 0,
-        height: '48%',
-        background: 'linear-gradient(to bottom, rgba(0,0,0,0.22) 0%, rgba(0,0,0,0) 100%)',
-        pointerEvents: 'none',
+        height: "48%",
+        background: "linear-gradient(to bottom, rgba(0,0,0,0.22) 0%, rgba(0,0,0,0) 100%)",
+        pointerEvents: "none",
       }}
     />
   ) : null;
 
   const anchor = layout.verticalAnchor;
+  const hugUp = layout.stackGrowth === "up";
 
   let overlay: React.ReactNode = null;
-  if (anchor === 'center') {
+  if (anchor === "center") {
     overlay = centerBandOverlay;
-  } else if (anchor === 'top') {
+  } else if (anchor === "top") {
     overlay = topGradient;
   } else {
     overlay = bottomGradient;
   }
 
   let textWrap: React.ReactNode = null;
-  if (anchor === 'top') {
+  if (anchor === "top") {
     textWrap = (
       <div
         style={{
-          position: 'absolute',
+          position: "absolute",
           top: 0,
+          bottom: 0,
           left: 0,
-          width: '100%',
+          width: "100%",
           paddingTop: pad,
           paddingLeft: layout.paddingPx,
           paddingRight: layout.paddingPx,
-          boxSizing: 'border-box',
-          pointerEvents: 'none',
+          boxSizing: "border-box",
+          pointerEvents: "none",
           transform: layout.translateY,
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: hugUp ? "flex-end" : "flex-start",
         }}
       >
-        {stack}
+        {stackColumn}
       </div>
     );
-  } else if (anchor === 'center') {
-    // Full-frame flex center — avoids ``top:50%`` + ``translate -50%`` (percent = own height),
-    // which made the stack jump when pin or card count changed. Same vertical insets as top/bottom.
+  } else if (anchor === "center") {
     textWrap = (
       <div
         style={{
-          position: 'absolute',
+          position: "absolute",
           top: 0,
           right: 0,
           bottom: 0,
           left: 0,
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'center',
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
           paddingTop: pad,
           paddingBottom: pad,
           paddingLeft: layout.paddingPx,
           paddingRight: layout.paddingPx,
-          boxSizing: 'border-box',
-          pointerEvents: 'none',
+          boxSizing: "border-box",
+          pointerEvents: "none",
           transform: layout.translateY,
         }}
       >
-        {stack}
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            flex: 1,
+            width: "100%",
+            minHeight: 0,
+            justifyContent: hugUp ? "flex-end" : "flex-start",
+          }}
+        >
+          {stackColumn}
+        </div>
       </div>
     );
   } else {
     textWrap = (
       <div
         style={{
-          position: 'absolute',
+          position: "absolute",
+          top: 0,
           bottom: 0,
           left: 0,
-          width: '100%',
+          width: "100%",
           paddingBottom: pad,
           paddingLeft: layout.paddingPx,
           paddingRight: layout.paddingPx,
-          boxSizing: 'border-box',
-          pointerEvents: 'none',
+          boxSizing: "border-box",
+          pointerEvents: "none",
           transform: layout.translateY,
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: hugUp ? "flex-end" : "flex-start",
         }}
       >
-        {stack}
+        {stackColumn}
       </div>
     );
   }

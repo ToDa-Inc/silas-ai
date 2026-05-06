@@ -24,7 +24,7 @@ type Props = {
 const CTA_TYPES: { id: ClientCtaType; label: string; helper: string }[] = [
   { id: "website", label: "Website / landing page", helper: "Use for a sales page, blog post, or external link." },
   { id: "newsletter", label: "Newsletter", helper: "Use when the next step is joining an email list." },
-  { id: "lead_magnet", label: "Free resource", helper: "Use for PDFs, trainings, checklists, or comment-keyword freebies." },
+  { id: "lead_magnet", label: "Free resource / webinar", helper: "Use for PDFs, trainings, webinars, checklists, or comment-keyword freebies." },
   { id: "booking", label: "Book a call", helper: "Use for calls, demos, applications, or consultations." },
   { id: "video", label: "Another video", helper: "Use for YouTube videos, lives, or follow-up content." },
   { id: "other", label: "Something else", helper: "Use when the next step does not fit the other options." },
@@ -63,6 +63,11 @@ export function GenerationLibrariesPanel({ clientSlug, orgSlug, client, disabled
     setBaselineSig(initialSig);
   }, [dirty, initialCtas, initialSig]);
 
+  function updateCtaAt(idx: number, patch: Partial<ClientCta>) {
+    setStatus(null);
+    setCtaLibrary((prev) => prev.map((c, j) => (j === idx ? { ...c, ...patch } : c)));
+  }
+
   async function saveCtas() {
     const cs = clientSlug.trim();
     const os = orgSlug.trim();
@@ -71,8 +76,15 @@ export function GenerationLibrariesPanel({ clientSlug, orgSlug, client, disabled
       return;
     }
 
+    const unnamed = ctaLibrary.find((cta) => !cta.label.trim());
+    if (unnamed) {
+      setExpandedCtaId(unnamed.id);
+      setStatus("Add a name before saving this next step.");
+      return;
+    }
+
     setSaveBusy(true);
-    setStatus(null);
+    setStatus("Saving next steps...");
     try {
       const fresh = await fetchClientRowClient(cs, os);
       if (!fresh.ok) {
@@ -105,7 +117,11 @@ export function GenerationLibrariesPanel({ clientSlug, orgSlug, client, disabled
       const nextCtas = normalizeGenerationLibrariesFromRow(putRes.data).ctaLibrary;
       setCtaLibrary(nextCtas);
       setBaselineSig(ctaSig(nextCtas));
-      setStatus("Links and offers saved.");
+      setStatus("Next steps saved.");
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem("content-defaults:updated-at", String(Date.now()));
+        window.dispatchEvent(new Event("content-defaults-updated"));
+      }
       router.refresh();
     } finally {
       setSaveBusy(false);
@@ -117,7 +133,7 @@ export function GenerationLibrariesPanel({ clientSlug, orgSlug, client, disabled
       <div className="rounded-2xl border border-amber-500/20 bg-amber-500/[0.06] px-4 py-3">
         <p className="text-sm font-semibold text-on-surface">Defaults for future posts</p>
         <p className="mt-1 text-xs leading-relaxed text-zinc-500">
-          Add the links, offers, carousel structures, and cover styles this creator uses often.
+          Add the next steps, carousel structures, and cover styles this creator uses often.
           When you generate a post, you can pick one of these defaults instead of explaining it again.
         </p>
       </div>
@@ -125,7 +141,7 @@ export function GenerationLibrariesPanel({ clientSlug, orgSlug, client, disabled
       <section className="rounded-2xl border border-outline-variant/15 bg-surface-container/80 p-5 dark:border-white/10">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <h3 className="text-base font-semibold text-on-surface">Links &amp; offers</h3>
+            <h3 className="text-base font-semibold text-on-surface">Next steps</h3>
             <p className="mt-1 max-w-2xl text-xs leading-relaxed text-zinc-500">
               Save the actions to suggest at the end of a post: book a call, download a free resource,
               watch a video, join a newsletter, or visit a page.
@@ -136,6 +152,7 @@ export function GenerationLibrariesPanel({ clientSlug, orgSlug, client, disabled
             disabled={disabled}
             onClick={() => {
               const id = generateCtaId();
+              setStatus(null);
               setCtaLibrary((prev) => [
                 ...prev,
                 {
@@ -152,13 +169,13 @@ export function GenerationLibrariesPanel({ clientSlug, orgSlug, client, disabled
             className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-900 disabled:opacity-50 dark:text-amber-200/95"
           >
             <Plus className="h-3.5 w-3.5" aria-hidden />
-            Add link or offer
+            Add next step
           </button>
         </div>
 
         {ctaLibrary.length === 0 ? (
           <div className="mt-4 rounded-xl border border-dashed border-outline-variant/30 px-4 py-6 text-center text-xs leading-relaxed text-zinc-500">
-            <p className="font-semibold text-on-surface">No links or offers yet</p>
+            <p className="font-semibold text-on-surface">No next steps yet</p>
             <p className="mx-auto mt-1 max-w-md">
               Add the main next steps this creator promotes. Example: “Download the leadership checklist”,
               “Book a discovery call”, or “Comment GUIDE”.
@@ -168,7 +185,7 @@ export function GenerationLibrariesPanel({ clientSlug, orgSlug, client, disabled
           <ul className="mt-4 space-y-3">
             {ctaLibrary.map((cta, idx) => {
               const updateCta = (patch: Partial<ClientCta>) => {
-                setCtaLibrary((prev) => prev.map((c, j) => (j === idx ? { ...c, ...patch } : c)));
+                updateCtaAt(idx, patch);
               };
               return (
                 <li
@@ -182,7 +199,7 @@ export function GenerationLibrariesPanel({ clientSlug, orgSlug, client, disabled
                       className="flex min-w-0 flex-1 items-center justify-between gap-3 rounded-lg border border-outline-variant/15 bg-surface-container/80 px-3 py-2 text-left text-sm font-semibold text-on-surface focus:outline-none focus:ring-2 focus:ring-amber-500/35 dark:border-white/10"
                       aria-expanded={expandedCtaId === cta.id}
                     >
-                      <span className="truncate">{cta.label.trim() || "Untitled link or offer"}</span>
+                      <span className="truncate">{cta.label.trim() || "Untitled next step"}</span>
                       <ChevronDown
                         className={cn(
                           "h-4 w-4 shrink-0 text-zinc-400 transition-transform",
@@ -195,12 +212,13 @@ export function GenerationLibrariesPanel({ clientSlug, orgSlug, client, disabled
                       type="button"
                       disabled={disabled}
                       onClick={() => {
+                        setStatus(null);
                         setCtaLibrary((prev) => prev.filter((_, j) => j !== idx));
                         setExpandedCtaId((prev) => (prev === cta.id ? null : prev));
                       }}
                       className="rounded-lg p-2 text-zinc-500 hover:bg-red-500/10 hover:text-red-500 disabled:opacity-50"
-                      aria-label="Remove link or offer"
-                      title="Remove link or offer"
+                      aria-label="Remove next step"
+                      title="Remove next step"
                     >
                       <Trash2 className="h-4 w-4" aria-hidden />
                     </button>
@@ -322,9 +340,9 @@ export function GenerationLibrariesPanel({ clientSlug, orgSlug, client, disabled
             {status ? (
               <span className="text-zinc-500">{status}</span>
             ) : dirty ? (
-              <span className="font-medium text-amber-700 dark:text-amber-400">Unsaved link changes</span>
+              <span className="font-medium text-amber-700 dark:text-amber-400">Unsaved next step changes</span>
             ) : (
-              <span className="text-zinc-500">Links & offers saved</span>
+              <span className="text-zinc-500">Next steps saved</span>
             )}
           </span>
           <button
@@ -334,7 +352,7 @@ export function GenerationLibrariesPanel({ clientSlug, orgSlug, client, disabled
             className="inline-flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-bold text-zinc-950 disabled:opacity-50"
           >
             {saveBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Save className="h-4 w-4" aria-hidden />}
-            {saveBusy ? "Saving..." : "Save links & offers"}
+            {saveBusy ? "Saving..." : "Save next steps"}
           </button>
         </div>
       </section>

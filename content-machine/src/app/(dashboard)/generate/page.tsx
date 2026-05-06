@@ -37,6 +37,9 @@ const MODE_STORAGE_KEY = "silas:generate:mode";
 /** Video format preset for idea / empty-composer flows (`auto` = pick from niche data or AI). */
 type FormatPreset = "auto" | "text_overlay" | "talking_head" | "carousel";
 
+/** Recreate-from-URL: explicit target format only (no Auto — avoids wrong backend routing). */
+type RecreateFormatChoice = "text_overlay" | "talking_head" | "carousel";
+
 function isLikelyInstagramReelUrl(s: string): boolean {
   const t = s.trim().toLowerCase();
   return (
@@ -59,9 +62,9 @@ const CTA_TYPE_LABEL: Record<string, string> = {
   other: "Other",
 };
 
-/** Picker shown right under the format selector. The chosen CTA is snapshotted
- *  onto the new generation session so caption / script / on-screen CTA all
- *  adapt to the same destination + traffic goal. */
+/** Picker shown right under the format selector. The chosen next step is snapshotted
+ *  onto the new generation session so caption, script, and on-screen text all
+ *  adapt to the same destination. */
 function CtaPicker({
   library,
   selectedId,
@@ -75,13 +78,13 @@ function CtaPicker({
     <div>
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
         <p className="text-[10px] font-bold uppercase tracking-wider text-app-fg-subtle">
-          CTA <span className="font-normal text-app-fg-muted">(required)</span>
+          Next step <span className="font-normal text-app-fg-muted">(required)</span>
         </p>
         <Link
-          href="/context"
+          href="/settings#content-defaults"
           className="text-[11px] font-semibold text-amber-600 hover:underline dark:text-amber-400"
         >
-          Edit CTAs →
+          Edit next steps →
         </Link>
       </div>
       <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="CTA">
@@ -113,7 +116,7 @@ function CtaPicker({
         })}
       </div>
       <p className="mt-2 text-[11px] leading-relaxed text-app-fg-muted">
-        Caption, script, and on-screen CTA will adapt to this destination and traffic goal.
+        Caption, script, and on-screen text will adapt to this destination.
       </p>
     </div>
   );
@@ -122,7 +125,7 @@ function CtaPicker({
 function CtaPickerEmpty() {
   return (
     <div className="rounded-xl border border-dashed border-app-divider bg-app-chip-bg/20 p-3 text-[11px] leading-relaxed text-app-fg-muted">
-      No links or offers configured yet.{" "}
+      No next steps configured yet.{" "}
       <Link
         href="/settings#content-defaults"
         className="font-semibold text-amber-600 hover:underline dark:text-amber-400"
@@ -897,9 +900,8 @@ export default function GeneratePage() {
   }, [urlFromUrl]);
   const [composerInput, setComposerInput] = useState(urlFromUrl?.trim() ?? "");
   const [formatPreset, setFormatPreset] = useState<FormatPreset>("auto");
-  /** Target production format for "Recreate a reel" — no default; user must pick.
-   * `auto` keeps the source reel's original format. */
-  const [recreateFormat, setRecreateFormat] = useState<FormatPreset | null>(null);
+  /** Target production format for "Recreate a reel" — required explicit choice. */
+  const [recreateFormat, setRecreateFormat] = useState<RecreateFormatChoice | null>(null);
   const [extraInstruction, setExtraInstruction] = useState("");
   const [focusNoteOpen, setFocusNoteOpen] = useState(false);
   const [formatDigests, setFormatDigests] = useState<FormatDigestSummary[]>([]);
@@ -941,6 +943,31 @@ export default function GeneratePage() {
     return ctx;
   }, []);
 
+  const refreshGenerationLibraries = useCallback(async (cs: string, os: string) => {
+    if (!cs || !os) return;
+    const libsRes = await fetchClientGenerationLibraries(cs, os);
+    if (!libsRes.ok) {
+      show(libsRes.error, "error");
+      return;
+    }
+    const { ctaLibrary: ctas, carouselTemplates: carousels, coverTemplates: covers } = libsRes.data;
+    setCtaLibrary(ctas);
+    setSelectedCtaId((current) => {
+      if (current && ctas.some((cta) => cta.id === current)) return current;
+      return ctas.length === 1 ? ctas[0].id : null;
+    });
+    setCarouselTemplates(carousels);
+    setSelectedCarouselTemplateId((current) => {
+      if (current && carousels.some((template) => template.id === current)) return current;
+      return carousels.length === 1 ? carousels[0].id : null;
+    });
+    setCoverTemplates(covers);
+    setSelectedCoverTemplateId((current) => {
+      if (current && covers.some((template) => template.id === current)) return current;
+      return covers.length === 1 ? covers[0].id : null;
+    });
+  }, [show]);
+
   /** Persist mode + clear composer so a stale URL doesn't leak into idea mode (or vice versa). */
   const onChangeMode = useCallback((next: Mode) => {
     setMode(next);
@@ -958,10 +985,9 @@ export default function GeneratePage() {
     void (async () => {
       const ctx = await refreshContext();
       if (!ctx.clientSlug || !ctx.orgSlug) return;
-      const [listRes, digRes, libsRes] = await Promise.all([
+      const [listRes, digRes] = await Promise.all([
         generationListSessions(ctx.clientSlug, ctx.orgSlug, 15),
         fetchFormatDigests(ctx.clientSlug, ctx.orgSlug, false),
-        fetchClientGenerationLibraries(ctx.clientSlug, ctx.orgSlug),
       ]);
       if (listRes.ok) setSessions(listRes.data);
       if (digRes.ok) {
@@ -969,26 +995,37 @@ export default function GeneratePage() {
       } else {
         show(digRes.error, "error");
       }
-      if (libsRes.ok) {
-        const { ctaLibrary: ctas, carouselTemplates: carousels, coverTemplates: covers } =
-          libsRes.data;
-        setCtaLibrary(ctas);
-        if (ctas.length === 1) {
-          setSelectedCtaId(ctas[0].id);
-        }
-        setCarouselTemplates(carousels);
-        if (carousels.length === 1) {
-          setSelectedCarouselTemplateId(carousels[0].id);
-        }
-        setCoverTemplates(covers);
-        if (covers.length === 1) {
-          setSelectedCoverTemplateId(covers[0].id);
-        }
-      } else {
-        show(libsRes.error, "error");
-      }
+      await refreshGenerationLibraries(ctx.clientSlug, ctx.orgSlug);
     })();
-  }, [refreshContext, show]);
+  }, [refreshContext, refreshGenerationLibraries, show]);
+
+  useEffect(() => {
+    if (!clientSlug || !orgSlug) return;
+
+    const refresh = () => {
+      void refreshGenerationLibraries(clientSlug, orgSlug);
+    };
+    const refreshOnVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+
+    window.addEventListener("content-defaults-updated", refresh);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refreshOnVisible);
+    return () => {
+      window.removeEventListener("content-defaults-updated", refresh);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refreshOnVisible);
+    };
+  }, [clientSlug, orgSlug, refreshGenerationLibraries]);
+
+  useEffect(() => {
+    if (!clientSlug || !orgSlug) return;
+    const updatedAt = window.localStorage.getItem("content-defaults:updated-at");
+    if (updatedAt) {
+      void refreshGenerationLibraries(clientSlug, orgSlug);
+    }
+  }, [clientSlug, orgSlug, refreshGenerationLibraries]);
 
   /** When Format = Auto and the user typed enough idea text, infer format once for template UI (matches submit-time recommend). */
   useEffect(() => {
@@ -1201,7 +1238,7 @@ export default function GeneratePage() {
       return;
     }
     if (ctaLibrary.length > 0 && !selectedCtaId) {
-      show("Pick a CTA below the format selector first.", "error");
+      show("Pick a next step below the format selector first.", "error");
       return;
     }
     const selectedCta =
@@ -1235,7 +1272,6 @@ export default function GeneratePage() {
         }
         if (
           recreateFormat !== "carousel" &&
-          recreateFormat !== "auto" &&
           coverTemplates.length > 0 &&
           !selectedCoverTemplateId
         ) {
@@ -1246,7 +1282,7 @@ export default function GeneratePage() {
           source_type: "url_adapt",
           url: raw,
           extra_instruction: extra,
-          format_key: recreateFormat === "auto" ? undefined : recreateFormat,
+          format_key: recreateFormat,
         };
       } else if (raw.length > 0) {
         let fk: string;
@@ -1263,7 +1299,7 @@ export default function GeneratePage() {
           fk = formatPreset;
         }
         if (fk === "carousel" && carouselTemplates.length > 0 && !selectedCarouselTemplateId) {
-          show("Pick a carousel reference template below first.", "error");
+          show("Pick a carousel style below first.", "error");
           return;
         }
         if (fk !== "carousel" && coverTemplates.length > 0 && !selectedCoverTemplateId) {
@@ -1282,7 +1318,7 @@ export default function GeneratePage() {
           carouselTemplates.length > 0 &&
           !selectedCarouselTemplateId
         ) {
-          show("Pick a carousel reference template below first.", "error");
+          show("Pick a carousel style below first.", "error");
           return;
         }
         if (
@@ -1311,7 +1347,7 @@ export default function GeneratePage() {
           setComposerInput(ideaRes.data.idea.trim());
           setFormatPreset("carousel");
           show(
-            "Auto chose Carousel — pick a reference template below, then Generate angles again.",
+            "Auto chose Carousel — pick a carousel style below, then Generate angles again.",
             "default",
           );
           return;
@@ -1399,7 +1435,11 @@ export default function GeneratePage() {
         }
         setSession(res.data);
         setStep("create");
-        show("Script and captions generated.", "success");
+        const fk = canonicalFormatKey(res.data.source_format_key ?? "");
+        show(
+          fk === "carousel" ? "Carousel slides and caption ready." : "Script and captions generated.",
+          "success",
+        );
       } finally {
         setChoosingAngleIndex(null);
       }
@@ -1700,10 +1740,8 @@ export default function GeneratePage() {
                   </div>
 
                   {/* ── Recreate-as format picker ──
-                      Required: lets the user pick the production format the source reel
-                      should be rebuilt as. "Auto" keeps the source reel's original format
-                      (legacy behavior); the others tell the LLM to keep the CORE IDEA but
-                      rebuild the FORMAT RECIPE for that target. */}
+                      Required explicit choice — sent as `format_key` so the backend never
+                      auto-routes url_adapt to the wrong production format. */}
                   <div>
                     <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-app-fg-subtle">
                       Recreate as <span className="font-normal text-app-fg-muted">(required)</span>
@@ -1711,7 +1749,6 @@ export default function GeneratePage() {
                     <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Target format">
                       {(
                         [
-                          { key: "auto" as const, label: "Auto", hint: "Keep source reel's original format" },
                           { key: "text_overlay" as const, label: "Text overlay", hint: "Static visuals + on-screen text blocks" },
                           { key: "talking_head" as const, label: "Talking head", hint: "You speak to camera the whole reel" },
                           { key: "carousel" as const, label: "Carousel", hint: "Swipeable PNG slides (not a video)" },
@@ -1738,11 +1775,9 @@ export default function GeneratePage() {
                       })}
                     </div>
                     <p className="mt-2 text-[11px] leading-relaxed text-app-fg-muted">
-                      {recreateFormat && recreateFormat !== "auto"
-                        ? "We'll keep the source reel's idea + viewer payoff, but rebuild beats and on-screen language for this format."
-                        : recreateFormat === "auto"
-                        ? "We'll mirror the source reel's original production format."
-                        : "Pick a target format — Auto keeps the source's, the others re-format the same idea."}
+                      {recreateFormat
+                        ? "We keep the source reel's idea + viewer payoff, but rebuild beats and on-screen language for this format."
+                        : "Pick a target format — each option routes generation on the server (no silent Auto)."}
                     </p>
                   </div>
 

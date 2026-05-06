@@ -3,6 +3,7 @@ import io
 from PIL import Image, ImageFont
 
 import services.image_generation as image_generation
+from models.generation import ComposeThumbnailBody, GenerateThumbnailBody
 
 
 class _MonkeyPatch:
@@ -35,5 +36,11 @@ def test_compose_thumbnail_accepts_crop_and_text_style_options(monkeypatch):
     assert out.size == (180, 320)
 
 
+def test_cover_wash_defaults_to_preserving_colour():
+    assert GenerateThumbnailBody().wash is False
+    assert ComposeThumbnailBody(client_image_id="img_123").wash is False
+
+
 if __name__ == "__main__":
     test_compose_thumbnail_accepts_crop_and_text_style_options(_MonkeyPatch())
+    test_cover_wash_defaults_to_preserving_colour()

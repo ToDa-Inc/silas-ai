@@ -11,26 +11,55 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
-def instagram_profile_posts_input(usernames: List[str], results_limit: int) -> dict[str, Any]:
+class ApifyError(RuntimeError):
+    """Base error for Apify actor failures."""
+
+
+class ApifyUsageLimitError(ApifyError):
+    """Apify rejected the run because the account/token cannot spend more this month."""
+
+
+def _apify_error_for_response(actor_id: str, status_code: int, response_text: str) -> ApifyError:
+    err_body = (response_text or "")[:800]
+    message = (
+        f"Apify HTTP {status_code} for acts/{actor_id}/runs. "
+        f"{err_body or 'No response body.'}"
+    )
+    lowered = err_body.lower()
+    if "monthly usage hard limit exceeded" in lowered or "platform-feature-disabled" in lowered:
+        return ApifyUsageLimitError(message)
+    return ApifyError(message)
+
+
+def instagram_profile_posts_input(
+    usernames: List[str],
+    results_limit: int,
+    *,
+    only_newer_than: Optional[str] = None,
+) -> dict[str, Any]:
     """Input for ``apify~instagram-scraper`` — recent posts (includes carousel / Sidecar).
 
     This actor expects ``directUrls`` with the full profile URL, not bare usernames
     (passing ``username`` returns ``no_items``).
     """
     direct_urls = [f"https://www.instagram.com/{u.lstrip('@').strip('/')}/" for u in usernames if u]
-    return {
+    body: dict[str, Any] = {
         "directUrls": direct_urls,
         "resultsLimit": results_limit,
         "resultsType": "posts",
     }
+    if only_newer_than:
+        body["onlyPostsNewerThan"] = only_newer_than
+    return body
 
 
 def instagram_reel_scraper_input(
     usernames: List[str],
     results_limit: int,
     *,
-    include_shares_count: bool = True,
+    include_shares_count: bool = False,
     only_newer_than: Optional[str] = None,
+    skip_pinned_posts: bool = False,
 ) -> dict[str, Any]:
     """Input for ``apify~instagram-reel-scraper``. Shares need ``includeSharesCount`` (paid Apify tiers).
 
@@ -38,6 +67,7 @@ def instagram_reel_scraper_input(
     client-side. Actor accepts ``YYYY-MM-DD``, ISO timestamp, or relative strings matching
     ``^(\\d+)\\s*(minute|hour|day|week|month|year)s?$`` (e.g. ``"2 days"``, ``"1 week"``).
     Pay-per-result billing means this lowers cost when the profile has few new posts.
+    ``skip_pinned_posts`` keeps older pinned reels from leaking into recency-limited syncs.
     """
     body: dict[str, Any] = {
         "username": usernames,
@@ -47,6 +77,8 @@ def instagram_reel_scraper_input(
         body["includeSharesCount"] = True
     if only_newer_than:
         body["onlyPostsNewerThan"] = only_newer_than
+    if skip_pinned_posts:
+        body["skipPinnedPosts"] = True
     return body
 
 
@@ -80,11 +112,7 @@ def run_actor(token: str, actor_id: str, body: dict) -> list:
             json=body,
         )
         if r.status_code >= 400:
-            err_body = (r.text or "")[:800]
-            raise RuntimeError(
-                f"Apify HTTP {r.status_code} for acts/{actor_id}/runs. "
-                f"{err_body or 'No response body.'}"
-            )
+            raise _apify_error_for_response(actor_id, r.status_code, r.text)
         data = r.json()["data"]
         run_id = data["id"]
         dataset_id = data["defaultDatasetId"]
@@ -162,6 +190,8 @@ def run_keyword_reel_search_batch(
 
     try:
         return run_actor(token, KEYWORD_REEL_ACTOR, body) or []
+    except ApifyUsageLimitError:
+        raise
     except Exception:
         logger.warning(
             "Sasky multi-keyword run failed; falling back to per-keyword search",
@@ -175,6 +205,8 @@ def run_keyword_reel_search_batch(
             out.extend(
                 run_keyword_reel_search(token, kw, max_items=per, date=date) or []
             )
+        except ApifyUsageLimitError:
+            raise
         except Exception:
             logger.warning("Sasky keyword search failed for %r", kw, exc_info=True)
         time.sleep(1)
@@ -208,6 +240,8 @@ def enrich_reel_urls_direct(
                 actor_input,
             )
             all_items.extend(items or [])
+        except ApifyUsageLimitError:
+            raise
         except Exception as e:
             msg = f"enrich batch {i // _ENRICH_BATCH_SIZE + 1}: {type(e).__name__}: {e}"
             logger.warning(msg, exc_info=True)

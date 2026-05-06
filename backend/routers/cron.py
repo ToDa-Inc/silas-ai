@@ -48,7 +48,10 @@ def sync_all(
     settings: Annotated[Settings, Depends(get_settings)],
     x_cron_secret: Annotated[Optional[str], Header(alias="X-Cron-Secret")] = None,
 ) -> Dict[str, Any]:
-    """Enqueue baseline_scrape + profile_scrape for every active client (worker drains queue)."""
+    """Enqueue daily profile discovery only: own + competitor ``profile_scrape`` jobs.
+
+    Baseline recalibration and niche keyword discovery run on separate routes/crons.
+    """
     _require_cron_secret(settings, x_cron_secret)
     supabase = get_supabase()
     return enqueue_sync_all_jobs_all_clients(supabase)

@@ -153,13 +153,21 @@ class CarouselTemplatePromptTest(unittest.TestCase):
             slides = run_carousel_slide_texts(
                 type("Settings", (), {"openrouter_api_key": "key", "openrouter_model": "model"})(),
                 client_row=client_row,
-                chosen_angle={"title": "Meeting confidence"},
-                hook_text="You do not need more confidence",
+                chosen_angle={
+                    "title": "Meeting confidence",
+                    "situation": "High-stakes meeting",
+                    "draft_hook": "They challenged you in front of everyone — and you started explaining.",
+                    "emotional_trigger": "Shame spiral",
+                    "mechanism_note": "Every justification shrinks your authority in the room.",
+                },
+                hook_text="They challenged you in front of everyone — and you started explaining.",
                 count=3,
                 selected_carousel_template=template,
             )
 
         self.assertEqual(slides, ["Cover", "Tweet one", "CTA"])
+        self.assertIn("FIDELITY", captured["user"])
+        self.assertIn("They challenged you", captured["user"])
         self.assertIn("CAROUSEL_TEMPLATE", captured["user"])
         self.assertIn("Conny tweets", captured["user"])
         self.assertIn("Tweet-style screenshot", captured["user"])

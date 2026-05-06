@@ -6,49 +6,23 @@ import { blockEntranceStyle } from '../animations';
 import { flexAlignForTextAlign } from '../alignLayout';
 import { resolveLayoutPx } from '../layout';
 import { cardBoldOutlineCaptionStyle, isBoldOutlineTreatment } from '../textTreatment';
+import { activeCaptionLayers, type ActiveCaptionLayer } from '../activeLayers';
 
 export default function StackedCardsTemplate({ spec, frame, fps }: VideoSpecWithTimeline) {
   const sec = frame / fps;
   const theme = resolveAppearance(spec);
   const layout = resolveLayoutPx(spec);
 
-  type Row = {
-    key: string;
-    text: string;
-    isCTA: boolean;
-    startSec: number;
-    anim: 'pop' | 'fade' | 'slide-up' | 'none';
-  };
-
-  const rows: Row[] = [];
-  const hookText = String(spec.hook.text ?? '').trim();
-  // Cumulative stack: hook is always the first card (when present); beats that have
-  // started by ``sec`` append below. Previously we used if/else so the hook vanished
-  // after ``hookDur`` and only blocks stacked — that excluded the hook from the stack.
-  if (hookText) {
-    rows.push({ key: 'hook', text: spec.hook.text, isCTA: false, startSec: 0, anim: 'fade' });
-  }
-  const sorted = [...spec.blocks].sort((a, b) => a.startSec - b.startSec);
-  for (const b of sorted) {
-    if (b.startSec <= sec && String(b.text ?? '').trim()) {
-      rows.push({
-        key: b.id,
-        text: b.text,
-        isCTA: b.isCTA,
-        startSec: b.startSec,
-        anim: (b.animation ?? 'fade') as Row['anim'],
-      });
-    }
-  }
+  const rows = activeCaptionLayers(spec, sec);
 
   const baseSize = 60;
   const ta = layout.textAlign;
   const colAlign = flexAlignForTextAlign(ta);
   const pad = '160px';
 
-  const card = (row: Row) => {
+  const card = (row: ActiveCaptionLayer) => {
     const startFrame = Math.round(row.startSec * fps);
-    const animStyle = blockEntranceStyle(frame, fps, startFrame, row.anim);
+    const animStyle = blockEntranceStyle(frame, fps, startFrame, row.animation);
     const fontSize = Math.round((row.isCTA ? baseSize * theme.ctaScale : baseSize) * layout.scale);
     return (
       <div
@@ -86,7 +60,7 @@ export default function StackedCardsTemplate({ spec, frame, fps }: VideoSpecWith
     );
   };
 
-  const stack =
+  const stackColumn =
     rows.length === 0 ? null : (
       <div
         style={{
@@ -101,7 +75,7 @@ export default function StackedCardsTemplate({ spec, frame, fps }: VideoSpecWith
       </div>
     );
 
-  const bottomGradient = stack ? (
+  const bottomGradient = stackColumn ? (
     <div
       style={{
         position: 'absolute',
@@ -116,7 +90,7 @@ export default function StackedCardsTemplate({ spec, frame, fps }: VideoSpecWith
   ) : null;
 
   /** Same visual weight as the 48% edge bands — avoids full-frame scrim when Pin = middle. */
-  const centerBandOverlay = stack ? (
+  const centerBandOverlay = stackColumn ? (
     <div
       style={{
         position: 'absolute',
@@ -130,7 +104,7 @@ export default function StackedCardsTemplate({ spec, frame, fps }: VideoSpecWith
     />
   ) : null;
 
-  const topGradient = stack ? (
+  const topGradient = stackColumn ? (
     <div
       style={{
         position: 'absolute',
@@ -145,6 +119,7 @@ export default function StackedCardsTemplate({ spec, frame, fps }: VideoSpecWith
   ) : null;
 
   const anchor = layout.verticalAnchor;
+  const hugUp = layout.stackGrowth === 'up';
 
   let overlay: React.ReactNode = null;
   if (anchor === 'center') {
@@ -162,6 +137,7 @@ export default function StackedCardsTemplate({ spec, frame, fps }: VideoSpecWith
         style={{
           position: 'absolute',
           top: 0,
+          bottom: 0,
           left: 0,
           width: '100%',
           paddingTop: pad,
@@ -170,9 +146,12 @@ export default function StackedCardsTemplate({ spec, frame, fps }: VideoSpecWith
           boxSizing: 'border-box',
           pointerEvents: 'none',
           transform: layout.translateY,
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: hugUp ? 'flex-end' : 'flex-start',
         }}
       >
-        {stack}
+        {stackColumn}
       </div>
     );
   } else if (anchor === 'center') {
@@ -196,7 +175,18 @@ export default function StackedCardsTemplate({ spec, frame, fps }: VideoSpecWith
           transform: layout.translateY,
         }}
       >
-        {stack}
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            flex: 1,
+            width: '100%',
+            minHeight: 0,
+            justifyContent: hugUp ? 'flex-end' : 'flex-start',
+          }}
+        >
+          {stackColumn}
+        </div>
       </div>
     );
   } else {
@@ -204,6 +194,7 @@ export default function StackedCardsTemplate({ spec, frame, fps }: VideoSpecWith
       <div
         style={{
           position: 'absolute',
+          top: 0,
           bottom: 0,
           left: 0,
           width: '100%',
@@ -213,9 +204,12 @@ export default function StackedCardsTemplate({ spec, frame, fps }: VideoSpecWith
           boxSizing: 'border-box',
           pointerEvents: 'none',
           transform: layout.translateY,
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: hugUp ? 'flex-end' : 'flex-start',
         }}
       >
-        {stack}
+        {stackColumn}
       </div>
     );
   }
