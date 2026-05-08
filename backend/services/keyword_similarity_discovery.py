@@ -6,6 +6,8 @@ from typing import Any, Callable, Dict, List, Set, Tuple
 
 from services.apify import (
     ApifyUsageLimitError,
+    KEYWORD_POSTS_ACTOR,
+    KEYWORD_REEL_ACTOR,
     run_keyword_post_search_batch,
     run_keyword_reel_search_batch,
 )
@@ -72,6 +74,8 @@ def discover_keyword_urls_with_fallback(
         "keyword_search_fallback_items": 0,
         "keyword_search_fallback_error": None,
         "total_keyword_actor_items": 0,
+        "keyword_discovery_impl": "posts_fallback_v1",
+        "discovery_log": [],
         "keywords_run": [],
     }
 
@@ -91,11 +95,20 @@ def discover_keyword_urls_with_fallback(
         dismissed_scs=dismissed_scs,
         keywords=keywords,
     )
+    meta["discovery_log"].append(
+        {
+            "stage": "primary_keyword_reels_completed",
+            "actor": KEYWORD_REEL_ACTOR,
+            "items": len(items_primary),
+            "usable_short_codes": len(raw_by_sc),
+        }
+    )
 
     if raw_by_sc:
         meta["keywords_run"] = [
             {
                 "batch": True,
+                "source_actor": KEYWORD_REEL_ACTOR,
                 "primary_items": len(items_primary),
                 "fallback_used": False,
                 "fallback_items": 0,
@@ -108,6 +121,14 @@ def discover_keyword_urls_with_fallback(
         "primary_returned_empty_dataset"
         if not items_primary
         else "primary_returned_no_usable_urls_after_filter"
+    )
+    meta["discovery_log"].append(
+        {
+            "stage": "fallback_decision",
+            "fallback_used": True,
+            "reason": meta["keyword_search_fallback_reason"],
+            "actor": KEYWORD_POSTS_ACTOR,
+        }
     )
 
     try:
@@ -126,13 +147,29 @@ def discover_keyword_urls_with_fallback(
             dismissed_scs=dismissed_scs,
             keywords=keywords,
         )
+        meta["discovery_log"].append(
+            {
+                "stage": "fallback_keyword_posts_completed",
+                "actor": KEYWORD_POSTS_ACTOR,
+                "items": len(items_fallback),
+                "usable_short_codes": len(raw_by_sc),
+            }
+        )
     except ApifyUsageLimitError:
         raise
     except Exception as e:
         meta["keyword_search_fallback_error"] = str(e)[:200]
+        meta["discovery_log"].append(
+            {
+                "stage": "fallback_keyword_posts_failed",
+                "actor": KEYWORD_POSTS_ACTOR,
+                "error": meta["keyword_search_fallback_error"],
+            }
+        )
         meta["keywords_run"] = [
             {
                 "batch": True,
+                "source_actor": KEYWORD_POSTS_ACTOR,
                 "primary_items": len(items_primary),
                 "fallback_used": True,
                 "fallback_items": 0,
@@ -144,6 +181,8 @@ def discover_keyword_urls_with_fallback(
 
     kr_entry: Dict[str, Any] = {
         "batch": True,
+        "source_actor": KEYWORD_POSTS_ACTOR,
+        "primary_actor": KEYWORD_REEL_ACTOR,
         "primary_items": len(items_primary),
         "fallback_used": True,
         "fallback_items": meta["keyword_search_fallback_items"],

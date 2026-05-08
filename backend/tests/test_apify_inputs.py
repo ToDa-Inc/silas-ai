@@ -1,6 +1,10 @@
 import unittest
 
-from services.apify import instagram_profile_posts_input, instagram_reel_scraper_input
+from services.apify import (
+    instagram_profile_posts_input,
+    instagram_reel_scraper_input,
+    keyword_posts_search_input,
+)
 
 
 class TestApifyInputs(unittest.TestCase):
@@ -38,6 +42,20 @@ class TestApifyInputs(unittest.TestCase):
     def test_profile_posts_input_omits_recency_when_none(self) -> None:
         body = instagram_profile_posts_input(["x"], 10)
         self.assertNotIn("onlyPostsNewerThan", body)
+
+    def test_keyword_posts_search_input_matches_sasky_posts_actor(self) -> None:
+        body = keyword_posts_search_input(
+            [" toxic boss ", "toxischer chef"],
+            100,
+            date="last-1-month",
+        )
+        self.assertEqual(body["keywords"], ["toxic boss", "toxischer chef"])
+        self.assertEqual(body["limit"], "100")
+        self.assertEqual(body["date"], "last-1-month")
+
+    def test_keyword_posts_search_input_omits_date_when_empty(self) -> None:
+        body = keyword_posts_search_input(["a"], 80, date="")
+        self.assertNotIn("date", body)
 
 
 if __name__ == "__main__":

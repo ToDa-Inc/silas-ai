@@ -476,6 +476,8 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
 
     progress: Dict[str, Any] = {
         "pipeline": "keyword_reel_similarity",
+        "keyword_discovery_impl": "posts_fallback_v1",
+        "queued_keyword_discovery_impl": payload.get("keyword_discovery_impl"),
         "phase": "loading_client",
         "keywords_run": [],
         "raw_urls_found": 0,
@@ -545,6 +547,8 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
     dismissed_scs = dismissed_short_codes(client)
 
     progress["phase"] = "keyword_search"
+    progress["keyword_discovery_impl"] = "posts_fallback_v1"
+    progress["discovery_log"] = []
     progress["keyword_search_primary_actor"] = KEYWORD_REEL_ACTOR
     progress["keyword_search_fallback_actor"] = KEYWORD_POSTS_ACTOR
     progress["keyword_search_fallback_used"] = False
@@ -566,14 +570,39 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
             dismissed_scs=dismissed_scs,
         )
     except ApifyUsageLimitError as e:
-        progress["keywords_run"].append({"error": str(e)[:200]})
+        progress["keyword_search_error_type"] = "apify_usage_limit"
+        progress["keyword_search_error"] = str(e)[:500]
+        progress["discovery_log"].append(
+            {
+                "stage": "primary_keyword_reels_failed",
+                "actor": KEYWORD_REEL_ACTOR,
+                "error_type": "apify_usage_limit",
+                "fallback_attempted": False,
+                "reason": "primary actor could not start because Apify usage is blocked",
+            }
+        )
+        progress["keywords_run"].append({"error": str(e)[:200], "fallback_attempted": False})
         supabase.table("background_jobs").update({"result": dict(progress)}).eq("id", job_id).execute()
         raise
     except Exception as e:
-        progress["keywords_run"].append({"error": str(e)[:200]})
+        progress["keyword_search_error_type"] = "keyword_search_failed"
+        progress["keyword_search_error"] = str(e)[:500]
+        progress["discovery_log"].append(
+            {
+                "stage": "primary_keyword_reels_failed",
+                "actor": KEYWORD_REEL_ACTOR,
+                "error_type": "unexpected_error",
+                "fallback_attempted": False,
+            }
+        )
+        progress["keywords_run"].append({"error": str(e)[:200], "fallback_attempted": False})
         _complete_job(supabase, job_id, progress, f"Keyword search failed: {e!s}")
         return
 
+    progress["keyword_discovery_impl"] = discovery_meta.get(
+        "keyword_discovery_impl", progress["keyword_discovery_impl"]
+    )
+    progress["discovery_log"] = discovery_meta.get("discovery_log", [])
     progress["keyword_search_primary_items"] = discovery_meta["keyword_search_primary_items"]
     progress["keyword_search_fallback_used"] = discovery_meta["keyword_search_fallback_used"]
     progress["keyword_search_fallback_reason"] = discovery_meta["keyword_search_fallback_reason"]

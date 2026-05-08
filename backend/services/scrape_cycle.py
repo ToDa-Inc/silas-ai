@@ -21,6 +21,7 @@ STALE_DISCOVERY_ONLY_NEWER_THAN = "30 days"
 REFRESH_MAX_AGE_DAYS = 30
 REFRESH_BATCH_LIMIT = 500
 DEFAULT_SKIP_RECENTLY_UPDATED_HOURS = 20
+KEYWORD_DISCOVERY_IMPL = "posts_fallback_v1"
 
 
 def _parse_ts(value: Any) -> datetime | None:
@@ -282,13 +283,15 @@ def enqueue_keyword_reel_similarity_for_client(
         return {"queued": 0, "skipped": 1, "job_id": None}
 
     job_id = generate_job_id()
+    job_payload = dict(payload or {})
+    job_payload.setdefault("keyword_discovery_impl", KEYWORD_DISCOVERY_IMPL)
     supabase.table("background_jobs").insert(
         {
             "id": job_id,
             "org_id": org_id,
             "client_id": client_id,
             "job_type": "keyword_reel_similarity",
-            "payload": payload or {},
+            "payload": job_payload,
             "status": "queued",
         }
     ).execute()
@@ -301,6 +304,7 @@ def enqueue_keyword_reel_similarity_all_clients(supabase: Client) -> Dict[str, A
     total_queued = 0
     total_skipped = 0
     clients_checked = 0
+    queued_job_ids: List[str] = []
 
     for c in clients.data or []:
         clients_checked += 1
@@ -311,11 +315,15 @@ def enqueue_keyword_reel_similarity_all_clients(supabase: Client) -> Dict[str, A
         )
         total_queued += stats["queued"]
         total_skipped += stats["skipped"]
+        if stats.get("job_id"):
+            queued_job_ids.append(str(stats["job_id"]))
 
     return {
         "clients_checked": clients_checked,
         "jobs_queued": total_queued,
         "jobs_skipped": total_skipped,
+        "keyword_discovery_impl": KEYWORD_DISCOVERY_IMPL,
+        "queued_job_ids": queued_job_ids,
     }
 
 

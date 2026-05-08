@@ -97,6 +97,9 @@ class TestDiscoverKeywordUrls(unittest.TestCase):
         self.assertFalse(meta["keyword_search_fallback_used"])
         self.assertEqual(meta["keyword_search_primary_items"], 1)
         self.assertEqual(meta["total_keyword_actor_items"], 1)
+        self.assertEqual(meta["keyword_discovery_impl"], "posts_fallback_v1")
+        self.assertEqual(meta["discovery_log"][0]["stage"], "primary_keyword_reels_completed")
+        self.assertEqual(meta["discovery_log"][0]["usable_short_codes"], 1)
 
     def test_fallback_when_primary_empty(self) -> None:
         def reel_batch(*_a, **_k):
@@ -128,6 +131,15 @@ class TestDiscoverKeywordUrls(unittest.TestCase):
         self.assertEqual(meta["keyword_search_fallback_items"], 1)
         self.assertEqual(meta["total_keyword_actor_items"], 1)
         self.assertEqual(raw["FbCkFaLl1"]["username"], "fbuser")
+        self.assertEqual(
+            [entry["stage"] for entry in meta["discovery_log"]],
+            [
+                "primary_keyword_reels_completed",
+                "fallback_decision",
+                "fallback_keyword_posts_completed",
+            ],
+        )
+        self.assertEqual(meta["discovery_log"][-1]["usable_short_codes"], 1)
 
 
 if __name__ == "__main__":
