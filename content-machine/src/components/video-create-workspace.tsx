@@ -301,6 +301,8 @@ function carouselTemplateSummary(template: ClientCarouselTemplate | null | undef
   return `${template.slides.length} slide${template.slides.length === 1 ? "" : "s"} · ${roles}`;
 }
 
+type RegenScope = "hooks" | "script" | "caption" | "text_blocks";
+
 /**
  * Inline regenerate control (replaces the old global "Refine" panel).
  * Lives next to the section it regenerates and posts back to the same `/regenerate` endpoint
@@ -312,9 +314,9 @@ function RegenInline({
   onRegen,
   placeholder = "How should this change? (optional)",
 }: {
-  scope: "hooks" | "script" | "caption" | "text_blocks";
+  scope: RegenScope;
   busy: boolean;
-  onRegen: (scope: "hooks" | "script" | "caption" | "text_blocks", feedback: string) => Promise<void>;
+  onRegen: (scope: RegenScope, feedback: string) => Promise<boolean>;
   placeholder?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -347,9 +349,11 @@ function RegenInline({
         type="button"
         disabled={busy}
         onClick={async () => {
-          await onRegen(scope, feedback.trim());
-          setFeedback("");
-          setOpen(false);
+          const ok = await onRegen(scope, feedback.trim());
+          if (ok) {
+            setFeedback("");
+            setOpen(false);
+          }
         }}
         className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-amber-500/15 px-2.5 py-1.5 text-[11px] font-bold text-app-on-amber-title hover:bg-amber-500/25 disabled:opacity-40"
       >
@@ -2063,7 +2067,7 @@ function AiContextSection({
 }: {
   hooks: Array<{ text?: string }>;
   scriptForTalkingHead?: string | null;
-  regenHooks: (feedback: string) => Promise<void>;
+  regenHooks: (feedback: string) => Promise<boolean>;
   busy: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -2160,7 +2164,7 @@ export function VideoCreateWorkspace({
   const [coverImageId, setCoverImageId] = useState("");
   const [coverEdit, setCoverEdit] = useState<CoverEditState>(DEFAULT_COVER_EDIT);
   const [coverRegenBusy, setCoverRegenBusy] = useState(false);
-  const [regenBusy, setRegenBusy] = useState(false);
+  const [regenBusyScope, setRegenBusyScope] = useState<RegenScope | null>(null);
   /**
    * Active source tab for the Visual card. Defaults to whatever's already set on the
    * session; once the user manually clicks a tab we stop following the session so
@@ -2544,11 +2548,11 @@ export function VideoCreateWorkspace({
   }, [applySession, clientSlug, orgSlug, session, scriptDraft, show]);
 
   const onRegenSection = useCallback(
-    async (scope: "hooks" | "script" | "caption" | "text_blocks", feedback: string) => {
+    async (scope: RegenScope, feedback: string): Promise<boolean> => {
       const cs = clientSlug.trim();
       const os = orgSlug.trim();
-      if (!session || !cs || !os) return;
-      setRegenBusy(true);
+      if (!session || !cs || !os) return false;
+      setRegenBusyScope(scope);
       try {
         const res = await generationRegenerate(cs, os, session.id, {
           scope,
@@ -2556,12 +2560,13 @@ export function VideoCreateWorkspace({
         });
         if (!res.ok) {
           show(res.error, "error");
-          return;
+          return false;
         }
         applySession(res.data);
         show("Regenerated.", "success");
+        return true;
       } finally {
-        setRegenBusy(false);
+        setRegenBusyScope(null);
       }
     },
     [applySession, clientSlug, orgSlug, session, show],
@@ -2694,7 +2699,7 @@ export function VideoCreateWorkspace({
         }
       }
       show(
-        "No render update after ~10 min. Try “Check status” or reload. If jobs stay queued, run the worker (`npm run dev:worker`) alongside the API.",
+        "No update after several minutes. Try “Check status” or reload the page. If it’s still stuck, contact support.",
         "default",
       );
     },
@@ -3580,7 +3585,7 @@ export function VideoCreateWorkspace({
             <h2 className="flex-1 text-sm font-semibold text-app-fg">Script</h2>
             <RegenInline
               scope="script"
-              busy={regenBusy}
+              busy={regenBusyScope === "script"}
               onRegen={async (s, fb) => onRegenSection(s, fb)}
               placeholder="Tighter, more direct, add a story…"
             />
@@ -3648,7 +3653,7 @@ export function VideoCreateWorkspace({
           regenInline={
             <RegenInline
               scope="caption"
-              busy={regenBusy}
+              busy={regenBusyScope === "caption"}
               onRegen={async (s, fb) => onRegenSection(s, fb)}
               placeholder="Different angle, shorter, …"
             />
@@ -3658,7 +3663,7 @@ export function VideoCreateWorkspace({
         <AiContextSection
           hooks={hooks}
           regenHooks={(fb) => onRegenSection("hooks", fb)}
-          busy={regenBusy}
+          busy={regenBusyScope === "hooks"}
         />
       </div>
     );
@@ -3826,7 +3831,7 @@ export function VideoCreateWorkspace({
           regenInline={
             <RegenInline
               scope="caption"
-              busy={regenBusy}
+              busy={regenBusyScope === "caption"}
               onRegen={async (s, fb) => onRegenSection(s, fb)}
               placeholder="Different angle, shorter, …"
             />
@@ -3836,7 +3841,7 @@ export function VideoCreateWorkspace({
         <AiContextSection
           hooks={hooks}
           regenHooks={(fb) => onRegenSection("hooks", fb)}
-          busy={regenBusy}
+          busy={regenBusyScope === "hooks"}
         />
       </div>
     );
@@ -3860,7 +3865,7 @@ export function VideoCreateWorkspace({
           <AiContextSection
             hooks={hooks}
             regenHooks={(fb) => onRegenSection("hooks", fb)}
-            busy={regenBusy}
+            busy={regenBusyScope === "hooks"}
           />
         </div>
       </div>
@@ -3954,7 +3959,7 @@ export function VideoCreateWorkspace({
         <StepHeader n={1} label="On-screen text" done={step1Done}>
           <RegenInline
             scope="text_blocks"
-            busy={regenBusy}
+            busy={regenBusyScope === "text_blocks"}
             onRegen={async (s, fb) => onRegenSection(s, fb)}
             placeholder="More direct, add emoji, shorter…"
           />
@@ -3996,7 +4001,7 @@ export function VideoCreateWorkspace({
                 </div>
                 <RegenInline
                   scope="hooks"
-                  busy={regenBusy}
+                  busy={regenBusyScope === "hooks"}
                   onRegen={async (s, fb) => onRegenSection(s, fb)}
                   placeholder="More direct, shorter, …"
                 />
@@ -4252,7 +4257,7 @@ export function VideoCreateWorkspace({
               {specInFlight > 0 ? (
                 <span
                   className="inline-flex items-center gap-1 rounded-md bg-sky-500/15 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-300"
-                  title="Sending changes to the server"
+                  title="Saving your latest changes"
                 >
                   <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-sky-300" />
                   Saving…
@@ -5209,7 +5214,7 @@ export function VideoCreateWorkspace({
         regenInline={
           <RegenInline
             scope="caption"
-            busy={regenBusy}
+            busy={regenBusyScope === "caption"}
             onRegen={async (s, fb) => onRegenSection(s, fb)}
             placeholder="Different angle, shorter, …"
           />
@@ -5219,7 +5224,7 @@ export function VideoCreateWorkspace({
       <AiContextSection
         hooks={hooks}
         regenHooks={(fb) => onRegenSection("hooks", fb)}
-        busy={regenBusy}
+        busy={regenBusyScope === "hooks"}
       />
 
       <PostPreviewModal

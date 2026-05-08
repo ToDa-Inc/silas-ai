@@ -711,6 +711,150 @@ def _wants_text_blocks(source_format_key: Optional[str]) -> bool:
     return key in _TEXT_BLOCK_FORMAT_KEYS
 
 
+def _text_overlay_rules_block() -> str:
+    """On-screen text_blocks + visual_style rules (shared by full package + scoped regen)."""
+    return (
+        "\ntext_blocks (on-screen overlays inside the reel — NOT the talking-head script):\n"
+        "These are the only words the viewer sees on screen. The renderer plays them in\n"
+        "order, ~2.5s each, on top of the visual. Treat them as a tight 4-beat overlay\n"
+        "for the SAME reel — one cohesive scroll-stopper, not 4 alternative posts.\n"
+        "\n"
+        "STRUCTURE (HARD):\n"
+        "- Exactly 4 items.\n"
+        "- Item 1 = HOOK beat: the pattern interrupt / curiosity-opener. 1 line.\n"
+        "- Items 2–3 = SUBLINE beats: deepen the tension or name the hidden truth.\n"
+        "  Do NOT explain or resolve — keep the loop open.\n"
+        "- Item 4 = CTA: isCTA=true. Pushes the viewer to the next surface.\n"
+        "- Max 7 words per item. No full sentences required.\n"
+        "- Emojis only where they carry meaning (❌ ✅ 🔥 👇 ↓). No decoration.\n"
+        "\n"
+        "VOICE & TRIGGERS (CHOSEN_ANGLE_JSON.emotional_trigger anchors this):\n"
+        "- ICP-internal-thought voice. The viewer must think \"that is exactly me\".\n"
+        "- Pattern-interrupt openers: \"The reason you …\", \"You think it's X — but it's Y\",\n"
+        "  \"No one tells you this, but …\", \"This is where you lose …\", \"The moment you …\".\n"
+        "- Psychological triggers to draw from: self-doubt, feeling overlooked, hidden\n"
+        "  power dynamics, identity conflict (competent but silent), unfair dynamics.\n"
+        "- Slightly provocative, never manipulative. Truth > comfort. No buzzwords.\n"
+        "- Derive content from CHOSEN_ANGLE_JSON.situation + emotional_trigger; do NOT\n"
+        "  summarize the script line by line.\n"
+        "\n"
+        "CTA (item 4) — anchor the visual CTA to the chosen destination:\n"
+        "- If a SELECTED_CTA block is present in CLIENT_CONTEXT, use it as the source\n"
+        "  of truth. Adapt phrasing to the type:\n"
+        "    • website → caption / link push, e.g. \"Der Plan ist verlinkt ↓\",\n"
+        "      \"Link in der Bio ↓\". Never paste raw URLs.\n"
+        "    • newsletter → frame the value of subscribing in 1 line, e.g.\n"
+        "      \"Hol dir den Brief ↓\". If destination is a comment keyword, use it.\n"
+        "    • lead_magnet → comment-keyword CTA in the output language, e.g.\n"
+        "      German: \"👇 Schreib „KEYWORD“ für …\"; otherwise use \"KEYWORD\".\n"
+        "    • video → tease the next video as the natural next step, e.g.\n"
+        "      \"Teil 2 wartet auf dich ↓\".\n"
+        "    • booking → push toward the booking link, e.g.\n"
+        "      \"Termin im Link ↓\".\n"
+        "    • other → follow destination + traffic_goal literally.\n"
+        "- If no SELECTED_CTA is present, fall back to OFFER_DOCUMENTATION:\n"
+        "  named lead-magnet keyword → comment-keyword CTA; otherwise caption-push CTA\n"
+        "  e.g. \"Mehr dazu in der Caption ↓\".\n"
+        "- Never generic \"read more\" / \"swipe up\" / marketing-speak.\n"
+        "\n"
+        "FINAL CHECK before returning text_blocks:\n"
+        "\"Would this stop the scroll for ONE specific person in the ICP?\" If not, rewrite.\n"
+        "\n"
+        "visual_style (layout + motion for the on-screen reel preview):\n"
+        "- templateId: pick the layout that fits PATTERNS_JSON.format_insights / the angle. "
+        "b_roll_reel → usually bottom-card; dense text-overlay / punchy beats → centered-pop or capcut-highlight; "
+        "multi-line stacked captions (IG story style) → stacked-cards; "
+        "face-cam + lower-third feel → top-banner.\n"
+        "- themeId: match emotional tone to CHOSEN_ANGLE_JSON (bold-modern = high-contrast; editorial = refined; "
+        "casual-hand = handwritten vibe; clean-minimal = glassy/modern).\n"
+        "- blockAnimations: exactly one entry per text_blocks item (same order). "
+        "Use pop for the strongest beat or CTA; fade/slide-up for supports; none only if the beat is ultra soft.\n"
+        "- layout: leave as defaults (verticalOffset 0, scale 1, sidePadding 0.05, textAlign center, stackGap 0.008, stackGrowth up) "
+        "UNLESS the chosen template needs it. "
+        "Only nudge verticalOffset (-0.2..0.2 = up..down as fraction of canvas) if face-cam framing or product reveal "
+        "should reserve the opposite side; only bump scale (0.7..1.3) for ultra-short hooks (<3 words → 1.15) or long "
+        "subline beats (>5 words → 0.85); sidePadding (0.02..0.12) is for visual breathing room only. "
+        "textAlign left|center|right applies to every template. stackGap 0..0.06 (fraction of canvas height) only affects stacked-cards spacing between cards. "
+        "stackGrowth stacked-cards only: \"down\" = prefer first line fixed while beats add (use with Pin Top); \"up\" = hug bottom safe area (earlier lines shift up as beats add). Pin always chooses top/middle/bottom placement.\n"
+    )
+
+
+def assert_regenerate_scope_allowed(source_format_key: Optional[str], scope: str) -> None:
+    """Raise ValueError when scope is incompatible with the session format (caller → HTTP 400)."""
+    if scope == "story":
+        return
+    raw = (source_format_key or "").strip()
+    fk = canonicalize_stored_format_key(raw) or raw
+    if fk == "carousel":
+        if scope in ("script", "text_blocks"):
+            raise ValueError(
+                "Carousel sessions cannot regenerate script or on-screen text_blocks via this endpoint. "
+                "Edit slide copy in the carousel editor, or regenerate hooks/caption only."
+            )
+        return
+    if scope == "text_blocks" and not _wants_text_blocks(source_format_key):
+        raise ValueError(
+            "Regenerate scope 'text_blocks' is only available for text_overlay and b_roll_reel formats."
+        )
+
+
+def _regen_feedback_block(feedback: Optional[str]) -> str:
+    return f"\n\nFEEDBACK_FROM_HUMAN:\n{feedback.strip()[:4000]}\n" if feedback and feedback.strip() else ""
+
+
+def _regen_reference_bundle(
+    *,
+    adapt_single_reference_reel: bool,
+    synthesized_patterns: Dict[str, Any],
+    chosen_angle: Dict[str, Any],
+) -> tuple[str, str, str, str]:
+    """Shared adaptation notes for regenerate prompts (mirrors run_content_package)."""
+    adapt_block = ""
+    if adapt_single_reference_reel:
+        adapt_block = (
+            "\nREFERENCE_REEL_ADAPTATION (non-negotiable):\n"
+            "PATTERNS_JSON comes from a single source reel or pasted script. Treat it as a blueprint of THAT video, not a "
+            "generic style guide.\n"
+            "- Keep the same format class and beat structure implied by format_insights and hook_patterns "
+            "(e.g. text-on-B-roll cadence vs talking-head sections). Do not switch to a different production "
+            "format unless the patterns clearly describe that format.\n"
+            "- Preserve the core idea or payoff the viewer gets from the source reel; replace settings, "
+            "examples, names, and language so everything fits this client's ICP and CLIENT_CONTEXT.\n"
+            "- Hooks, script, caption, and text_blocks must all feel like the same adapted reel, not a new "
+            "unrelated concept.\n\n"
+        )
+    ref_note = ""
+    if adapt_single_reference_reel and isinstance(synthesized_patterns, dict):
+        sr0 = synthesized_patterns.get("source_reference")
+        if isinstance(sr0, dict) and str(sr0.get("source_caption") or "").strip():
+            ref_note = (
+                "\nSOURCE_REFERENCE: PATTERNS_JSON includes `source_reference` with the scraped template caption "
+                "and stored analysis excerpts. The blueprint is the combined on-reel content plus caption — preserve "
+                "the same viewer payoff and information depth when adapting.\n"
+            )
+    caption_src_tail = ""
+    if isinstance(synthesized_patterns, dict):
+        sr1 = synthesized_patterns.get("source_reference")
+        if isinstance(sr1, dict) and str(sr1.get("source_caption") or "").strip():
+            caption_src_tail = (
+                " When PATTERNS_JSON.source_reference.source_caption is present, ground caption_body in that text "
+                "and in source_reference fields (why_it_worked, caption_structure, replicable_elements, "
+                "suggested_adaptations): preserve the strategic role the original caption played (e.g. expanded "
+                "teaching, examples, framework, CTA style) while rewriting fully for this client's ICP, language, "
+                "voice, and OFFER_DOCUMENTATION. Do not copy phrasing. Do not add facts, numbers, promises, or "
+                "specifics unless they appear in source_reference, CLIENT_CONTEXT, CHOSEN_ANGLE_JSON, or the script "
+                "you generate for this package."
+            )
+    blueprint_note = ""
+    if adapt_single_reference_reel and str(chosen_angle.get("angle_role") or "").strip().lower() == "blueprint":
+        blueprint_note = (
+            "\nBLUEPRINT_ANGLE: CHOSEN_ANGLE_JSON is the faithful-remake slot. Maximize fidelity to the source "
+            "reel's structure, hook type, narrative arc, tension → payoff, and CTA mechanism in PATTERNS_JSON. "
+            "Do not drift to a different topic or format; only localize and ICP-fit the same blueprint.\n"
+        )
+    return adapt_block, ref_note, blueprint_note, caption_src_tail
+
+
 # Human-readable descriptions of each target format used to steer the LLM when
 # the user wants to RECREATE a source reel in a DIFFERENT production format than
 # the original. These are intentionally concrete (camera/edit + on-screen text
@@ -1152,6 +1296,7 @@ def run_carousel_copy_package(
     client_row: Dict[str, Any],
     synthesized_patterns: Dict[str, Any],
     chosen_angle: Dict[str, Any],
+    feedback: Optional[str] = None,
     adapt_single_reference_reel: bool = False,
     selected_cta: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
@@ -1209,6 +1354,7 @@ def run_carousel_copy_package(
         f"CLIENT_CONTEXT:\n{_pack_client_row_for_llm(client_row, selected_cta)[:100_000]}\n\n"
         f"PATTERNS_JSON:\n{json.dumps(synthesized_patterns, ensure_ascii=False)[:52_000]}\n\n"
         f"CHOSEN_ANGLE_JSON:\n{json.dumps(chosen_angle, ensure_ascii=False)[:8000]}\n"
+        f"{_regen_feedback_block(feedback)}"
     )
     data = chat_json_completion(
         settings.openrouter_api_key,
@@ -1267,72 +1413,7 @@ def run_content_package(
             "  }"
         )
     json_shape += "\n}\n"
-    tb_rules = ""
-    if _wants_text_blocks(source_format_key):
-        tb_rules = (
-            "\ntext_blocks (on-screen overlays inside the reel — NOT the talking-head script):\n"
-            "These are the only words the viewer sees on screen. The renderer plays them in\n"
-            "order, ~2.5s each, on top of the visual. Treat them as a tight 4-beat overlay\n"
-            "for the SAME reel — one cohesive scroll-stopper, not 4 alternative posts.\n"
-            "\n"
-            "STRUCTURE (HARD):\n"
-            "- Exactly 4 items.\n"
-            "- Item 1 = HOOK beat: the pattern interrupt / curiosity-opener. 1 line.\n"
-            "- Items 2–3 = SUBLINE beats: deepen the tension or name the hidden truth.\n"
-            "  Do NOT explain or resolve — keep the loop open.\n"
-            "- Item 4 = CTA: isCTA=true. Pushes the viewer to the next surface.\n"
-            "- Max 7 words per item. No full sentences required.\n"
-            "- Emojis only where they carry meaning (❌ ✅ 🔥 👇 ↓). No decoration.\n"
-            "\n"
-            "VOICE & TRIGGERS (CHOSEN_ANGLE_JSON.emotional_trigger anchors this):\n"
-            "- ICP-internal-thought voice. The viewer must think \"that is exactly me\".\n"
-            "- Pattern-interrupt openers: \"The reason you …\", \"You think it's X — but it's Y\",\n"
-            "  \"No one tells you this, but …\", \"This is where you lose …\", \"The moment you …\".\n"
-            "- Psychological triggers to draw from: self-doubt, feeling overlooked, hidden\n"
-            "  power dynamics, identity conflict (competent but silent), unfair dynamics.\n"
-            "- Slightly provocative, never manipulative. Truth > comfort. No buzzwords.\n"
-            "- Derive content from CHOSEN_ANGLE_JSON.situation + emotional_trigger; do NOT\n"
-            "  summarize the script line by line.\n"
-            "\n"
-            "CTA (item 4) — anchor the visual CTA to the chosen destination:\n"
-            "- If a SELECTED_CTA block is present in CLIENT_CONTEXT, use it as the source\n"
-            "  of truth. Adapt phrasing to the type:\n"
-            "    • website → caption / link push, e.g. \"Der Plan ist verlinkt ↓\",\n"
-            "      \"Link in der Bio ↓\". Never paste raw URLs.\n"
-            "    • newsletter → frame the value of subscribing in 1 line, e.g.\n"
-            "      \"Hol dir den Brief ↓\". If destination is a comment keyword, use it.\n"
-            "    • lead_magnet → comment-keyword CTA in the output language, e.g.\n"
-            "      German: \"👇 Schreib „KEYWORD“ für …\"; otherwise use \"KEYWORD\".\n"
-            "    • video → tease the next video as the natural next step, e.g.\n"
-            "      \"Teil 2 wartet auf dich ↓\".\n"
-            "    • booking → push toward the booking link, e.g.\n"
-            "      \"Termin im Link ↓\".\n"
-            "    • other → follow destination + traffic_goal literally.\n"
-            "- If no SELECTED_CTA is present, fall back to OFFER_DOCUMENTATION:\n"
-            "  named lead-magnet keyword → comment-keyword CTA; otherwise caption-push CTA\n"
-            "  e.g. \"Mehr dazu in der Caption ↓\".\n"
-            "- Never generic \"read more\" / \"swipe up\" / marketing-speak.\n"
-            "\n"
-            "FINAL CHECK before returning text_blocks:\n"
-            "\"Would this stop the scroll for ONE specific person in the ICP?\" If not, rewrite.\n"
-            "\n"
-            "visual_style (layout + motion for the on-screen reel preview):\n"
-            "- templateId: pick the layout that fits PATTERNS_JSON.format_insights / the angle. "
-            "b_roll_reel → usually bottom-card; dense text-overlay / punchy beats → centered-pop or capcut-highlight; "
-            "multi-line stacked captions (IG story style) → stacked-cards; "
-            "face-cam + lower-third feel → top-banner.\n"
-            "- themeId: match emotional tone to CHOSEN_ANGLE_JSON (bold-modern = high-contrast; editorial = refined; "
-            "casual-hand = handwritten vibe; clean-minimal = glassy/modern).\n"
-            "- blockAnimations: exactly one entry per text_blocks item (same order). "
-            "Use pop for the strongest beat or CTA; fade/slide-up for supports; none only if the beat is ultra soft.\n"
-            "- layout: leave as defaults (verticalOffset 0, scale 1, sidePadding 0.05, textAlign center, stackGap 0.008, stackGrowth up) "
-            "UNLESS the chosen template needs it. "
-            "Only nudge verticalOffset (-0.2..0.2 = up..down as fraction of canvas) if face-cam framing or product reveal "
-            "should reserve the opposite side; only bump scale (0.7..1.3) for ultra-short hooks (<3 words → 1.15) or long "
-            "subline beats (>5 words → 0.85); sidePadding (0.02..0.12) is for visual breathing room only. "
-            "textAlign left|center|right applies to every template. stackGap 0..0.06 (fraction of canvas height) only affects stacked-cards spacing between cards. "
-            "stackGrowth stacked-cards only: \"down\" = prefer first line fixed while beats add (use with Pin Top); \"up\" = hug bottom safe area (earlier lines shift up as beats add). Pin always chooses top/middle/bottom placement.\n"
-        )
+    tb_rules = _text_overlay_rules_block() if _wants_text_blocks(source_format_key) else ""
     adapt_block = ""
     if adapt_single_reference_reel:
         adapt_block = (
@@ -1496,6 +1577,436 @@ def run_content_package(
     return _apply_german_natural_polish(settings, client_row, out, mode=german_polish)
 
 
+def _carousel_regen_adapt_bundle(
+    adapt_single_reference_reel: bool,
+    synthesized_patterns: Dict[str, Any],
+    chosen_angle: Dict[str, Any],
+) -> tuple[str, str, str, str]:
+    """Adaptation notes aligned with run_carousel_copy_package."""
+    adapt_block = ""
+    if adapt_single_reference_reel:
+        adapt_block = (
+            "\nREFERENCE_REEL_ADAPTATION (non-negotiable):\n"
+            "PATTERNS_JSON comes from a single source reel or pasted script. Preserve the core payoff "
+            "and blueprint family for THIS adaptation—hooks and caption must stay faithful to "
+            "CHOSEN_ANGLE_JSON, not a generic new topic.\n\n"
+        )
+    ref_note = ""
+    if adapt_single_reference_reel and isinstance(synthesized_patterns, dict):
+        sr0 = synthesized_patterns.get("source_reference")
+        if isinstance(sr0, dict) and str(sr0.get("source_caption") or "").strip():
+            ref_note = (
+                "\nSOURCE_REFERENCE: When source_reference.source_caption exists, align caption strategy "
+                "(without copying phrasing) with that caption's role.\n"
+            )
+    blueprint_note = ""
+    if adapt_single_reference_reel and str(chosen_angle.get("angle_role") or "").strip().lower() == "blueprint":
+        blueprint_note = (
+            "\nBLUEPRINT_ANGLE: Maximize fidelity to CHOSEN_ANGLE_JSON — same narrative spine as the source blueprint.\n"
+        )
+    caption_src_tail = ""
+    if isinstance(synthesized_patterns, dict):
+        sr1 = synthesized_patterns.get("source_reference")
+        if isinstance(sr1, dict) and str(sr1.get("source_caption") or "").strip():
+            caption_src_tail = (
+                " Ground caption_body in source_reference strategic cues when helpful."
+            )
+    return adapt_block, ref_note, blueprint_note, caption_src_tail
+
+
+def _run_regenerate_carousel_hooks_narrow(
+    settings: Settings,
+    *,
+    client_row: Dict[str, Any],
+    synthesized_patterns: Dict[str, Any],
+    chosen_angle: Dict[str, Any],
+    feedback: Optional[str],
+    current_hooks: List[Dict[str, Any]],
+    adapt_single_reference_reel: bool,
+    selected_cta: Optional[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    lang = _lang_instruction(str(client_row.get("language") or "de"))
+    adapt_block, ref_note, blueprint_note, _ct = _carousel_regen_adapt_bundle(
+        adapt_single_reference_reel, synthesized_patterns, chosen_angle
+    )
+    _ = _ct
+    fb = _regen_feedback_block(feedback)
+    prev = json.dumps({"hooks": current_hooks}, ensure_ascii=False)[:12_000]
+    user = (
+        f"{lang}\n\n"
+        "TASK: Regenerate ONLY the hooks array for ONE Instagram CAROUSEL post (swipeable PNG slides — NOT a Reel).\n"
+        "Output JSON with this exact shape:\n"
+        '{"hooks": [{"text": string}]}\n'
+        "Rules:\n"
+        "- hooks: exactly 5 alternative first-slide lines for the SAME carousel idea (same angle spine). "
+        "Each hook must stand alone as slide 1 copy — punchy, scroll-stopping. Mix styles.\n\n"
+        f"{adapt_block}{ref_note}{blueprint_note}"
+        f"PREVIOUS_HOOKS_JSON:\n{prev}\n"
+        f"{fb}"
+        f"CLIENT_CONTEXT:\n{_pack_client_row_for_llm(client_row, selected_cta)[:100_000]}\n\n"
+        f"PATTERNS_JSON:\n{json.dumps(synthesized_patterns, ensure_ascii=False)[:52_000]}\n\n"
+        f"CHOSEN_ANGLE_JSON:\n{json.dumps(chosen_angle, ensure_ascii=False)[:8000]}\n"
+    )
+    data = chat_json_completion(
+        settings.openrouter_api_key,
+        settings.openrouter_model,
+        system=_SYSTEM_JSON,
+        user=user,
+        max_tokens=4096,
+        temperature=0.45,
+    )
+    return _normalize_hooks(data.get("hooks"))
+
+
+def _run_regenerate_reel_hooks_narrow(
+    settings: Settings,
+    *,
+    client_row: Dict[str, Any],
+    synthesized_patterns: Dict[str, Any],
+    chosen_angle: Dict[str, Any],
+    feedback: Optional[str],
+    current_hooks: List[Dict[str, Any]],
+    adapt_single_reference_reel: bool,
+    selected_cta: Optional[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    lang = _lang_instruction(str(client_row.get("language") or "de"))
+    adapt_block, ref_note, blueprint_note, _cap_tail = _regen_reference_bundle(
+        adapt_single_reference_reel=adapt_single_reference_reel,
+        synthesized_patterns=synthesized_patterns,
+        chosen_angle=chosen_angle,
+    )
+    _ = _cap_tail
+    fb = _regen_feedback_block(feedback)
+    prev = json.dumps({"hooks": current_hooks}, ensure_ascii=False)[:12_000]
+    user = (
+        f"{lang}\n\n"
+        "TASK: Regenerate ONLY the hooks array for ONE Instagram Reels angle.\n"
+        "Output JSON with this exact shape:\n"
+        '{"hooks": [{"text": string}]}\n'
+        "Rules:\n"
+        "- hooks: exactly 5 alternative hooks for the same video. Mix styles freely "
+        "(direct question, insight/tension, concrete say-out-loud line). Each hook is the FIRST line "
+        "spoken/shown in the reel and must work on its own. No tiers, no labels.\n\n"
+        f"{adapt_block}{ref_note}{blueprint_note}"
+        f"PREVIOUS_HOOKS_JSON:\n{prev}\n"
+        f"{fb}"
+        f"CLIENT_CONTEXT:\n{_pack_client_row_for_llm(client_row, selected_cta)[:100_000]}\n\n"
+        f"PATTERNS_JSON:\n{json.dumps(synthesized_patterns, ensure_ascii=False)[:52_000]}\n\n"
+        f"CHOSEN_ANGLE_JSON:\n{json.dumps(chosen_angle, ensure_ascii=False)[:8000]}\n"
+    )
+    data = chat_json_completion(
+        settings.openrouter_api_key,
+        settings.openrouter_model,
+        system=_SYSTEM_JSON,
+        user=user,
+        max_tokens=4096,
+        temperature=0.45,
+    )
+    return _normalize_hooks(data.get("hooks"))
+
+
+def _run_regenerate_carousel_caption_narrow(
+    settings: Settings,
+    *,
+    client_row: Dict[str, Any],
+    synthesized_patterns: Dict[str, Any],
+    chosen_angle: Dict[str, Any],
+    feedback: Optional[str],
+    current_caption: str,
+    current_hashtags: List[str],
+    adapt_single_reference_reel: bool,
+    selected_cta: Optional[Dict[str, Any]],
+) -> tuple[str, List[str]]:
+    lang = _lang_instruction(str(client_row.get("language") or "de"))
+    adapt_block, ref_note, blueprint_note, caption_src_tail = _carousel_regen_adapt_bundle(
+        adapt_single_reference_reel, synthesized_patterns, chosen_angle
+    )
+    fb = _regen_feedback_block(feedback)
+    prev = json.dumps(
+        {"caption_body": current_caption, "hashtags": current_hashtags},
+        ensure_ascii=False,
+    )[:16_000]
+    user = (
+        f"{lang}\n\n"
+        "TASK: Regenerate ONLY the Instagram carousel caption + hashtags for ONE chosen angle "
+        "(CAROUSEL — swipeable slides, NOT a Reel). Do not rewrite hooks or slide text here.\n"
+        "Output JSON with this exact shape:\n"
+        '{\n  "caption_body": string,\n  "hashtags": [string]\n}\n'
+        "Rules:\n"
+        "- caption_body: IG caption for the carousel post in the output language. Deepen the angle with "
+        "psychological insight; align CTA with SELECTED_CTA when present. "
+        f"1–3 emojis max if natural.{caption_src_tail}\n"
+        "- hashtags: at most 5 niche tags.\n\n"
+        f"{adapt_block}{ref_note}{blueprint_note}"
+        f"PREVIOUS_VERSION:\n{prev}\n"
+        f"{fb}"
+        f"CLIENT_CONTEXT:\n{_pack_client_row_for_llm(client_row, selected_cta)[:100_000]}\n\n"
+        f"PATTERNS_JSON:\n{json.dumps(synthesized_patterns, ensure_ascii=False)[:52_000]}\n\n"
+        f"CHOSEN_ANGLE_JSON:\n{json.dumps(chosen_angle, ensure_ascii=False)[:8000]}\n"
+    )
+    data = chat_json_completion(
+        settings.openrouter_api_key,
+        settings.openrouter_model,
+        system=_SYSTEM_JSON,
+        user=user,
+        max_tokens=8192,
+        temperature=0.45,
+    )
+    return str(data.get("caption_body") or "").strip(), _normalize_hashtags(data.get("hashtags"))
+
+
+def _run_regenerate_reel_caption_narrow(
+    settings: Settings,
+    *,
+    client_row: Dict[str, Any],
+    synthesized_patterns: Dict[str, Any],
+    chosen_angle: Dict[str, Any],
+    feedback: Optional[str],
+    current_caption: str,
+    current_hashtags: List[str],
+    current_script: str,
+    adapt_single_reference_reel: bool,
+    selected_cta: Optional[Dict[str, Any]],
+) -> tuple[str, List[str]]:
+    lang = _lang_instruction(str(client_row.get("language") or "de"))
+    adapt_block, ref_note, blueprint_note, caption_src_tail = _regen_reference_bundle(
+        adapt_single_reference_reel=adapt_single_reference_reel,
+        synthesized_patterns=synthesized_patterns,
+        chosen_angle=chosen_angle,
+    )
+    fb = _regen_feedback_block(feedback)
+    prev = json.dumps(
+        {
+            "caption_body": current_caption,
+            "hashtags": current_hashtags,
+            "script_excerpt": (current_script or "")[:12_000],
+        },
+        ensure_ascii=False,
+    )[:24_000]
+    user = (
+        f"{lang}\n\n"
+        "TASK: Regenerate ONLY the Instagram caption + hashtags for ONE Reels angle.\n"
+        "Do not rewrite hooks, script, or on-screen text_blocks.\n"
+        "Output JSON with this exact shape:\n"
+        '{\n  "caption_body": string,\n  "hashtags": [string]\n}\n'
+        "Rules:\n"
+        "- caption_body: High-converting IG caption in the output language. Do NOT repeat or summarize "
+        "the Reel script — deepen the message with new psychological insight and perspective. "
+        "Write for one specific reader (ICP): every sentence should feel personally relevant; "
+        "avoid generic coaching filler. Structure (use line breaks between beats): "
+        "(1) Hook — pattern-interrupt, relatable situation; "
+        "(2) Escalation — tension, reader feels seen; "
+        "(3) Reframe / insight — the aha; "
+        "(4) Consequence — why it matters if ignored; "
+        "(5) Authority transition — solution direction without over-explaining; "
+        "(6) CTA — clear action aligned with SELECTED_CTA (use its destination + traffic_goal; "
+        "match type guidance — e.g. native link push for website, value-of-subscribing line for newsletter, "
+        "comment keyword for lead_magnet, with German quotation marks like „KEYWORD“ in German output). "
+        "Fall back to OFFER_DOCUMENTATION-driven wording only when "
+        "no SELECTED_CTA block is present. "
+        "Tone: direct, emotionally precise, psychologically sharp; slight provocation where it fits; "
+        f"1–3 emojis max if natural. Final check: would this stop a scroll and make the ICP feel understood?{caption_src_tail}\n"
+        "- hashtags: at most 5 entries, niche-relevant; align with NICHE_BENCHMARKS and PATTERNS_JSON when available.\n\n"
+        f"{adapt_block}{ref_note}{blueprint_note}"
+        f"PREVIOUS_VERSION:\n{prev}\n"
+        f"{fb}"
+        f"CLIENT_CONTEXT:\n{_pack_client_row_for_llm(client_row, selected_cta)[:100_000]}\n\n"
+        f"PATTERNS_JSON:\n{json.dumps(synthesized_patterns, ensure_ascii=False)[:52_000]}\n\n"
+        f"CHOSEN_ANGLE_JSON:\n{json.dumps(chosen_angle, ensure_ascii=False)[:8000]}\n"
+    )
+    data = chat_json_completion(
+        settings.openrouter_api_key,
+        settings.openrouter_model,
+        system=_SYSTEM_JSON,
+        user=user,
+        max_tokens=8192,
+        temperature=0.45,
+    )
+    return str(data.get("caption_body") or "").strip(), _normalize_hashtags(data.get("hashtags"))
+
+
+def _run_regenerate_script_narrow(
+    settings: Settings,
+    *,
+    client_row: Dict[str, Any],
+    synthesized_patterns: Dict[str, Any],
+    chosen_angle: Dict[str, Any],
+    feedback: Optional[str],
+    current_script: str,
+    source_format_key: Optional[str],
+    adapt_single_reference_reel: bool,
+    selected_cta: Optional[Dict[str, Any]],
+) -> str:
+    lang = _lang_instruction(str(client_row.get("language") or "de"))
+    adapt_block, ref_note, blueprint_note, _ct = _regen_reference_bundle(
+        adapt_single_reference_reel=adapt_single_reference_reel,
+        synthesized_patterns=synthesized_patterns,
+        chosen_angle=chosen_angle,
+    )
+    _ = _ct
+    fb = _regen_feedback_block(feedback)
+    prev_note = (
+        "\n\nPREVIOUS_VERSION (script field only — revise if feedback says so):\n"
+        + json.dumps({"script": current_script}, ensure_ascii=False)[:40_000]
+    )
+    fk = canonicalize_stored_format_key(source_format_key or "") or (source_format_key or "").strip()
+    is_talking_head = fk == "talking_head"
+    if is_talking_head:
+        script_bullet = _talking_head_script_package_bullet(german_client=_is_german_client(client_row))
+    else:
+        script_bullet = (
+            "- script: Use the optimal format and duration implied by PATTERNS_JSON.format_insights "
+            "(and NICHE_BENCHMARKS if present). If format_insights suggests talking-head ~30s, write ~30s; "
+            "if text-overlay, write overlay copy. Default to ~45 second talking head only if format_insights is empty. "
+            "Use markdown with headings: "
+            "## Hook, ## Situation, ## Insight 1, ## Insight 2, ## Insight 3, ## Conclusion, ## CTA.\n"
+        )
+    if is_talking_head:
+        hard_script_rules = (
+            "HARD RULES FOR THE SPOKEN SCRIPT (non-negotiable):\n"
+            "1. ## Reframe and ## Clarity together MUST include at least one sentence the viewer can say out loud "
+            "in a real situation tomorrow. Not an explanation of a technique — the actual words. "
+            "If those sections only explain a concept without giving a usable sentence, it fails.\n"
+            "2. Whenever a method or framework is named (e.g. WWW Method, 3-step feedback, any "
+            "named tool), you MUST show it being used in one concrete example sentence. "
+            "\"I noticed X, it affects me by Y, I want Z\" — that level of specificity. "
+            "Naming the method without demonstrating it in a real sentence is not allowed.\n"
+            "3. ## Build-up through ## Clarity MUST contain at least one of these three tension patterns:\n"
+            "   a) WRONG-TO-RIGHT: Show the common wrong reaction first, then the better one.\n"
+            "   b) HIDDEN COST: Name what staying in the current pattern actually costs the viewer "
+            "(\"you lose the project lead, not just the moment\").\n"
+            "   c) COUNTERINTUITIVE REFRAME: Challenge what the viewer currently believes "
+            "(\"The problem isn't that you can't speak up — it's that you think you need confidence first\").\n"
+            "   Pick whichever fits the angle best. At least one must appear.\n"
+            "4. ## Clarity must reference the specific scenario from THIS script. "
+            "Generic motivational lines that could end any video are not acceptable.\n\n"
+        )
+    else:
+        hard_script_rules = (
+            "HARD RULES FOR SCRIPT INSIGHTS (non-negotiable):\n"
+            "1. Every insight MUST include at least one sentence the viewer can say out loud "
+            "in a real situation tomorrow. Not an explanation of a technique — the actual words. "
+            "If an insight only explains a concept without giving a usable sentence, it fails.\n"
+            "2. Whenever a method or framework is named (e.g. WWW Method, 3-step feedback, any "
+            "named tool), you MUST show it being used in one concrete example sentence. "
+            "\"I noticed X, it affects me by Y, I want Z\" — that level of specificity. "
+            "Naming the method without demonstrating it in a real sentence is not allowed.\n"
+            "3. The script body MUST contain at least one of these three tension patterns:\n"
+            "   a) WRONG-TO-RIGHT: Show the common wrong reaction first, then the better one.\n"
+            "   b) HIDDEN COST: Name what staying in the current pattern actually costs the viewer "
+            "(\"you lose the project lead, not just the moment\").\n"
+            "   c) COUNTERINTUITIVE REFRAME: Challenge what the viewer currently believes "
+            "(\"The problem isn't that you can't speak up — it's that you think you need confidence first\").\n"
+            "   Pick whichever fits the angle best. At least one must appear.\n"
+            "4. The conclusion must reference the specific scenario from THIS script. "
+            "Generic motivational lines that could end any video are not acceptable.\n\n"
+        )
+    user = (
+        f"{lang}\n\n"
+        "TASK: Regenerate ONLY the Reel script for ONE chosen angle.\n"
+        "Output JSON with this exact shape:\n"
+        '{"script": string}\n'
+        f"{adapt_block}{ref_note}{blueprint_note}"
+        "Rules apply to the script field only:\n"
+        f"{script_bullet}"
+        f"{hard_script_rules}"
+        f"CLIENT_CONTEXT:\n{_pack_client_row_for_llm(client_row, selected_cta)[:100_000]}\n\n"
+        f"PATTERNS_JSON:\n{json.dumps(synthesized_patterns, ensure_ascii=False)[:52_000]}\n\n"
+        f"CHOSEN_ANGLE_JSON:\n{json.dumps(chosen_angle, ensure_ascii=False)[:8000]}\n"
+        f"{prev_note}{fb}"
+    )
+    data = chat_json_completion(
+        settings.openrouter_api_key,
+        settings.openrouter_model,
+        system=_SYSTEM_JSON,
+        user=user,
+        max_tokens=12_288,
+        temperature=0.45,
+    )
+    return str(data.get("script") or "").strip()
+
+
+def _run_regenerate_text_blocks_narrow(
+    settings: Settings,
+    *,
+    client_row: Dict[str, Any],
+    synthesized_patterns: Dict[str, Any],
+    chosen_angle: Dict[str, Any],
+    feedback: Optional[str],
+    current_text_blocks: Optional[List[Dict[str, Any]]],
+    current_visual_style: Optional[Dict[str, Any]],
+    current_script: str,
+    source_format_key: Optional[str],
+    adapt_single_reference_reel: bool,
+    selected_cta: Optional[Dict[str, Any]],
+) -> tuple[Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]]]:
+    lang = _lang_instruction(str(client_row.get("language") or "de"))
+    adapt_block, ref_note, blueprint_note, _ct = _regen_reference_bundle(
+        adapt_single_reference_reel=adapt_single_reference_reel,
+        synthesized_patterns=synthesized_patterns,
+        chosen_angle=chosen_angle,
+    )
+    _ = _ct
+    fb = _regen_feedback_block(feedback)
+    prev_obj: Dict[str, Any] = {"text_blocks": current_text_blocks}
+    if current_visual_style is not None:
+        prev_obj["visual_style"] = current_visual_style
+    prev_note = (
+        "\n\nPREVIOUS_VERSION (text_blocks + visual_style — revise if feedback says so):\n"
+        + json.dumps(prev_obj, ensure_ascii=False)[:32_000]
+    )
+    tb_rules = _text_overlay_rules_block()
+    script_hint = (
+        "\n\nCONTEXT_SCRIPT (do not rewrite — stay coherent with this reel):\n"
+        + (current_script or "").strip()[:8000]
+    )
+    json_shape = (
+        "{\n"
+        '  "text_blocks": [{"text": string, "isCTA": boolean}],\n'
+        '  "visual_style": {\n'
+        '    "templateId": "bottom-card" | "centered-pop" | "top-banner" | "capcut-highlight" | "stacked-cards",\n'
+        '    "themeId": "bold-modern" | "editorial" | "casual-hand" | "clean-minimal",\n'
+        '    "blockAnimations": ["pop"|"fade"|"slide-up"|"none", ...],\n'
+        '    "layout": { "verticalOffset": number, "scale": number, "sidePadding": number, '
+        '"stackGrowth": "up" | "down" (stacked-cards only, optional) }\n'
+        "  }\n"
+        "}\n"
+    )
+    user = (
+        f"{lang}\n\n"
+        "TASK: Regenerate ONLY on-screen text_blocks and visual_style for ONE Reel angle.\n"
+        "Do not rewrite hooks, script body, or caption.\n"
+        "Output JSON with this exact shape:\n"
+        f"{json_shape}"
+        "Rules:\n"
+        f"{tb_rules}"
+        f"{adapt_block}{ref_note}{blueprint_note}"
+        f"{script_hint}"
+        f"{prev_note}{fb}"
+        f"CLIENT_CONTEXT:\n{_pack_client_row_for_llm(client_row, selected_cta)[:100_000]}\n\n"
+        f"PATTERNS_JSON:\n{json.dumps(synthesized_patterns, ensure_ascii=False)[:52_000]}\n\n"
+        f"CHOSEN_ANGLE_JSON:\n{json.dumps(chosen_angle, ensure_ascii=False)[:8000]}\n"
+    )
+    data = chat_json_completion(
+        settings.openrouter_api_key,
+        settings.openrouter_model,
+        system=_SYSTEM_JSON,
+        user=user,
+        max_tokens=8192,
+        temperature=0.45,
+    )
+    tb = _normalize_text_blocks(data.get("text_blocks"))
+    if tb:
+        vs = _normalize_visual_style(
+            data.get("visual_style"),
+            source_format_key=source_format_key,
+            client_row=client_row,
+        )
+    else:
+        vs = None
+    return tb, vs
+
+
 def run_regenerate(
     settings: Settings,
     *,
@@ -1511,21 +2022,24 @@ def run_regenerate(
     current_stories: List[str],
     source_format_key: Optional[str] = None,
     current_text_blocks: Optional[List[Dict[str, Any]]] = None,
+    current_visual_style: Optional[Dict[str, Any]] = None,
     adapt_single_reference_reel: bool = False,
     selected_cta: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Regenerate all or one facet; one LLM call, then merge by scope."""
+    """Regenerate all or one facet; scoped calls use narrow prompts instead of a full package."""
+    assert_regenerate_scope_allowed(source_format_key, scope)
+
     polish_for_scope: Dict[str, GermanPolishMode] = {
         "all": "full",
         "hooks": "none",
         "script": "script",
         "caption": "caption",
-        # legacy "story" scope kept for backwards-compat with old API callers; no-op now.
         "story": "none",
         "text_blocks": "none",
     }
-    german_polish = polish_for_scope.get(scope, "full")
-    previous = {
+    fk = canonicalize_stored_format_key(source_format_key or "") or (source_format_key or "").strip()
+
+    previous: Dict[str, Any] = {
         "hooks": current_hooks,
         "script": current_script,
         "caption_body": current_caption,
@@ -1533,39 +2047,136 @@ def run_regenerate(
         "story_variants": current_stories,
         "text_blocks": current_text_blocks,
     }
-    full = run_content_package(
-        settings,
-        client_row=client_row,
-        synthesized_patterns=synthesized_patterns,
-        chosen_angle=chosen_angle,
-        feedback=feedback,
-        previous=previous,
-        source_format_key=source_format_key,
-        german_polish=german_polish,
-        adapt_single_reference_reel=adapt_single_reference_reel,
-        selected_cta=selected_cta,
-    )
-    if scope == "all":
-        return full
-    # Keys from the new model output to apply for each scope (rest stay from previous).
-    scope_keys: Dict[str, tuple[str, ...]] = {
-        "hooks": ("hooks",),
-        "script": ("script",),
-        "caption": ("caption_body", "hashtags"),
-        "text_blocks": ("text_blocks", "visual_style"),
-        # legacy "story" scope kept for backwards-compat; touches nothing in new sessions.
-        "story": (),
-    }
-    keys = scope_keys.get(scope)
-    if keys is None:
-        return full
-    if not keys:
-        # explicit no-op (e.g. legacy "story" scope on a session that no longer has stories)
+
+    if scope == "story":
         return previous
-    out = dict(previous)
-    for k in keys:
-        out[k] = full[k]
-    return out
+
+    if scope == "all":
+        if fk == "carousel":
+            copy_pkg = run_carousel_copy_package(
+                settings,
+                client_row=client_row,
+                synthesized_patterns=synthesized_patterns,
+                chosen_angle=chosen_angle,
+                feedback=feedback,
+                adapt_single_reference_reel=adapt_single_reference_reel,
+                selected_cta=selected_cta,
+            )
+            out = dict(previous)
+            out["hooks"] = copy_pkg["hooks"]
+            out["caption_body"] = copy_pkg["caption_body"]
+            out["hashtags"] = copy_pkg["hashtags"]
+            out["story_variants"] = copy_pkg.get("story_variants") or []
+            out["text_blocks"] = None
+            out["script"] = current_script
+            return out
+        return run_content_package(
+            settings,
+            client_row=client_row,
+            synthesized_patterns=synthesized_patterns,
+            chosen_angle=chosen_angle,
+            feedback=feedback,
+            previous=previous,
+            source_format_key=source_format_key,
+            german_polish="full",
+            adapt_single_reference_reel=adapt_single_reference_reel,
+            selected_cta=selected_cta,
+        )
+
+    if scope == "hooks":
+        if fk == "carousel":
+            new_hooks = _run_regenerate_carousel_hooks_narrow(
+                settings,
+                client_row=client_row,
+                synthesized_patterns=synthesized_patterns,
+                chosen_angle=chosen_angle,
+                feedback=feedback,
+                current_hooks=current_hooks,
+                adapt_single_reference_reel=adapt_single_reference_reel,
+                selected_cta=selected_cta,
+            )
+        else:
+            new_hooks = _run_regenerate_reel_hooks_narrow(
+                settings,
+                client_row=client_row,
+                synthesized_patterns=synthesized_patterns,
+                chosen_angle=chosen_angle,
+                feedback=feedback,
+                current_hooks=current_hooks,
+                adapt_single_reference_reel=adapt_single_reference_reel,
+                selected_cta=selected_cta,
+            )
+        out = dict(previous)
+        out["hooks"] = new_hooks
+        return out
+
+    if scope == "caption":
+        if fk == "carousel":
+            cap, tags = _run_regenerate_carousel_caption_narrow(
+                settings,
+                client_row=client_row,
+                synthesized_patterns=synthesized_patterns,
+                chosen_angle=chosen_angle,
+                feedback=feedback,
+                current_caption=current_caption,
+                current_hashtags=current_hashtags,
+                adapt_single_reference_reel=adapt_single_reference_reel,
+                selected_cta=selected_cta,
+            )
+        else:
+            cap, tags = _run_regenerate_reel_caption_narrow(
+                settings,
+                client_row=client_row,
+                synthesized_patterns=synthesized_patterns,
+                chosen_angle=chosen_angle,
+                feedback=feedback,
+                current_caption=current_caption,
+                current_hashtags=current_hashtags,
+                current_script=current_script,
+                adapt_single_reference_reel=adapt_single_reference_reel,
+                selected_cta=selected_cta,
+            )
+        pkg = dict(previous)
+        pkg["caption_body"] = cap
+        pkg["hashtags"] = tags
+        return _apply_german_natural_polish(settings, client_row, pkg, mode="caption")
+
+    if scope == "script":
+        new_script = _run_regenerate_script_narrow(
+            settings,
+            client_row=client_row,
+            synthesized_patterns=synthesized_patterns,
+            chosen_angle=chosen_angle,
+            feedback=feedback,
+            current_script=current_script,
+            source_format_key=source_format_key,
+            adapt_single_reference_reel=adapt_single_reference_reel,
+            selected_cta=selected_cta,
+        )
+        pkg = dict(previous)
+        pkg["script"] = new_script
+        return _apply_german_natural_polish(settings, client_row, pkg, mode="script")
+
+    if scope == "text_blocks":
+        tb, vs = _run_regenerate_text_blocks_narrow(
+            settings,
+            client_row=client_row,
+            synthesized_patterns=synthesized_patterns,
+            chosen_angle=chosen_angle,
+            feedback=feedback,
+            current_text_blocks=current_text_blocks,
+            current_visual_style=current_visual_style,
+            current_script=current_script,
+            source_format_key=source_format_key,
+            adapt_single_reference_reel=adapt_single_reference_reel,
+            selected_cta=selected_cta,
+        )
+        out = dict(previous)
+        out["text_blocks"] = tb
+        out["visual_style"] = vs
+        return out
+
+    raise ValueError(f"Unsupported regenerate scope: {scope}")
 
 
 def angles_from_session_row(row: Dict[str, Any]) -> List[Dict[str, Any]]:

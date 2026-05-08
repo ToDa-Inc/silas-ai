@@ -330,14 +330,14 @@ function getChosenAngleRecord(session: GenerationSession): Record<string, unknow
 }
 
 function sourceTypeLabel(t: string): string {
-  if (t === "format_pick") return "Format";
-  if (t === "idea_match") return "Idea";
-  if (t === "url_adapt") return "Adapt URL";
-  if (t === "script_adapt") return "Adapt script";
-  if (t === "patterns") return "Patterns";
-  if (t === "outlier") return "Selected";
-  if (t === "manual") return "Manual";
-  return t;
+  if (t === "format_pick") return "Format pick";
+  if (t === "idea_match") return "New idea";
+  if (t === "url_adapt") return "From a reel";
+  if (t === "script_adapt") return "From a script";
+  if (t === "patterns") return "From patterns";
+  if (t === "outlier") return "From Intelligence";
+  if (t === "manual") return "Custom";
+  return t.replace(/_/g, " ");
 }
 
 /** Sessions where angle 0 is the faithful blueprint (backend sets angle_role). */
@@ -364,7 +364,15 @@ function angleIsBlueprint(raw: unknown, index: number, session: GenerationSessio
 
 function formatKeyLabel(key: string): string {
   if (!key.trim()) return "—";
-  return key.replace(/_/g, " ");
+  const normalized = key.trim().toLowerCase().replace(/_/g, " ");
+  const friendly: Record<string, string> = {
+    "text overlay": "Text on video",
+    "talking head": "Talking head",
+    carousel: "Carousel",
+    "b roll reel": "B-roll style",
+    "b roll": "B-roll style",
+  };
+  return friendly[normalized] ?? key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 /** Match backend canonicalize_stored_format_key (legacy b_roll → b_roll_reel). */
@@ -415,11 +423,8 @@ function SynthesizedPatternsView({ patterns }: { patterns: Record<string, unknow
   return (
     <div className="max-h-[28rem] space-y-4 overflow-y-auto pr-1">
       <p className="text-[11px] leading-relaxed text-app-fg-muted">
-        Snapshot from when this run started: your team&apos;s{" "}
-        <span className="text-app-fg-secondary">format digest</span> (competitor reels → stats + one AI pass).
-        If the AI step failed (network, quota), sections below may be empty even though the digest row still
-        exists — use <strong className="font-semibold text-app-fg-muted">Refresh format digests</strong> on
-        Source to retry.
+        What was working in your niche when this run started. If a section is empty, refresh insights on the
+        Source step and try again.
       </p>
 
       {formatInsights &&
@@ -430,7 +435,7 @@ function SynthesizedPatternsView({ patterns }: { patterns: Record<string, unknow
       ].some((x) => typeof x === "string" && x.trim()) ? (
         <div className="rounded-xl border border-app-divider bg-app-chip-bg/40 p-4">
           <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-app-fg-subtle">
-            Format snapshot
+            Format insights
           </h3>
           <dl className="space-y-2 text-xs text-app-fg-muted">
             {typeof formatInsights.dominant_type === "string" && formatInsights.dominant_type.trim() ? (
@@ -441,7 +446,7 @@ function SynthesizedPatternsView({ patterns }: { patterns: Record<string, unknow
             ) : null}
             {typeof formatInsights.optimal_duration === "string" && formatInsights.optimal_duration.trim() ? (
               <div>
-                <dt className="font-semibold text-app-fg-subtle">Typical length (from data)</dt>
+                <dt className="font-semibold text-app-fg-subtle">Typical length</dt>
                 <dd className="mt-0.5 leading-relaxed">{formatInsights.optimal_duration}</dd>
               </div>
             ) : null}
@@ -793,11 +798,9 @@ function SessionCard({
           <Trash2 className="mx-auto h-4 w-4 md:h-5 md:w-5" />
         </button>
       </div>
-      {/* Surface the "video pipeline ready" hint only on in-progress rows; on done rows
-          the Done pill already says it. */}
       {!isDone && sessionHasPackage(session) ? (
         <span className="self-end pr-12 text-[11px] font-semibold text-emerald-500 md:pr-14 dark:text-emerald-400">
-          Video pipeline ready →
+          Video ready to open →
         </span>
       ) : null}
     </li>
@@ -805,10 +808,7 @@ function SessionCard({
 }
 
 /**
- * The green "Blueprint" pill on angle 1 of url_adapt sessions, with a focus/hover
- * popover that names what the LLM preserves vs swaps. Mirrors the prompt contract in
- * `backend/services/content_generation.py::run_angle_generation` (FAITHFUL BLUEPRINT branch)
- * so the UI promise matches what the model is actually instructed to do.
+ * Pill for the angle that stays closest to the source reel (structure + hook arc, rewritten for the client).
  */
 function BlueprintBadge() {
   return (
@@ -818,7 +818,7 @@ function BlueprintBadge() {
       </span>
       <button
         type="button"
-        aria-label="What's preserved and swapped in the Blueprint angle"
+        aria-label="What's preserved and changed in the Blueprint angle"
         className="rounded-full text-[11px] leading-none text-emerald-400/80 transition-colors hover:text-emerald-300 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400/60"
       >
         ⓘ
@@ -1678,9 +1678,9 @@ export default function GeneratePage() {
                       </p>
                     ) : (
                       <p className="mt-2 text-[11px] leading-relaxed text-app-fg-muted">
-                        We&apos;ll fetch the reel, learn what made it work, then propose a faithful{" "}
+                        We&apos;ll study the reel, pull out what worked, then suggest a{" "}
                         <span className="font-medium text-app-fg-secondary">Blueprint</span> angle (same
-                        idea, your client&apos;s voice) plus four variants in the format you pick below.
+                        structure and idea, your client&apos;s voice) plus variants in the format you pick below.
                       </p>
                     )}
                     {composerInput.trim() && isLikelyInstagramReelUrl(composerInput.trim()) ? (
@@ -1725,23 +1725,20 @@ export default function GeneratePage() {
                           </div>
                         ) : (
                           <p className="mt-3 text-[11px] leading-relaxed text-app-fg-muted">
-                            No saved cover for this URL yet. Analyze the reel under{" "}
+                            No saved cover for this URL yet. You can analyze it under{" "}
                             <Link
                               href="/intelligence/reels"
                               className="font-semibold text-amber-600 hover:underline dark:text-amber-400"
                             >
                               Intelligence → Reels
-                            </Link>{" "}
-                            (or start below — we fetch video when generating).
+                            </Link>
+                            , or continue here — we&apos;ll load the reel when you generate.
                           </p>
                         )}
                       </>
                     ) : null}
                   </div>
 
-                  {/* ── Recreate-as format picker ──
-                      Required explicit choice — sent as `format_key` so the backend never
-                      auto-routes url_adapt to the wrong production format. */}
                   <div>
                     <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-app-fg-subtle">
                       Recreate as <span className="font-normal text-app-fg-muted">(required)</span>
@@ -1751,7 +1748,7 @@ export default function GeneratePage() {
                         [
                           { key: "text_overlay" as const, label: "Text overlay", hint: "Static visuals + on-screen text blocks" },
                           { key: "talking_head" as const, label: "Talking head", hint: "You speak to camera the whole reel" },
-                          { key: "carousel" as const, label: "Carousel", hint: "Swipeable PNG slides (not a video)" },
+                          { key: "carousel" as const, label: "Carousel", hint: "Swipeable image slides (Instagram carousel)" },
                         ] as const
                       ).map(({ key, label, hint }) => {
                         const active = recreateFormat === key;
@@ -1776,8 +1773,8 @@ export default function GeneratePage() {
                     </div>
                     <p className="mt-2 text-[11px] leading-relaxed text-app-fg-muted">
                       {recreateFormat
-                        ? "We keep the source reel's idea + viewer payoff, but rebuild beats and on-screen language for this format."
-                        : "Pick a target format — each option routes generation on the server (no silent Auto)."}
+                        ? "We keep the original idea and payoff, and rewrite beats and on-screen text for the format you chose."
+                        : "Choose the kind of post you want to create — text on video, talking head, or carousel."}
                     </p>
                   </div>
 
@@ -1819,7 +1816,7 @@ export default function GeneratePage() {
                         <p className="text-xs font-semibold text-app-fg">No URL handy? Quick picks</p>
                         <p className="mt-0.5 text-[11px] leading-relaxed text-app-fg-muted">
                           Top competitor reels by{" "}
-                          <span className="text-app-fg-secondary">comments ÷ views</span> — tap to use one.
+                          <span className="text-app-fg-secondary">C/V</span> — tap to use one.
                         </p>
                       </div>
                       <Link
@@ -1837,7 +1834,7 @@ export default function GeneratePage() {
                       <p className="text-xs text-red-400/90">{adaptPreviewError}</p>
                     ) : adaptPreviewRows.length === 0 ? (
                       <p className="text-xs text-app-fg-muted">
-                        No competitor reels yet. Sync in{" "}
+                        No competitor reels yet. Refresh data in{" "}
                         <Link
                           href="/intelligence/reels"
                           className="font-semibold text-amber-600 hover:underline dark:text-amber-400"
@@ -1938,7 +1935,7 @@ export default function GeneratePage() {
                     <Sparkles className="size-4" />
                   )}
                   {loading
-                    ? "Running models…"
+                    ? "Preparing angles…"
                     : mode === "recreate" && !recreateFormat
                     ? "Pick a target format"
                     : "Generate angles"}
@@ -2006,7 +2003,7 @@ export default function GeneratePage() {
             {session.synthesized_patterns && (
               <button
                 type="button"
-                title="Digest JSON copied onto this session when you started Generate (format pick, idea match, or URL adapt). Includes AI-written hooks and summaries; may show an error string if the digest AI failed."
+                title="What we learned when you started this session — hooks, summaries, and patterns."
                 onClick={() => setPatternsOpen((o) => !o)}
                 className="flex items-center gap-1 text-xs font-semibold text-app-fg-muted hover:text-app-fg"
               >

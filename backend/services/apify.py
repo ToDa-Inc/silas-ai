@@ -135,6 +135,8 @@ SEARCH_ACTOR = "DrF9mzPPEuVizVF4l"
 REEL_ACTOR = "apify~instagram-reel-scraper"
 # Sasky — topic/hashtag-style reel search → usernames (docs/VIRAL-DISCOVERY-SPEC.md)
 KEYWORD_REEL_ACTOR = "4QFjEpnGE1PNEnQF2"
+# Sasky — keyword search → post/reel URLs (same input schema as reel keyword actor)
+KEYWORD_POSTS_ACTOR = "YXnfZzUD44eWaNEXM"
 INSTAGRAM_SCRAPER = "apify~instagram-scraper"
 
 # Batch size for directUrls enrichment — keep small to avoid actor timeouts.
@@ -167,6 +169,61 @@ def run_keyword_reel_search(
     if date and str(date).strip().lower() not in ("", "ignore"):
         body["date"] = date
     return run_actor(token, KEYWORD_REEL_ACTOR, body)
+
+
+def keyword_posts_search_input(
+    keywords: List[str],
+    max_items_total: int,
+    *,
+    date: Optional[str] = None,
+) -> dict[str, Any]:
+    """Body for ``sasky/instagram-keyword-posts-urls-scraper`` (KEYWORD_POSTS_ACTOR)."""
+    cleaned = [k.strip() for k in keywords if k and str(k).strip()]
+    body: dict[str, Any] = {
+        "keywords": cleaned,
+        "limit": _sasky_limit_str(max_items_total),
+    }
+    if date and str(date).strip().lower() not in ("", "ignore"):
+        body["date"] = date
+    return body
+
+
+def run_keyword_post_search_batch(
+    token: str,
+    keywords: List[str],
+    *,
+    max_items_total: int = 80,
+    date: str = "last-1-week",
+) -> list:
+    """One Sasky posts URL run with all keywords; on failure, sequential single-keyword runs."""
+    cleaned = [k.strip() for k in keywords if k and str(k).strip()]
+    if not cleaned:
+        return []
+
+    body = keyword_posts_search_input(cleaned, max_items_total, date=date)
+
+    try:
+        return run_actor(token, KEYWORD_POSTS_ACTOR, body) or []
+    except ApifyUsageLimitError:
+        raise
+    except Exception:
+        logger.warning(
+            "Sasky posts multi-keyword run failed; falling back to per-keyword search",
+            exc_info=True,
+        )
+
+    out: List[dict] = []
+    per = max(10, max_items_total // max(len(cleaned), 1))
+    for kw in cleaned:
+        try:
+            single_body = keyword_posts_search_input([kw], per, date=date)
+            out.extend(run_actor(token, KEYWORD_POSTS_ACTOR, single_body) or [])
+        except ApifyUsageLimitError:
+            raise
+        except Exception:
+            logger.warning("Sasky posts keyword search failed for %r", kw, exc_info=True)
+        time.sleep(1)
+    return out
 
 
 def run_keyword_reel_search_batch(

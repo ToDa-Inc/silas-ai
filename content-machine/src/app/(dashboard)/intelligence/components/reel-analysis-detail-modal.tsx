@@ -188,7 +188,7 @@ export function ReelAnalysisDetailModal({ open, onClose, reelId, clientSlug, org
         <div className="mb-4 flex items-start justify-between gap-2">
           <div>
             <h2 id="reel-analysis-title" className="text-sm font-semibold text-zinc-900 dark:text-app-fg">
-              {isNicheAnalysis ? "Niche match" : "Silas analysis"}
+              {isNicheAnalysis ? "Niche fit" : "Reel analysis"}
             </h2>
             {data?.owner_username ? (
               <p className="mt-1 text-[11px] text-zinc-600 dark:text-app-fg-subtle">

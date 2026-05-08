@@ -14,10 +14,12 @@ from core.config import Settings
 from core.database import get_supabase_for_settings
 from core.id_generator import generate_reel_id
 from services.apify import (
+    KEYWORD_POSTS_ACTOR,
+    KEYWORD_REEL_ACTOR,
     ApifyUsageLimitError,
     enrich_reel_urls_direct,
-    run_keyword_reel_search_batch,
 )
+from services.keyword_similarity_discovery import discover_keyword_urls_with_fallback
 from services.apify_posted_at import apify_instagram_item_posted_at_iso
 from services.reel_thumbnail_url import reel_thumbnail_url_from_apify_item
 from services.instagram_post_url import (
@@ -543,15 +545,25 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
     dismissed_scs = dismissed_short_codes(client)
 
     progress["phase"] = "keyword_search"
+    progress["keyword_search_primary_actor"] = KEYWORD_REEL_ACTOR
+    progress["keyword_search_fallback_actor"] = KEYWORD_POSTS_ACTOR
+    progress["keyword_search_fallback_used"] = False
+    progress["keyword_search_fallback_reason"] = None
+    progress["keyword_search_primary_items"] = 0
+    progress["keyword_search_fallback_items"] = 0
     supabase.table("background_jobs").update({"result": dict(progress)}).eq("id", job_id).execute()
 
     total_limit = min(MAX_ITEMS_PER_KEYWORD * max(len(keywords), 1), 2000)
     try:
-        items = run_keyword_reel_search_batch(
+        raw_by_sc, discovery_meta = discover_keyword_urls_with_fallback(
             settings.apify_api_token,
             keywords,
-            max_items_total=total_limit,
-            date=search_window,
+            total_limit=total_limit,
+            search_window=search_window,
+            client_handle=client_handle,
+            banned_handles=banned_handles,
+            banned_scs=banned_scs,
+            dismissed_scs=dismissed_scs,
         )
     except ApifyUsageLimitError as e:
         progress["keywords_run"].append({"error": str(e)[:200]})
@@ -562,30 +574,25 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
         _complete_job(supabase, job_id, progress, f"Keyword search failed: {e!s}")
         return
 
-    raw_by_sc: Dict[str, Dict[str, Any]] = {}
-    for it in items:
-        reel_url = (it.get("reel_url") or "").strip()
-        uname = (it.get("user_name") or "").lower().strip()
-        if not reel_url or not uname:
-            continue
-        if uname == client_handle or uname in banned_handles:
-            continue
-        sc = instagram_post_short_code(reel_url)
-        if not sc:
-            continue
-        if sc in banned_scs or sc in dismissed_scs:
-            continue
-        kw_tag = (it.get("keyword") or it.get("query") or "").strip()
-        if sc not in raw_by_sc:
-            raw_by_sc[sc] = {"username": uname, "keywords": []}
-        if kw_tag and kw_tag not in raw_by_sc[sc]["keywords"]:
-            raw_by_sc[sc]["keywords"].append(kw_tag)
-        elif not raw_by_sc[sc]["keywords"] and keywords:
-            raw_by_sc[sc]["keywords"].append(keywords[0])
+    progress["keyword_search_primary_items"] = discovery_meta["keyword_search_primary_items"]
+    progress["keyword_search_fallback_used"] = discovery_meta["keyword_search_fallback_used"]
+    progress["keyword_search_fallback_reason"] = discovery_meta["keyword_search_fallback_reason"]
+    progress["keyword_search_fallback_items"] = discovery_meta["keyword_search_fallback_items"]
+    fe = discovery_meta.get("keyword_search_fallback_error")
+    if fe:
+        progress["keyword_search_fallback_error"] = fe
+    progress["keywords_run"] = discovery_meta["keywords_run"]
+    total_keyword_actor_items = discovery_meta["total_keyword_actor_items"]
+
+    if discovery_meta.get("keyword_search_fallback_error"):
+        progress["raw_urls_found"] = 0
+        supabase.table("background_jobs").update({"result": dict(progress)}).eq("id", job_id).execute()
+        _complete_job(supabase, job_id, progress, "No reel URLs found for keywords")
+        return
 
     progress["raw_urls_found"] = len(raw_by_sc)
-    progress["keywords_run"] = [{"batch": True, "items": len(items), "unique_short_codes": len(raw_by_sc)}]
     if not raw_by_sc:
+        supabase.table("background_jobs").update({"result": dict(progress)}).eq("id", job_id).execute()
         _complete_job(supabase, job_id, progress, "No reel URLs found for keywords")
         return
 
@@ -695,7 +702,7 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
     to_score = ranked[:MAX_SCORE_SAFETY_CAP]
 
     progress["cost_estimate_usd"] = _estimate_cost_usd(
-        raw_n=len(items),
+        raw_n=total_keyword_actor_items,
         enrich_n=len(urls_to_enrich),
         score_n=len(to_score),
     )

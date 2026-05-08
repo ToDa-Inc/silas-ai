@@ -41,7 +41,7 @@ export function NicheReelScrapeButton({
 
   const title =
     disabledHint?.trim() ||
-    "Find reels that match your niche keywords on Instagram and save them to Intelligence. Runs in the background and can take several minutes.";
+    "Find recent Instagram reels that match this creator’s niche. This can take several minutes.";
 
   async function run() {
     if (disabled || !clientSlug.trim() || !orgSlug.trim()) {
@@ -55,7 +55,7 @@ export function NicheReelScrapeButton({
       return;
     }
     setBusy(true);
-    onMessage?.("Queuing niche reel scrape…", "neutral");
+    onMessage?.("Starting niche search…", "neutral");
     try {
       const apiBase = getContentApiBase();
       const headers = await clientApiHeaders({ orgSlug });
@@ -73,12 +73,12 @@ export function NicheReelScrapeButton({
       };
 
       if (postRes.status === 409) {
-        onMessage?.("A niche scrape is already running — wait for it to finish.", "error");
+        onMessage?.("A niche search is already running — try again when it finishes.", "error");
         setBusy(false);
         return;
       }
       if (postRes.status === 503) {
-        onMessage?.("Keyword search isn’t available on the server right now — contact support.", "error");
+        onMessage?.("Niche search isn’t available right now — contact support if it keeps happening.", "error");
         setBusy(false);
         return;
       }
@@ -90,12 +90,12 @@ export function NicheReelScrapeButton({
 
       const jobId = postJson.job_id;
       if (!jobId) {
-        onMessage?.("No job_id returned from server.", "error");
+        onMessage?.("Couldn’t start the search. Try again.", "error");
         setBusy(false);
         return;
       }
 
-      onMessage?.("Niche scrape running — searching keywords and fetching reels…", "neutral");
+      onMessage?.("Searching your keywords and saving matching reels…", "neutral");
 
       for (let i = 0; i < MAX_POLLS; i++) {
         await new Promise((r) => setTimeout(r, POLL_MS));
@@ -106,7 +106,7 @@ export function NicheReelScrapeButton({
 
         if (!jRes.ok) {
           onMessage?.(
-            formatFastApiError(job as unknown as Record<string, unknown>, "Could not load job status"),
+            formatFastApiError(job as unknown as Record<string, unknown>, "Couldn’t check progress"),
             "error",
           );
           setBusy(false);
@@ -114,7 +114,7 @@ export function NicheReelScrapeButton({
         }
 
         if (job.status === "failed") {
-          onMessage?.(job.error_message || "Niche reel scrape failed.", "error");
+          onMessage?.(job.error_message || "Niche search didn’t finish.", "error");
           setBusy(false);
           return;
         }
@@ -123,8 +123,8 @@ export function NicheReelScrapeButton({
           const n = job.result?.reels_upserted;
           onMessage?.(
             typeof n === "number"
-              ? `Niche scrape done — ${n} reel(s) saved. Refreshing…`
-              : "Niche scrape done. Refreshing…",
+              ? `Found and saved ${n} reel(s). Refreshing…`
+              : "Search finished. Refreshing…",
             "success",
           );
           router.refresh();
@@ -134,7 +134,7 @@ export function NicheReelScrapeButton({
       }
 
       onMessage?.(
-        "Still running in the background (polling timed out). Refresh Intelligence in a few minutes.",
+        "Still searching. Refresh Intelligence in a few minutes to check for new reels.",
         "neutral",
       );
       setBusy(false);
@@ -149,7 +149,7 @@ export function NicheReelScrapeButton({
       type="button"
       disabled={disabled || !clientSlug.trim() || !orgSlug.trim() || busy}
       title={title}
-      aria-label="Scrape niche reels from keywords"
+      aria-label="Find niche reels"
       onClick={() => void run()}
       className={INTELLIGENCE_TOOLBAR_ICON_CLASS}
     >

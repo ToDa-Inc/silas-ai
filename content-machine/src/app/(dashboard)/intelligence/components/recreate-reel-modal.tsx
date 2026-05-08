@@ -26,7 +26,7 @@ type RecreateFormatChoice = "text_overlay" | "talking_head" | "carousel";
 const RECREATE_FORMAT_OPTIONS: ReadonlyArray<{ key: RecreateFormatChoice; label: string; hint: string }> = [
   { key: "text_overlay", label: "Text overlay", hint: "Static visuals + on-screen text blocks" },
   { key: "talking_head", label: "Talking head", hint: "You speak to camera the whole reel" },
-  { key: "carousel", label: "Carousel", hint: "Swipeable PNG slides (not a video)" },
+  { key: "carousel", label: "Carousel", hint: "Swipeable image slides (Instagram carousel)" },
 ];
 
 const CTA_TYPE_LABEL: Record<string, string> = {
@@ -365,10 +365,10 @@ export function RecreateReelModal({
           "Generating angle options…",
         ]
       : [
-          "Scraping reel & downloading video…",
-          "Analyzing with Gemini (video + criteria)…",
-          "Extracting adaptation patterns…",
-          "Generating angle options…",
+          "Fetching the reel…",
+          "Studying what made it work…",
+          "Pulling out patterns you can reuse…",
+          "Preparing angle options…",
         ];
     let i = 0;
     setPhase(phases[0] ?? "Working…");
@@ -480,8 +480,8 @@ export function RecreateReelModal({
               Adapt this reel for your client
             </h2>
             <p className="mt-1 text-[11px] leading-relaxed text-app-fg-subtle">
-              Same core idea as the competitor reel — pick the production format (routes generation on the server).
-              You pick an angle on Generate; carousel sessions build slides after you choose an angle.
+              Same idea as the original reel, rebuilt for your client. Choose the type of post you want, then pick an
+              angle in Generate. Carousels get their slides after you choose an angle.
             </p>
           </div>
           <button
@@ -514,12 +514,12 @@ export function RecreateReelModal({
             <p className="mt-1 line-clamp-3 text-[11px] leading-snug text-app-fg-secondary">{excerpt}</p>
             {hasAnalysis ? (
               <p className="mt-1.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300/90">
-                Existing analysis — faster path (no full video re-download when already in your DB).
+                We already studied this reel — this will be quicker.
               </p>
             ) : (
               <p className="mt-1.5 text-[10px] text-app-fg-subtle">
-                First run may take ~1 minute (scrape + video analysis). You can close Intelligence after opening
-                Generate.
+                First time may take about a minute while we study the reel. You can leave this screen once Generate
+                opens.
               </p>
             )}
             {postUrl ? (
@@ -577,8 +577,8 @@ export function RecreateReelModal({
               </div>
               <p className="mt-1.5 text-[10px] leading-relaxed text-app-fg-subtle">
                 {formatChoice
-                  ? "We keep the source reel's idea + viewer payoff, but rebuild beats and on-screen language for this format."
-                  : "Pick a target format — each option is sent to the API as format_key (no silent Auto)."}
+                  ? "We keep the source reel's idea and payoff, but rewrite beats and on-screen text for the format you chose."
+                  : "Choose the type of post you want — text-on-video, talking head, or carousel."}
               </p>
             </div>
 

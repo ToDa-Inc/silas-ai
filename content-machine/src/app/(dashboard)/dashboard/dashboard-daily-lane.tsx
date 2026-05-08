@@ -270,7 +270,7 @@ export function FreshFromNiche({ reels, ...rest }: WrapperProps) {
         subtitle: "Reels from non-tracked accounts that match your keywords — possible leads, not proven competitors until you add them.",
         icon: <Compass className="h-4 w-4 text-sky-500 dark:text-sky-400" aria-hidden />,
         iconBgClass: "bg-sky-500/15",
-        emptyCopy: "No new niche reels in this range. Widen the window or wait for tomorrow's scrape.",
+        emptyCopy: "No new niche reels in this range. Try a wider date range or check back after the next refresh.",
         badgeFor: (reel) => formatViews(reel.views),
         reelsPageHref: (days) =>
           `/intelligence/reels?source=keyword_similarity&posted_after=${encodeURIComponent(
@@ -293,7 +293,7 @@ export function CompetitorWins({ reels, ...rest }: WrapperProps) {
           "Recent reels from tracked accounts outpacing their usual reach — prioritize these for remakes.",
         icon: <Flame className="h-4 w-4 text-rose-500 dark:text-rose-400" aria-hidden />,
         iconBgClass: "bg-rose-500/15",
-        emptyCopy: "No competitor breakouts in this range. Tomorrow's daily scrape will pick them up.",
+        emptyCopy: "No competitor breakouts in this range yet. After the next data refresh, new standouts will show up here.",
         badgeFor: (reel) => {
           const r = reel.win_ratio;
           if (r == null || !Number.isFinite(Number(r))) return formatViews(reel.views);

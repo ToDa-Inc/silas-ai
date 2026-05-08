@@ -145,8 +145,8 @@ export function AnalyzeReelModal({
     setMsg(null);
     setPhase(
       skipApify
-        ? "Queued — re-running analysis from saved data…"
-        : "Queued — fetching reel and analyzing (~1 min)…",
+        ? "Queued — refreshing score from saved data…"
+        : "Queued — fetching the reel and analyzing (about a minute)…",
     );
     setResult(null);
     setShowFull(false);
@@ -177,7 +177,7 @@ export function AnalyzeReelModal({
 
       const jobId = postJson.job_id;
       if (!jobId) {
-        setMsg("No job_id returned from server.");
+        setMsg("Couldn't start the analysis. Try again.");
         setPhase(null);
         return;
       }
@@ -189,12 +189,12 @@ export function AnalyzeReelModal({
         setPhase(
           skipApify
             ? i < 20
-              ? "Re-running Silas score from saved data…"
+              ? "Refreshing score from saved data…"
               : "Still working…"
             : i < 8
-              ? "Fetching reel and video…"
+              ? "Fetching the reel…"
               : i < 25
-                ? "Scoring the reel…"
+                ? "Studying the reel…"
                 : "Still working…",
         );
 
@@ -204,7 +204,7 @@ export function AnalyzeReelModal({
         const job = (await jRes.json().catch(() => ({}))) as JobRow;
 
         if (!jRes.ok) {
-          setMsg(formatFastApiError(job as unknown as Record<string, unknown>, "Could not load job status"));
+          setMsg(formatFastApiError(job as unknown as Record<string, unknown>, "Couldn’t check progress"));
           setPhase(null);
           return;
         }
@@ -276,7 +276,8 @@ export function AnalyzeReelModal({
               Analyze a reel
             </h2>
             <p className="mt-1 text-[11px] text-app-fg-subtle">
-              Public Instagram URL → scrape → full-video scoring on the five Silas criteria (~1 minute).
+              Paste a public Instagram reel or post link. We study the video and score how well it hooks and holds
+              attention — usually about a minute.
             </p>
           </div>
           <button
@@ -329,9 +330,8 @@ export function AnalyzeReelModal({
             ) : null}
             {result?.persist_error ? (
               <p className="text-[10px] text-amber-800 dark:text-amber-200/80" role="status">
-                DB save failed: {result.persist_error}. Apply{" "}
-                <code className="rounded bg-zinc-200/80 px-1 dark:bg-black/40">backend/sql/phase2_reel_analyses.sql</code>{" "}
-                in Supabase.
+                We couldn&apos;t save this analysis ({result.persist_error}). Try again, or contact support if it keeps
+                happening.
               </p>
             ) : null}
             <p>

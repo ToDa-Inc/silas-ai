@@ -54,7 +54,7 @@ export function DashboardHotReels({ reels, clientSlug, orgSlug, disabled, disabl
           {list.length === 0 ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 py-10 text-center">
               <p className="text-xs text-app-fg-muted">
-                No fresh competitor breakouts in the last 24h. Sync to refresh, or browse Intelligence.
+                No fresh competitor breakouts in the last 24h. Refresh data, or browse Intelligence.
               </p>
               <Link
                 href="/intelligence"

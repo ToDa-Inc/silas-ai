@@ -40,7 +40,7 @@ export function BaselineButton({ clientSlug, orgSlug, disabled, disabledHint, co
       return;
     }
     setBusy(true);
-    setStatus("Scraping your Instagram reels…");
+    setStatus("Fetching your latest reels from Instagram…");
     const apiBase = getContentApiBase();
     const headersBase = await clientApiHeaders({ orgSlug });
 

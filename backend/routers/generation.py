@@ -889,6 +889,11 @@ def generation_regenerate(
     if isinstance(raw_tb, list):
         cur_tb = [x for x in raw_tb if isinstance(x, dict)]
 
+    raw_vs = row.get("visual_style")
+    cur_vs: Optional[Dict[str, Any]] = None
+    if isinstance(raw_vs, dict):
+        cur_vs = raw_vs
+
     raw_fk = str(row.get("source_format_key") or "").strip()
     fk = canonicalize_stored_format_key(raw_fk) or raw_fk or None
     selected_cta = row.get("selected_cta") if isinstance(row.get("selected_cta"), dict) else None
@@ -907,9 +912,12 @@ def generation_regenerate(
             current_stories=stories,
             source_format_key=fk,
             current_text_blocks=cur_tb,
+            current_visual_style=cur_vs,
             adapt_single_reference_reel=_session_adapts_single_reference_reel(row),
             selected_cta=selected_cta,
         )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logger.exception("generation regenerate failed")
         raise HTTPException(status_code=502, detail=str(e)) from e

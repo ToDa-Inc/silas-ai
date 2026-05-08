@@ -144,7 +144,7 @@ export function DiscoverInline({ clientSlug, orgSlug, suggestedKeywords, disable
               <a href="/settings" className="font-medium text-amber-600 underline-offset-2 hover:underline dark:text-amber-400">
                 Settings → Niche profile
               </a>
-              ). Sync your reels first so keywords are filled in.
+              ). Refresh your reels first so keywords are filled in.
             </p>
             <button
               type="button"

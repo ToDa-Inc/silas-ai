@@ -72,7 +72,7 @@ const HOME_TABS: {
     id: "yours",
     label: "Your reels",
     group: 2,
-    hint: "Reels from this creator’s connected Instagram only (baseline sync — source client_baseline, matching handle).",
+    hint: "Reels from this creator’s connected Instagram only.",
   },
   {
     id: "niche",
@@ -90,7 +90,7 @@ const HOME_TABS: {
     id: "steady",
     label: "Still winning",
     group: 3,
-    hint: "Older competitor posts that kept gaining, plus weekly momentum in your synced catalog.",
+    hint: "Older competitor posts that kept gaining after their first spike.",
   },
   {
     id: "saved",
@@ -297,14 +297,14 @@ export function IntelligenceOverviewSections({
       <p className="mb-3 text-[11px] leading-relaxed text-app-fg-muted">
         {creatorInstagram ? (
           <>
-            Baseline reels for{" "}
-            <strong className="font-semibold text-app-fg-secondary">@{creatorInstagram}</strong> (this
-            creator&apos;s Instagram on file). Pulled from sync only — not keyword discovery or pasted links.
+            Reels from{" "}
+            <strong className="font-semibold text-app-fg-secondary">@{creatorInstagram}</strong>, the Instagram
+            handle saved for this creator.
           </>
         ) : (
           <>
-            Baseline reels use the Instagram handle saved on this creator.{" "}
-            <strong className="text-app-fg-secondary">Add a handle</strong> in client settings, then sync, to pull
+            Your reels come from the Instagram handle saved on this creator.{" "}
+            <strong className="text-app-fg-secondary">Add a handle</strong> in client settings, then refresh, to pull
             your reels.
           </>
         )}
@@ -317,13 +317,13 @@ export function IntelligenceOverviewSections({
         <p className="rounded-xl border border-dashed border-zinc-300/60 px-4 py-6 text-center text-xs text-app-fg-muted dark:border-white/10">
           {creatorInstagram ? (
             <>
-              No baseline reels stored yet for <strong className="text-app-fg-secondary">@{creatorInstagram}</strong>.
-              Use <strong>Sync</strong> in the header so the worker can scrape your profile reels.
+              No reels stored yet for <strong className="text-app-fg-secondary">@{creatorInstagram}</strong>.
+              Use <strong>Refresh</strong> in the header to pull your latest reels from Instagram.
             </>
           ) : (
             <>
-              No baseline reels yet — set this creator&apos;s Instagram handle and run <strong>Sync</strong> so we can
-              store reels from that account only.
+              No reels yet — set this creator&apos;s Instagram handle and tap <strong>Refresh</strong> so we can
+              store reels from that account.
             </>
           )}
         </p>
@@ -333,7 +333,7 @@ export function IntelligenceOverviewSections({
             const gv = reel.growth_views != null ? Number(reel.growth_views) : null;
             const badge =
               gv != null && gv > 0
-                ? `+${gv >= 1000 ? `${(gv / 1000).toFixed(1)}K` : Math.round(gv)} views since last snapshot`
+                ? `+${gv >= 1000 ? `${(gv / 1000).toFixed(1)}K` : Math.round(gv)} views since last refresh`
                 : null;
             return (
               <ReelCardWithAnalysis key={reel.id} row={reel} clientSlug={clientSlug} orgSlug={orgSlug} compact>
@@ -357,7 +357,7 @@ export function IntelligenceOverviewSections({
                         {badge}
                       </span>
                     ) : (
-                      <span className="text-[9px] text-app-fg-muted">Synced from Instagram</span>
+                      <span className="text-[9px] text-app-fg-muted">From your Instagram</span>
                     )}
                     <button
                       type="button"
@@ -463,7 +463,7 @@ export function IntelligenceOverviewSections({
         />
       ) : (
         <p className="rounded-xl border border-dashed border-zinc-300/60 px-4 py-8 text-center text-xs text-app-fg-muted dark:border-white/10">
-          No extra trending lane yet — run a sync, or use <strong>Adapt today</strong> for fresh competitor breakouts.
+          No extra trending lane yet — refresh data, or use <strong>Adapt today</strong> for fresh competitor breakouts.
         </p>
       )}
     </>

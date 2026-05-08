@@ -37,7 +37,7 @@ export function BreakoutsReelsGrid({ reels, clientSlug, orgSlug }: Props) {
             Competitors
           </Link>{" "}
           page — a breakout is when a reel clearly beats that account&apos;s usual performance (your threshold in
-          settings). Use <strong>Sync</strong> in the header or <strong>Sync reels</strong> on a competitor row.
+          settings). Use <strong>Refresh</strong> in the header or <strong>Load reels</strong> on a competitor row.
         </p>
       </div>
     );
@@ -109,7 +109,7 @@ export function BreakoutsReelsGrid({ reels, clientSlug, orgSlug }: Props) {
                   type="button"
                   onClick={() => setRecreateRow(row)}
                   className="inline-flex items-center gap-1 font-semibold text-emerald-700 hover:underline dark:text-emerald-300/90"
-                  title="Adapt for your client: same format & idea as this reel"
+                  title="Make a version for your client — same idea, your voice"
                 >
                   <Clapperboard className="h-3 w-3 shrink-0" aria-hidden />
                   Recreate

@@ -30,7 +30,7 @@ export function ReelEngagementInline({ views, comments, comment_view_ratio, clas
       </span>
       <span
         className="font-medium text-zinc-800 dark:text-app-fg-secondary"
-        title="Comments ÷ views — conversation rate (higher % = more discussion per view)"
+        title="C/V: comments divided by views"
       >
         {formatViewsToComments(cvRow)}
       </span>

@@ -50,11 +50,8 @@ export function ApiKeyPanel() {
   if (!apiKey) {
     return (
       <p className="text-sm text-amber-200/90">
-        No <code className="rounded bg-zinc-900 px-1">api_key</code> on your profile yet. Add a{" "}
-        <code className="rounded bg-zinc-900 px-1">text</code> column{" "}
-        <code className="rounded bg-zinc-900 px-1">profiles.api_key</code> in Supabase if missing, then
-        complete workspace setup once (onboarding assigns a key), or set a key manually on your{" "}
-        <code className="rounded bg-zinc-900 px-1">profiles</code> row.
+        No API key on your account yet. Finish onboarding to get one, or ask whoever manages your workspace to add a
+        key to your user profile.
       </p>
     );
   }
@@ -73,9 +70,8 @@ export function ApiKeyPanel() {
         {copied ? "Copied" : "Copy"}
       </button>
       <p className="text-xs text-zinc-500">
-        Sent automatically as <code className="text-zinc-400">X-Api-Key</code> when you use the app
-        while signed in. Treat it like a password; rotate by updating{" "}
-        <code className="text-zinc-400">profiles.api_key</code> in Supabase if leaked.
+        Sent automatically when you&apos;re signed in. Treat it like a password — if it&apos;s ever exposed, rotate it
+        in your account settings or ask your admin to replace it.
       </p>
     </div>
   );

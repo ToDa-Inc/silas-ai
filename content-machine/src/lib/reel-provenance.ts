@@ -40,9 +40,9 @@ export function normalizeNicheSimilarityToPercent(
   return Math.round(Math.min(100, n));
 }
 
-/** Hover copy for niche match badges — ties UI to the actual pipeline. */
+/** Hover copy for niche fit % on reels discovered for this niche. */
 export const NICHE_SIMILARITY_SCORE_TOOLTIP =
-  "Match score from your keyword + video similarity run: the model rates how well this reel fits your client DNA brief (same audience, niche, and reel style), on a 0–100 scale. Only reels at or above your similarity threshold are saved here.";
+  "How well this reel fits your client’s niche and style (0–100). Higher means a closer match.";
 
 export type ReelProvenanceUi = {
   kind: ProvenanceKind;
@@ -117,27 +117,27 @@ function inferTrust(kind: ProvenanceKind): { trust: TrustLevel; hint: string } {
     case "tracked_competitor":
       return {
         trust: "high",
-        hint: "Posted by an account you actively track — benchmarks are grounded in your sync history.",
+        hint: "From a competitor you follow — performance is compared using your latest refreshed data.",
       };
     case "your_reel":
       return {
         trust: "high",
-        hint: "Posted from your connected Instagram baseline.",
+        hint: "From your connected Instagram account.",
       };
     case "saved_manual":
       return {
         trust: "high",
-        hint: "You pasted or saved this URL for analysis.",
+        hint: "You added this link yourself.",
       };
     case "found_in_niche":
       return {
         trust: "exploratory",
-        hint: "Discovered via keyword similarity — confirm the account fits before treating it like a competitor.",
+        hint: "Found while searching your niche — check the account feels right before you treat it like a competitor.",
       };
     case "legacy_niche":
       return {
         trust: "medium",
-        hint: "From an older niche scrape — verify relevance.",
+        hint: "From an older niche search — worth a quick relevance check.",
       };
     default:
       return {
@@ -223,9 +223,7 @@ export function formatTheirUsualMultiplier(ratio: number | null | undefined, dec
   return `${n.toFixed(decimals)}× their usual`;
 }
 
-/**
- * Tooltip copy explaining how the ratio was computed (keep jargon here, not on the badge).
- */
+/** Tooltip: views vs this account’s typical performance. */
 export function theirUsualMultiplierTooltip(mode: {
   variant: "lifetime_avg" | "milestone" | "win_ratio" | "trending" | "generic";
   hours?: number;
@@ -233,14 +231,14 @@ export function theirUsualMultiplierTooltip(mode: {
   switch (mode.variant) {
     case "milestone":
       return mode.hours != null
-        ? `Views compared with this account’s typical performance around the ${mode.hours}h mark after posting.`
+        ? `Views compared with this account’s usual performance about ${mode.hours} hours after posting.`
         : "Views compared with this account’s usual early performance.";
     case "win_ratio":
-      return "Views compared with this tracked competitor’s recent average.";
+      return "Views compared with this competitor’s recent average for their posts.";
     case "trending":
-      return "Views compared with this account’s usual reach from the last competitor sync.";
+      return "Views compared with this account’s usual reach after your last data refresh.";
     case "lifetime_avg":
-      return "Views compared with this account’s overall average when milestone data wasn’t available.";
+      return "Views compared with this account’s overall average when we don’t have an early snapshot yet.";
     default:
       return "Views compared with this account’s recent average.";
   }

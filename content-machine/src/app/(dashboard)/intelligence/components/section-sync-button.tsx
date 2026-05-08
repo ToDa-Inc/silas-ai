@@ -40,47 +40,47 @@ export function SectionSyncButton({ mode, clientSlug, orgSlug, disabled, disable
 
     try {
       if (mode === "own" || mode === "both") {
-        setStatus(mode === "both" ? "Syncing your reels…" : "Syncing…");
+        setStatus(mode === "both" ? "Refreshing your reels…" : "Refreshing…");
         const res = await contentApiFetch(`${apiBase}/api/v1/clients/${clientSlug}/sync/own`, {
           method: "POST",
           headers: headersBase,
         });
         if (res.status === 409) {
           setStatusTone("error");
-          setStatus("A sync for your reels is already running — please wait.");
+          setStatus("A refresh for your reels is already running — please wait.");
           return;
         }
         if (!res.ok) {
           setStatusTone("error");
           const err = await res.text();
-          setStatus(err ? `Error: ${err.slice(0, 160)}` : "Sync failed.");
+          setStatus(err ? `Error: ${err.slice(0, 160)}` : "Refresh failed.");
           return;
         }
         const json = (await res.json().catch(() => ({}))) as { result?: { reels_analyzed?: number } };
         const n = json.result?.reels_analyzed;
         if (mode === "own") {
           setStatusTone("success");
-          setStatus(n != null ? `Done — ${n} reels synced.` : "Done.");
+          setStatus(n != null ? `Done — ${n} reels updated.` : "Done.");
           router.refresh();
           return;
         }
       }
 
       if (mode === "competitors" || mode === "both") {
-        setStatus(mode === "both" ? "Starting competitor scrapes…" : "Starting…");
+        setStatus(mode === "both" ? "Refreshing competitor reels…" : "Starting…");
         const res = await contentApiFetch(`${apiBase}/api/v1/clients/${clientSlug}/sync/competitors`, {
           method: "POST",
           headers: headersBase,
         });
         if (res.status === 409) {
           setStatusTone("error");
-          setStatus("A competitor sync is already running — wait a few minutes and refresh.");
+          setStatus("A competitor refresh is already running — wait a few minutes and try again.");
           return;
         }
         if (!res.ok) {
           setStatusTone("error");
           const err = await res.text();
-          setStatus(err ? `Error: ${err.slice(0, 160)}` : "Sync failed.");
+          setStatus(err ? `Error: ${err.slice(0, 160)}` : "Refresh failed.");
           return;
         }
         const json = (await res.json()) as {
@@ -98,13 +98,13 @@ export function SectionSyncButton({ mode, clientSlug, orgSlug, disabled, disable
           const base = fromApi
             ? apiMsg
             : nc > 0
-              ? `Started scrapes for ${nc} competitor account(s) on the API. Refresh in a few minutes for new data.`
-              : "Nothing to sync.";
+              ? `Refreshing data for ${nc} competitor account(s). Check back in a few minutes for new reels.`
+              : "Nothing to refresh.";
           setStatus(fromApi && nc > 0 ? `${base} (${nc} accounts).` : base);
         } else if (json.mode === "queued") {
           setStatusTone("neutral");
           setStatus(
-            "Jobs were queued for a worker. Prefer restarting the API with the latest code — competitor sync now runs inside the API process.",
+            "Refresh is queued — new reels and numbers usually show up within a few minutes.",
           );
         } else {
           setStatusTone("success");
@@ -129,13 +129,13 @@ export function SectionSyncButton({ mode, clientSlug, orgSlug, disabled, disable
   const title =
     disabledHint?.trim() ||
     (mode === "own"
-      ? "Sync only your Instagram reels."
+      ? "Refresh your reels from Instagram."
       : mode === "competitors"
-        ? "Sync reels for every competitor."
-        : "Sync your reels, then every competitor’s reels.");
+        ? "Refresh reels for every competitor you track."
+        : "Refresh your reels, then your competitors’ reels.");
 
   const label =
-    mode === "own" ? "Sync your reels" : mode === "competitors" ? "Sync competitor reels" : "Sync your reels and competitors";
+    mode === "own" ? "Refresh your reels" : mode === "competitors" ? "Refresh competitor reels" : "Refresh yours and competitors";
 
   return (
     <div className="flex flex-col items-end gap-1">

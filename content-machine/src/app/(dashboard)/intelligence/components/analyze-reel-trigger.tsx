@@ -18,7 +18,7 @@ export function AnalyzeReelTrigger({ clientSlug, orgSlug, disabled, disabledHint
 
   const title =
     disabledHint?.trim() ||
-    "Analyze one public reel by URL — fetches the video and returns a Silas score in about a minute.";
+    "Analyze a public reel from its link and get a score in about a minute.";
 
   return (
     <>

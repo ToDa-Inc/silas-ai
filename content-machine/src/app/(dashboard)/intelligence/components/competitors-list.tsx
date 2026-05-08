@@ -111,7 +111,7 @@ export function CompetitorsList({
               ) : null}
               {row.last_scraped_at ? (
                 <span className="text-[10px] text-app-fg-faint">
-                  Synced {new Date(row.last_scraped_at).toLocaleDateString()}
+                  Updated {new Date(row.last_scraped_at).toLocaleDateString()}
                 </span>
               ) : null}
               <div className="flex w-full flex-wrap items-center gap-3 sm:ml-auto sm:w-auto">

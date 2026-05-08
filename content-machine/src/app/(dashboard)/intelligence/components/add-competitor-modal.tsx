@@ -155,14 +155,14 @@ export function AddCompetitorModal({
           reels_processed?: number;
         };
         if (!scrapeRes.ok) {
-          onToolbarMessage?.(formatFastApiError(sj as Record<string, unknown>, "Sync failed"));
+          onToolbarMessage?.(formatFastApiError(sj as Record<string, unknown>, "Refresh failed"));
         } else {
           const n = sj.reels_processed ?? 0;
           onToolbarMessage?.(`@${un}: stored ${n} reels.`);
         }
         setTimeout(() => onToolbarMessage?.(null), 8000);
       } else {
-        onToolbarMessage?.(`Added @${un} — scrape from their row or use Sync on Intelligence.`);
+        onToolbarMessage?.(`Added @${un} — tap Refresh on Intelligence to load their latest reels.`);
         setTimeout(() => onToolbarMessage?.(null), 6000);
       }
       onClose();
@@ -236,9 +236,9 @@ export function AddCompetitorModal({
             className="mt-0.5 rounded border-zinc-300 text-amber-600 focus:ring-amber-500/40 dark:border-white/20"
           />
           <span>
-            <strong className="font-semibold text-zinc-900 dark:text-app-fg">Sync reels after adding</strong>
+            <strong className="font-semibold text-zinc-900 dark:text-app-fg">Refresh reels after adding</strong>
             <span className="block text-zinc-500 dark:text-app-fg-faint">
-              Pulls recent posts from Instagram (~30s–2 min). Turn off to only save the account.
+              Loads recent posts from Instagram. This usually takes 30 seconds to 2 minutes.
             </span>
           </span>
         </label>
@@ -255,7 +255,7 @@ export function AddCompetitorModal({
             ) : (
               <UserPlus className="h-3.5 w-3.5" aria-hidden />
             )}
-            {busy === "scrape" ? "Scraping…" : "Add & continue"}
+            {busy === "scrape" ? "Fetching reels…" : "Add & continue"}
           </button>
           <button
             type="button"

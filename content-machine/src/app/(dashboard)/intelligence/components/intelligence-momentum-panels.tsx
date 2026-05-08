@@ -15,7 +15,7 @@ export function formatWindowHint(wb: WeekBreakoutsPayload | undefined): string {
     return "Top 3 by growth (last 7 days)";
   }
   if (wb?.scope === "all_stored") {
-    return "All synced reels · same catalog as Reels";
+    return "All saved reels (same list as Reels)";
   }
   if (!wb?.window_start || !wb?.window_end) {
     return "Last 7 days · competitor breakouts";
@@ -92,7 +92,7 @@ export function CompactBreakoutRow({
   const metricWord = highlight === "views" ? "views" : highlight === "likes" ? "likes" : "comments";
   const growthTitle =
     growth != null
-      ? `${formatCompactDeltaSigned(growth)} ${metricWord} vs prior snapshot (≈7d window or last sync)`
+      ? `${formatCompactDeltaSigned(growth)} ${metricWord} since last check (~7 days)`
       : undefined;
 
   const trendingRatio =
@@ -105,7 +105,7 @@ export function CompactBreakoutRow({
     lane === "trending" && trendingRatio != null ? (
       <span
         className="pointer-events-none absolute left-0 right-0 bottom-0 z-10 rounded-b-[inherit] bg-gradient-to-t from-zinc-950/95 via-zinc-950/75 to-transparent px-1 pb-0.5 pt-3 text-center text-[7px] font-semibold leading-tight text-sky-300/95 opacity-0 shadow-sm transition-opacity duration-200 group-hover/thumb:opacity-100 group-focus-within/thumb:opacity-100"
-        title="Views compared with this account’s usual reach from the last competitor sync"
+        title="Views compared with this account’s usual reach after your last refresh"
       >
         {trendingRatio.toFixed(1)}× their usual
       </span>
@@ -118,7 +118,7 @@ export function CompactBreakoutRow({
               ? "text-zinc-300/90"
               : "text-amber-200/95"
         }`}
-        title="View change vs baseline snapshot (~14d after post, or nearest sync history)"
+        title="View change vs an earlier check (~2 weeks after posting, or your last refresh)"
       >
         {formatCompactDeltaSigned(provenGrowth)} views
       </span>
@@ -165,7 +165,7 @@ export function CompactBreakoutRow({
                       ? "text-zinc-500 dark:text-zinc-400"
                       : "text-app-fg-muted"
                 }`}
-                title="Change vs baseline snapshot"
+                title="Change since an earlier check"
               >
                 {formatCompactDeltaSigned(gv)} · {weeklyMomentumBadge}
               </span>
@@ -182,7 +182,7 @@ export function CompactBreakoutRow({
                       ? "text-zinc-500 dark:text-zinc-400"
                       : "text-app-fg-muted"
                 }`}
-                title="Change vs baseline snapshot"
+                title="Change since an earlier check"
               >
                 {formatCompactDeltaSigned(gl)} · {weeklyMomentumBadge}
               </span>
@@ -199,7 +199,7 @@ export function CompactBreakoutRow({
                       ? "text-zinc-500 dark:text-zinc-400"
                       : "text-app-fg-muted"
                 }`}
-                title="Change vs baseline snapshot"
+                title="Change since an earlier check"
               >
                 {formatCompactDeltaSigned(gc)} · {weeklyMomentumBadge}
               </span>
@@ -207,13 +207,13 @@ export function CompactBreakoutRow({
           </span>
         </div>
         {commentViewRatio(reel) != null ? (
-          <p className="mt-1 text-[9px] tabular-nums text-app-fg-subtle" title="Comments ÷ views">
+          <p className="mt-1 text-[9px] tabular-nums text-app-fg-subtle" title="Comments divided by views">
             C/V {formatCommentViewPct(reel)}
           </p>
         ) : null}
         {lane === "proven" && reel.proven_growth_source === "raw_views" ? (
           <p className="mt-0.5 text-[8px] leading-snug text-app-fg-muted">
-            Ranked by total views (no snapshot history yet)
+            Ranked by total views until more history is available
           </p>
         ) : null}
       </div>
@@ -307,7 +307,7 @@ export function WeeklyMomentumGrid({
       <div className="flex min-h-[120px] flex-col rounded-xl border border-dashed border-zinc-300/80 bg-zinc-50/50 p-3 dark:border-white/15 dark:bg-white/[0.02]">
         <p className="text-[11px] font-semibold uppercase tracking-wider text-app-fg-subtle">Top 3</p>
         <p className="mt-2 flex-1 text-xs leading-relaxed text-app-fg-muted">
-          No reels in your catalog yet. Sync content or open Reels to browse.
+          No reels in your catalog yet. Refresh data or open Reels to browse.
         </p>
       </div>
     );

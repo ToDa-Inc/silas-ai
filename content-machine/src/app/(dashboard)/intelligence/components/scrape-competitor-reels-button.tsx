@@ -45,7 +45,7 @@ export function ScrapeCompetitorReelsButton({
       );
       const json = (await res.json()) as { detail?: unknown; reels_processed?: number };
       if (!res.ok) {
-        setError(formatFastApiError(json, "Sync failed"));
+        setError(formatFastApiError(json, "Refresh failed"));
         return;
       }
       router.refresh();
@@ -65,7 +65,7 @@ export function ScrapeCompetitorReelsButton({
         <span className={sectionLabelClass}>Reels</span>
         <div className="flex flex-wrap items-center gap-2">
           <AppSelect
-            ariaLabel="How many reels to sync"
+            ariaLabel="How many reels to load"
             value={String(limit)}
             onChange={(v) => setLimit(Number(v))}
             options={LIMIT_OPTIONS.map((n) => ({ value: String(n), label: String(n) }))}
@@ -80,10 +80,10 @@ export function ScrapeCompetitorReelsButton({
             disabled={busy || disabled}
             onClick={() => void run()}
             className="inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-md border border-amber-500/50 bg-amber-500/10 px-3 text-[11px] font-semibold leading-none text-amber-700 hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-400"
-            title={`Sync up to ${limit} reels from @${username}`}
+            title={`Load up to ${limit} recent reels from @${username}`}
           >
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-            Sync reels
+            Load reels
           </button>
         </div>
         {error ? (

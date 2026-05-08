@@ -61,7 +61,7 @@ export function IntelligenceToolbar({
 
   const buttonTitle =
     disabledHint?.trim() ||
-    "Pull fresh metrics for this creator and every tracked competitor.";
+    "Pull the latest reels and numbers for this creator and everyone you track.";
 
   const embedded = variant === "embedded";
 
@@ -77,7 +77,7 @@ export function IntelligenceToolbar({
         type="button"
         disabled={disabled || !clientSlug.trim() || !orgSlug.trim()}
         title={buttonTitle}
-        aria-label="Sync data"
+        aria-label="Refresh data"
         onClick={() => setOpen(true)}
         className={
           embedded
@@ -89,7 +89,7 @@ export function IntelligenceToolbar({
         }
       >
         <RefreshCw className={embedded ? "h-3.5 w-3.5 shrink-0" : "h-4 w-4 shrink-0"} aria-hidden />
-        Sync
+        Refresh
       </button>
       {ago ? (
         <p
@@ -100,16 +100,16 @@ export function IntelligenceToolbar({
                 : "text-[10px] leading-snug text-amber-700 dark:text-amber-400"
               : "text-[10px] leading-snug text-app-fg-muted"
           }
-          aria-label={`Last synced ${ago}`}
+          aria-label={`Last refreshed ${ago}`}
         >
           {stale
             ? embedded
-              ? `Last synced ${ago} · refresh when you need fresh numbers`
-              : `Last synced ${ago} — out of date`
-            : `Last synced ${ago}`}
+              ? `Last refreshed ${ago} · tap Refresh when you want new numbers`
+              : `Last refreshed ${ago} — may be out of date`
+            : `Last refreshed ${ago}`}
         </p>
       ) : !disabled && clientSlug.trim() ? (
-        <p className="text-[10px] leading-snug text-app-fg-muted">Never synced</p>
+        <p className="text-[10px] leading-snug text-app-fg-muted">Not refreshed yet</p>
       ) : null}
       {statusMsg ? (
         <p

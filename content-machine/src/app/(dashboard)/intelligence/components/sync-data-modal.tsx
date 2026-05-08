@@ -165,12 +165,12 @@ export function SyncDataModal({
       { method: "POST", headers },
     );
     if (res.status === 409) {
-      setError("A sync for your reels is already running — please wait.");
+      setError("A refresh for your reels is already running — please wait.");
       return false;
     }
     if (!res.ok) {
       const json = (await res.json().catch(() => ({}))) as { detail?: unknown };
-      setError(formatFastApiError(json, await res.text().catch(() => "Sync failed")));
+      setError(formatFastApiError(json, await res.text().catch(() => "Refresh failed")));
       return false;
     }
     return true;
@@ -188,12 +188,12 @@ export function SyncDataModal({
       { method: "POST", headers },
     );
     if (res.status === 409) {
-      setError("A competitor sync is already running — wait a few minutes and try again.");
+      setError("A competitor refresh is already running — wait a few minutes and try again.");
       return { ok: false };
     }
     if (!res.ok) {
       const json = (await res.json().catch(() => ({}))) as { detail?: unknown };
-      setError(formatFastApiError(json, await res.text().catch(() => "Sync failed")));
+      setError(formatFastApiError(json, await res.text().catch(() => "Refresh failed")));
       return { ok: false };
     }
     const json = (await res.json().catch(() => ({}))) as { mode?: string };
@@ -271,13 +271,13 @@ export function SyncDataModal({
           return;
         }
         if (comp.background) {
-          setProgressLabel("Refresh started — running in the background.");
+          setProgressLabel("Refresh started — new reels may appear in a few minutes.");
           onSyncMessage?.(
             "Tracked creators continue refreshing — check back in a few minutes for new reels.",
           );
         } else if (comp.queued) {
-          setProgressLabel("Refresh queued.");
-          onSyncMessage?.("Tracked creator refresh was queued.");
+          setProgressLabel("Refresh will start soon.");
+          onSyncMessage?.("Tracked creator refresh will start soon.");
         } else {
           setProgressLabel("Done — tracked creators are up to date.");
           onSyncMessage?.("Tracked creators were refreshed.");
@@ -307,13 +307,13 @@ export function SyncDataModal({
         return;
       }
       if (comp.background) {
-        setProgressLabel("Done — your reels are fresh. Tracked creators continue in the background.");
+        setProgressLabel("Done — your reels are fresh. Tracked creators may update in a few minutes.");
         onSyncMessage?.(
           "Your reels are up to date. Tracked creators continue refreshing — check back in a few minutes.",
         );
       } else if (comp.queued) {
-        setProgressLabel("Done — your reels are fresh. Refresh queued for tracked creators.");
-        onSyncMessage?.("Your reels are up to date. Tracked creator refresh was queued.");
+        setProgressLabel("Done — your reels are fresh. Tracked creator refresh will start soon.");
+        onSyncMessage?.("Your reels are up to date. Tracked creator refresh will start soon.");
       } else {
         setProgressLabel("Done — everything is up to date.");
         onSyncMessage?.("Your reels and tracked creators are up to date.");
@@ -344,7 +344,7 @@ export function SyncDataModal({
         <div className="mb-4 flex items-start justify-between gap-2">
           <div>
             <h2 id="sync-data-title" className="text-sm font-semibold text-zinc-900 dark:text-app-fg">
-              Sync
+              Refresh data
             </h2>
             <p className="mt-1 text-[11px] text-zinc-600 dark:text-app-fg-subtle">
               Pull fresh metrics for the active creator. Takes anywhere from a minute to several.
@@ -371,7 +371,7 @@ export function SyncDataModal({
           </div>
         ) : (
           <fieldset className="mb-4 space-y-3" disabled={busy}>
-            <legend className="sr-only">What to sync</legend>
+            <legend className="sr-only">What to refresh</legend>
             <label
               className={`flex cursor-pointer gap-3 rounded-xl border p-3 transition-colors ${
                 mode === "both"
@@ -467,7 +467,7 @@ export function SyncDataModal({
               className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-amber-500 px-4 py-2.5 text-xs font-bold text-zinc-950 disabled:opacity-50"
             >
               <RefreshCw className="h-3.5 w-3.5 shrink-0" aria-hidden />
-              Sync now
+              Refresh now
             </button>
             <button
               type="button"

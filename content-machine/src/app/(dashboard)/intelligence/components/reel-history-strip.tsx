@@ -129,13 +129,13 @@ export function ReelHistoryStrip({ clientSlug, orgSlug, reelId }: Props) {
         </p>
       ) : snapCount === 0 ? (
         <p className={`text-[11px] leading-snug ${muted}`}>
-          No history yet — daily refresh adds the first snapshot point.
+          No history yet — refresh data to start tracking views over time.
         </p>
       ) : snapCount === 1 ? (
         <p className={`text-[11px] leading-snug ${muted}`}>
           One measurement so far
-          {latestAt ? ` (${formatSnapshotWhen(latestAt)})` : ""}. After the next refresh you will see
-          a trend line and 24h / 7d view deltas.
+          {latestAt ? ` (${formatSnapshotWhen(latestAt)})` : ""}. After the next refresh you&apos;ll see a trend and
+          short-term view changes.
         </p>
       ) : (
         <>
@@ -163,13 +163,13 @@ export function ReelHistoryStrip({ clientSlug, orgSlug, reelId }: Props) {
             <div className="flex shrink-0 flex-col gap-1 text-[10px] tabular-nums">
               <span
                 className={d24 != null ? (d24 > 0 ? chipPos : d24 < 0 ? chipNeg : muted) : muted}
-                title="Views change vs snapshot at or before 24h before the latest scrape"
+                title="How views changed compared with about 24 hours before your latest refresh"
               >
                 24h: {d24 != null ? formatCompactDeltaSigned(d24) : "—"}
               </span>
               <span
                 className={d7 != null ? (d7 > 0 ? chipPos : d7 < 0 ? chipNeg : muted) : muted}
-                title="Views change vs snapshot at or before 7d before the latest scrape"
+                title="How views changed compared with about 7 days before your latest refresh"
               >
                 7d: {d7 != null ? formatCompactDeltaSigned(d7) : "—"}
               </span>

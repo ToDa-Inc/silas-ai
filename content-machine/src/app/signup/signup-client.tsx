@@ -56,7 +56,7 @@ export function SignupClient() {
         <h1 className="text-center text-xl font-bold text-on-surface">Create account</h1>
         <p className="mt-2 text-center text-sm text-zinc-500">
           Next you&apos;ll create your workspace: an organization and your first creator (client). That
-          scopes Intelligence, scraping, and context to that brand.
+          scopes Intelligence, competitor data, and your brand context to that creator.
         </p>
         <form onSubmit={(e) => void onSubmit(e)} className="mt-8 space-y-4">
           <label className="block text-sm">

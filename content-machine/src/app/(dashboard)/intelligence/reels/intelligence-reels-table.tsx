@@ -271,7 +271,7 @@ function SortHeader({
   const showSecondary = secondaryActive && !primaryActive;
   const hasInfo = Boolean(hint) || !serverSortable;
   const tooltipText = !serverSortable
-    ? `${hint ? hint + " " : ""}This column sorts the current page only.`
+    ? `${hint ? hint + " " : ""}Sorting only affects reels on this page.`
     : (hint as string);
   // Stop bubbling on the Info trigger so clicking it never toggles sort. The
   // Tooltip itself opens on hover/focus, not click — the icon stays a passive
@@ -762,7 +762,7 @@ export function IntelligenceReelsTable({
           }
         }
       } catch {
-        if (!cancelled) setBulkMsg("Could not load job status.");
+        if (!cancelled) setBulkMsg("Couldn’t check progress.");
       }
     };
 
@@ -951,9 +951,9 @@ export function IntelligenceReelsTable({
     else if (lastJob.status === "failed") progressLabel = "Stopped.";
     else if (lastJob.status === "completed") progressLabel = "Done.";
     else if (prog && prog.total > 0)
-      progressLabel = `Reel ${prog.done + 1} of ${prog.total} — Silas is working`;
-    else if (jt === "reel_analyze_url") progressLabel = "Analyzing one reel (scrape + video)…";
-    else progressLabel = "Bulk analysis running…";
+      progressLabel = `Reel ${prog.done + 1} of ${prog.total} — analyzing…`;
+    else if (jt === "reel_analyze_url") progressLabel = "Studying this reel — usually about a minute…";
+    else progressLabel = "Analyzing selected reels…";
   }
 
   // ─── Pagination derivations ─────────────────────────────────────────────
@@ -965,7 +965,7 @@ export function IntelligenceReelsTable({
   // ─── Active filter chip data ────────────────────────────────────────────
   const sortChipText = (() => {
     if (localPrimarySort) {
-      return `${SORT_KEY_LABELS[localPrimarySort.key]} ${localPrimarySort.dir === "desc" ? "↓" : "↑"} (page)`;
+      return `${SORT_KEY_LABELS[localPrimarySort.key]} ${localPrimarySort.dir === "desc" ? "↓" : "↑"} · this page`;
     }
     if (serverState.sortBy !== "posted_at" || serverState.sortDir !== "desc") {
       return `${SORT_KEY_LABELS[serverState.sortBy]} ${serverState.sortDir === "desc" ? "↓" : "↑"}`;
@@ -1263,7 +1263,7 @@ export function IntelligenceReelsTable({
 
         {selectedPostUrls.length > BULK_MAX_URLS ? (
           <span className="text-[10px] text-amber-800/90 dark:text-amber-200/80">
-            Only the first {BULK_MAX_URLS} will run per batch (API limit).
+            Up to {BULK_MAX_URLS} reels per batch.
           </span>
         ) : null}
         {bulkMsg ? (
@@ -1369,7 +1369,7 @@ export function IntelligenceReelsTable({
               {secondarySort ? (
                 <FilterChip
                   label="Then by"
-                  value={`${SORT_KEY_LABELS[secondarySort.key]} ${secondarySort.dir === "desc" ? "↓" : "↑"} (page)`}
+                  value={`${SORT_KEY_LABELS[secondarySort.key]} ${secondarySort.dir === "desc" ? "↓" : "↑"} · this page`}
                   onClear={() => setSecondarySort(null)}
                 />
               ) : null}
@@ -1406,7 +1406,7 @@ export function IntelligenceReelsTable({
               <th className="py-3 pr-2 font-medium">Account</th>
               <SortHeader
                 label="Score"
-                hint="Silas score 0–100. Reels without a score haven't been analyzed yet — use Analyze to run one. Niche-match reels are scored on keyword similarity instead (see Signal)."
+                hint="Score after analysis (0–100). Tap Analyze if there’s no score yet. Niche-discovered reels show a fit % instead."
                 serverSortable={false}
                 primaryActive={localPrimarySort?.key === "total_score"}
                 primaryDir={localPrimarySort?.dir ?? "desc"}
@@ -1425,7 +1425,7 @@ export function IntelligenceReelsTable({
               />
               <SortHeader
                 label="Breakout / niche"
-                hint="Competitor breakouts: views vs that account’s recent average (N× their usual). Niche: keyword match as a percent. One or the other per row."
+                hint="For competitors: views vs their usual (higher = stronger breakout). For niche finds: how well the reel fits your niche (%)."
                 serverSortable
                 primaryActive={
                   !localPrimarySort &&
@@ -1451,7 +1451,7 @@ export function IntelligenceReelsTable({
               />
               <SortHeader
                 label="C/V"
-                hint="Comments ÷ views — conversation rate. Higher % = more discussion per view."
+                hint="Comments divided by views. Higher % = more comments per view."
                 serverSortable={false}
                 primaryActive={localPrimarySort?.key === "comment_view_ratio"}
                 primaryDir={localPrimarySort?.dir ?? "desc"}
@@ -1461,7 +1461,7 @@ export function IntelligenceReelsTable({
               />
               <SortHeader
                 label="Saves"
-                hint="From Instagram when exposed. Often empty — the platform doesn't always return saves."
+                hint="Saves when Instagram provides the number — it’s often missing."
                 serverSortable
                 primaryActive={!localPrimarySort && serverState.sortBy === "saves"}
                 primaryDir={serverState.sortDir}
@@ -1471,7 +1471,7 @@ export function IntelligenceReelsTable({
               />
               <SortHeader
                 label="Shares"
-                hint="Only when your Instagram data source includes share counts. May stay empty until your plan supports it."
+                hint="Shares when available from Instagram — not shown for every reel."
                 serverSortable
                 primaryActive={!localPrimarySort && serverState.sortBy === "shares"}
                 primaryDir={serverState.sortDir}
@@ -1490,7 +1490,7 @@ export function IntelligenceReelsTable({
               />
               <SortHeader
                 label="Dur."
-                hint="Length in seconds when Instagram returns duration (not all reels include it)."
+                hint="Length in seconds when Instagram includes it."
                 serverSortable
                 primaryActive={!localPrimarySort && serverState.sortBy === "video_duration"}
                 primaryDir={serverState.sortDir}
@@ -1570,7 +1570,7 @@ export function IntelligenceReelsTable({
                   </td>
                   <td className="py-2.5 pr-2 align-middle">
                     {a && nicheMatch ? (
-                      <Tooltip content="Niche-keyword analysis. Open it for the full match breakdown.">
+                      <Tooltip content="Niche fit analysis — open for details.">
                         <button
                           type="button"
                           onClick={() => setDetailReelId(row.id)}
@@ -1598,7 +1598,7 @@ export function IntelligenceReelsTable({
                           View analysis
                         </button>
                         {hasPost ? (
-                          <Tooltip content="Re-run Silas from saved data only (no new video download).">
+                          <Tooltip content="Refresh the score using saved data — no new download.">
                             <button
                               type="button"
                               disabled={disableReelAnalysis}
@@ -1620,7 +1620,7 @@ export function IntelligenceReelsTable({
                         <span className="text-[9px] uppercase tracking-wide text-zinc-500 dark:text-app-fg-muted">
                           Not scored yet
                         </span>
-                        <Tooltip content="Run Silas video analysis (same as Intelligence toolbar).">
+                        <Tooltip content="Study this reel — full analysis from the post link.">
                           <button
                             type="button"
                             disabled={disableReelAnalysis}
@@ -1637,7 +1637,7 @@ export function IntelligenceReelsTable({
                         </Tooltip>
                       </div>
                     ) : (
-                      <Tooltip content="No post link saved — re-sync the source to enable analysis.">
+                      <Tooltip content="No post link on file — refresh data for this source, then try again.">
                         <span className={EMPTY_CELL_CLASS}>—</span>
                       </Tooltip>
                     )}
@@ -1648,7 +1648,7 @@ export function IntelligenceReelsTable({
                   <td className="py-2.5 pr-2 align-middle">
                     {row.outlier_ratio != null ? (
                       <Tooltip
-                        content={`Views vs this account’s recent average — a competitor breakout when clearly above 1×.`}
+                        content={`How this reel’s views compare with this account’s usual posts — well above 1× is a breakout.`}
                       >
                         <span
                           className={`inline-flex items-center gap-1 font-bold tabular-nums ${
@@ -1712,7 +1712,7 @@ export function IntelligenceReelsTable({
                         >
                           ↗
                         </a>
-                        <Tooltip content="Adapt for your client — same format & idea as this reel (opens Generate).">
+                        <Tooltip content="Make a version for your client in Generate — same idea, your voice.">
                           <button
                             type="button"
                             disabled={disableReelAnalysis}

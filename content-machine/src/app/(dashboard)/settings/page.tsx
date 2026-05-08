@@ -53,8 +53,7 @@ export default async function SettingsPage() {
           <h2 className="text-lg font-bold text-on-surface">API key</h2>
         </div>
         <p className="mb-6 text-sm text-zinc-400">
-          Your FastAPI requests use this key with <code className="text-zinc-500">X-Org-Slug</code>.
-          It lives on your <code className="text-zinc-500">profiles</code> row in Supabase.
+          For integrations and advanced use: your secret key and organization slug. Keep them private.
         </p>
         <ApiKeyPanel />
       </section>
