@@ -52,6 +52,7 @@ Optional: `backend/.env` or `config/.env` for overrides (see load order in root 
    - [Apify Console](https://console.apify.com/) → **Settings** → **Integrations** → API token.  
    - Same value as `APIFY_API_TOKEN` in `config/.env` if you already use the Node scripts.  
    - **403 Forbidden** from `api.apify.com/v2/acts/.../runs`: token invalid/revoked, no Apify credits, or wrong actor. Create a new token, confirm billing, then restart the API. The backend uses actor **`apify~instagram-reel-scraper`** by default (override with **`APIFY_REEL_ACTOR`** in `.env` if needed).
+   - **Concurrent runs / Apify cap:** set **`APIFY_MAX_CONCURRENT_RUNS`** (default `20` in code) and apply **`backend/sql/phase21_apify_run_slots.sql`** in Supabase so API + worker replicas share a global slot pool. Set to **`0`** to disable the limiter (local only). See **`backend/RAILWAY.md`** for splitting API and worker on Railway.
    - **Saves / shares show 0:** Instagram often does not expose save counts in scraped public data. **Shares** need Apify’s paid **`includeSharesCount`** add-on and are disabled by default (`APIFY_INCLUDE_SHARES_COUNT=false`) to avoid daily sync over-spend. Re-sync after changing plan.
    - **Duration missing for some reels:** The actor only fills **`videoDuration`** when Instagram returns it for that item; we also read a few alternate fields. Gaps are normal for some post types.
 
@@ -77,6 +78,8 @@ Three responsibilities, three schedules (see `.github/workflows/cron-*.yml`):
 | Cron | Route | Role |
 |------|--------|------|
 | **sync-all** | `POST /api/v1/cron/sync-all` | Daily **discovery**: `profile_scrape` for the client’s own handle + each competitor (`2 days`, capped results). No baseline, no niche keyword job. |
+
+**Competitor `profile_scrape` relevance:** Each candidate reel/carousel is enriched (Apify `directUrls`) and scored with the same Gemini similarity path as `keyword_reel_similarity`. Only rows with `similarity_score >=` threshold (default **80**, override with job payload `similarity_threshold`) are written to `scraped_reels`, so `scraped-reels-refresh` and downstream jobs never see rejected noise. Requires non-empty **`clients.client_dna.analysis_brief`** and **`OPENROUTER_API_KEY`**. Rejected URLs and scores are summarized on `background_jobs.result` (`rejected_examples`, counts). **Backlog:** dry-run rescoring or cleanup for existing `source=profile` rows via [`scripts/batch_rescore_scraped_reels_similarity.py`](../scripts/batch_rescore_scraped_reels_similarity.py) (`--sources profile`, then delete or keep by score after review).
 | **niche discovery** | `POST /api/v1/cron/keyword-reel-similarity` | **Keyword / similarity** pipeline only (Sasky + enrich + Gemini). |
 | **scraped-reels-refresh** | `POST /api/v1/cron/scraped-reels-refresh` | **Metrics refresh** for reels in the last **30** days; skips rows updated in the last **~20h** so profile discovery and refresh don’t double-fetch the same URLs. |
 

@@ -8,6 +8,9 @@ from typing import Any, List, Optional, Tuple
 
 import httpx
 
+from core.config import get_settings
+from services.apify_limiter import apify_run_slot
+
 logger = logging.getLogger(__name__)
 
 
@@ -26,7 +29,14 @@ def _apify_error_for_response(actor_id: str, status_code: int, response_text: st
         f"{err_body or 'No response body.'}"
     )
     lowered = err_body.lower()
-    if "monthly usage hard limit exceeded" in lowered or "platform-feature-disabled" in lowered:
+    if (
+        "monthly usage hard limit exceeded" in lowered
+        or "platform-feature-disabled" in lowered
+        or "not-enough-usage-to-run-paid-actor" in lowered
+        or "not enough usage" in lowered
+    ):
+        return ApifyUsageLimitError(message)
+    if status_code == 402 and "usage" in lowered:
         return ApifyUsageLimitError(message)
     return ApifyError(message)
 
@@ -105,27 +115,29 @@ def _poll_run(token: str, actor_id: str, run_id: str, max_attempts: int = 120) -
 
 def run_actor(token: str, actor_id: str, body: dict) -> list:
     """Start actor, wait until SUCCEEDED, return dataset items."""
-    with httpx.Client(timeout=120.0) as client:
-        r = client.post(
-            f"https://api.apify.com/v2/acts/{actor_id}/runs",
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            json=body,
-        )
-        if r.status_code >= 400:
-            raise _apify_error_for_response(actor_id, r.status_code, r.text)
-        data = r.json()["data"]
-        run_id = data["id"]
-        dataset_id = data["defaultDatasetId"]
+    settings = get_settings()
+    with apify_run_slot(settings, actor_id):
+        with httpx.Client(timeout=120.0) as client:
+            r = client.post(
+                f"https://api.apify.com/v2/acts/{actor_id}/runs",
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                json=body,
+            )
+            if r.status_code >= 400:
+                raise _apify_error_for_response(actor_id, r.status_code, r.text)
+            data = r.json()["data"]
+            run_id = data["id"]
+            dataset_id = data["defaultDatasetId"]
 
-    _poll_run(token, actor_id, run_id)
+        _poll_run(token, actor_id, run_id)
 
-    with httpx.Client(timeout=120.0) as client:
-        r = client.get(
-            f"https://api.apify.com/v2/datasets/{dataset_id}/items",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        r.raise_for_status()
-        return r.json()
+        with httpx.Client(timeout=120.0) as client:
+            r = client.get(
+                f"https://api.apify.com/v2/datasets/{dataset_id}/items",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            r.raise_for_status()
+            return r.json()
 
 
 # Actor IDs (same as Node scripts)

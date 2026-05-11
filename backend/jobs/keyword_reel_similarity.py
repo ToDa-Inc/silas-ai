@@ -28,7 +28,8 @@ from services.instagram_post_url import (
     instagram_post_short_code,
 )
 from services.niche_prerank import prerank_reels_for_similarity
-from services.openrouter import analyze_reel_similarity
+from services.openrouter import analyze_post_similarity, analyze_reel_similarity
+from services.instagram_media import download_slide_images, slide_urls_from_item
 from services.similarity_discovery_keywords import (
     DEFAULT_MAX_KEYWORDS,
     blacklisted_short_codes,
@@ -53,6 +54,7 @@ DEFAULT_MIN_VIEWS_PER_DAY = 2000.0  # views/day floor — raised since we score 
 _COST_SASKY_PER_1K = 0.4
 _COST_ENRICH_PER_1K = 2.3
 _COST_GEMINI_PER_REEL = 0.03
+_COST_GEMINI_PER_CAROUSEL = round(_COST_GEMINI_PER_REEL * 1.5, 4)
 
 
 def _views(item: dict) -> int:
@@ -145,6 +147,43 @@ VERDICT: "match" only if similarity_score >= 85 AND both checks above clearly pa
 
 Respond in JSON only (no markdown, no code fences):
 {{"similarity_score": <0-100>, "verdict": "match|no_match", "what_the_video_is_about": "<one sentence: topic + format + intent>", "why_it_fits": "<one sentence; empty string if no_match>", "why_it_doesnt_fit": "<one sentence; empty string if match>"}}"""
+
+
+def _build_carousel_similarity_prompt(
+    analysis_brief: str, username: str, caption: str, slide_count: int
+) -> str:
+    return f"""You are scoring whether an Instagram CAROUSEL (multi-slide images) belongs on THIS creator's channel — same audience, same niche, same voice, same kind of content they actually post. Not whether the post shares a few keywords.
+
+You are given the carousel as ordered slide images (slide 1 first). Read every slide you receive. The SLIDES are your primary source. The caption is secondary context.
+
+CLIENT BRIEF (the only source of truth for niche, audience, tone, and the kind of content the creator actually makes):
+{analysis_brief}
+
+---
+
+CAROUSEL TO EVALUATE:
+Account: @{username}
+Slides provided in this message: {slide_count} (ordered slide 1 → slide {slide_count})
+Caption (context only): "{caption[:400]}"
+
+---
+
+ONE DECISION:
+Could this creator post a carousel like this on their own feed tomorrow — for their own audience — without changing who they are or what they're known for?
+
+To answer YES, the carousel must pass BOTH:
+1) AUDIENCE + NICHE: speaks to the same audience and sits in the same niche/problem space the brief describes.
+2) INTENT + FORMAT: same intent the creator has (e.g. teaching, coaching, sharing perspective — whatever the brief says) AND a swipe structure / visual tone the creator could realistically replicate.
+
+SCORING (0–100), strict and calibrated:
+- 85–100: True match. Same niche, same audience, same intent, native swipe structure.
+- 60–84: Topic or surface overlap, but wrong audience, wrong intent, or wrong format. NOT a match for this pipeline.
+- 0–59: Wrong niche, wrong audience, or off-shelf entirely.
+
+VERDICT: "match" only if similarity_score >= 85 AND both checks above clearly pass. Otherwise "no_match".
+
+Respond in JSON only (no markdown, no code fences):
+{{"similarity_score": <0-100>, "verdict": "match|no_match", "what_the_video_is_about": "<one sentence: topic + format + intent>", "why_it_fits": "<one sentence; empty string if no_match>", "why_it_doesnt_fit": "<one sentence; empty string if match>", "dominant_format": "<short label e.g. text-heavy infographic | meme grid | photo story; empty string if unclear>", "per_slide_notes": ["<optional up to one short phrase per slide received; omit or use fewer entries if not needed>"]}}"""
 
 
 _MAX_VIDEO_BYTES = 15 * 1024 * 1024  # 15 MB — Gemini multimodal limit
@@ -241,13 +280,25 @@ def _existing_short_codes_for_client(supabase: Any, client_id: str) -> Set[str]:
     return out
 
 
-def _estimate_cost_usd(*, raw_n: int, enrich_n: int, score_n: int) -> float:
+def _estimate_cost_usd(
+    *,
+    raw_n: int,
+    enrich_n: int,
+    score_video_n: int,
+    score_carousel_n: int,
+) -> float:
     return round(
         (raw_n / 1000.0) * _COST_SASKY_PER_1K
         + (enrich_n / 1000.0) * _COST_ENRICH_PER_1K
-        + score_n * _COST_GEMINI_PER_REEL,
+        + score_video_n * _COST_GEMINI_PER_REEL
+        + score_carousel_n * _COST_GEMINI_PER_CAROUSEL,
         4,
     )
+
+
+def _ig_type_is_static_multimodal(ig_type: str) -> bool:
+    t = str(ig_type or "").strip()
+    return t in ("Sidecar", "GraphSidecar", "Image", "GraphImage")
 
 
 def _qualifying_to_recovery_payload(
@@ -271,6 +322,9 @@ def _qualifying_to_recovery_payload(
                 "video_analyzed": bool(r.get("video_analyzed")),
                 "keywords": list(r.get("keywords") or []),
                 "thumbnail_url": r.get("thumbnail_url") or None,
+                "ig_type": r.get("ig_type") or None,
+                "media_type": r.get("media_type"),
+                "slides_analyzed": int(r.get("slides_analyzed") or 0),
             }
         )
     return out
@@ -304,6 +358,13 @@ def persist_keyword_similarity_qualifying(
         caption_text = r.get("caption") or None
         hook = (str(caption_text).split("\n")[0][:500] if caption_text else "") or None
         vd = _duration_seconds(r.get("video_duration"))
+        ig_t = str(r.get("ig_type") or "").strip()
+        if ig_t in ("Sidecar", "GraphSidecar"):
+            fmt = "carousel"
+        elif ig_t in ("Image", "GraphImage"):
+            fmt = "image"
+        else:
+            fmt = "reel"
         rows.append(
             {
                 "id": row_id,
@@ -316,7 +377,7 @@ def persist_keyword_similarity_qualifying(
                 "caption": caption_text,
                 "hook_text": hook,
                 "posted_at": r.get("posted_at") or None,
-                "format": "reel",
+                "format": fmt,
                 "source": "keyword_similarity",
                 "video_duration": vd,
                 "similarity_score": int(r.get("similarity_score") or 0),
@@ -404,6 +465,15 @@ def _upsert_keyword_similarity_analysis(
         "video_analyzed": video_analyzed,
         "matched_keywords": matched_keywords,
     }
+    for k in ("media_type", "dominant_format", "per_slide_notes"):
+        v = parsed.get(k)
+        if v is not None and v != "" and v != []:
+            block[k] = v
+    if "slides_analyzed" in parsed and parsed.get("slides_analyzed") is not None:
+        try:
+            block["slides_analyzed"] = int(parsed["slides_analyzed"])
+        except (TypeError, ValueError):
+            block["slides_analyzed"] = 0
     res = (
         supabase.table("reel_analyses")
         .select("id, full_analysis_json")
@@ -449,6 +519,135 @@ def _upsert_keyword_similarity_analysis(
         ).execute()
 
 
+def score_reel_dict_for_keyword_similarity(
+    settings: Settings,
+    *,
+    analysis_brief: str,
+    reel: Dict[str, Any],
+    threshold: int,
+    model: str,
+) -> Dict[str, Any]:
+    """Score one reel dict (same shape as the post-filter ``reels`` list in this job).
+
+    Used by ``run_keyword_reel_similarity`` and batch rescoring scripts. Optional key
+    ``scraped_reel_id`` is stripped from the returned row (caller uses it for DB updates).
+    """
+    result: Dict[str, Any] = {}
+    ig_t = str(reel.get("ig_type") or "").strip()
+    used_video = False
+    slides_analyzed = 0
+    media_type = "none"
+    tmp_path: Optional[Path] = None
+    slide_bytes: List[bytes] = []
+
+    try:
+        if _ig_type_is_static_multimodal(ig_t):
+            slide_item: Dict[str, Any] = {
+                "type": ig_t,
+                "childPosts": reel.get("child_posts") or [],
+                "displayUrl": reel.get("display_url") or "",
+            }
+            slide_urls = slide_urls_from_item(slide_item, slide_cap=8)
+            slide_bytes = download_slide_images(slide_urls)
+            slide_count = len(slide_bytes)
+            prompt = _build_carousel_similarity_prompt(
+                analysis_brief, reel["username"], reel["caption"], max(1, slide_count)
+            )
+            if slide_bytes:
+                result, prov = analyze_post_similarity(
+                    settings.openrouter_api_key,
+                    model,
+                    prompt,
+                    image_bytes_list=slide_bytes,
+                )
+                slides_analyzed = int(prov.get("slides_analyzed") or 0)
+                media_type = str(prov.get("media_type") or "none")
+                used_video = False
+            else:
+                result, used_video = analyze_reel_similarity(
+                    settings.openrouter_api_key,
+                    model,
+                    _build_similarity_prompt(
+                        analysis_brief, reel["username"], reel["caption"]
+                    ),
+                    video_path=None,
+                )
+                slides_analyzed = 0
+                media_type = "none"
+        else:
+            prompt = _build_similarity_prompt(analysis_brief, reel["username"], reel["caption"])
+            if reel.get("video_url"):
+                tf = NamedTemporaryFile(suffix=".mp4", delete=False)
+                tmp_path = Path(tf.name)
+                tf.close()
+                if not _download_video(str(reel["video_url"]), tmp_path):
+                    tmp_path.unlink(missing_ok=True)
+                    tmp_path = None
+            result, used_video = analyze_reel_similarity(
+                settings.openrouter_api_key,
+                model,
+                prompt,
+                video_path=tmp_path,
+            )
+            media_type = "video" if used_video else "none"
+            slides_analyzed = 0
+
+        try:
+            raw_score = int(round(float(result.get("similarity_score") or 0)))
+        except (TypeError, ValueError):
+            raw_score = 0
+        score = max(0, min(100, raw_score))
+        verdict = "match" if score >= threshold else "no_match"
+        why_it_fits = (result.get("why_it_fits") or "") if verdict == "match" else ""
+        why_it_doesnt_fit = (result.get("why_it_doesnt_fit") or "") if verdict == "no_match" else ""
+        video_summary = result.get("what_the_video_is_about") or ""
+    except Exception:
+        score = 0
+        verdict = "error"
+        why_it_fits = why_it_doesnt_fit = video_summary = ""
+        used_video = False
+        slides_analyzed = 0
+        media_type = "none"
+    finally:
+        if tmp_path and tmp_path.is_file():
+            tmp_path.unlink(missing_ok=True)
+
+    gp: Dict[str, Any] = {
+        "similarity_score": score,
+        "verdict": verdict,
+        "what_the_video_is_about": video_summary,
+        "why_it_fits": why_it_fits,
+        "why_it_doesnt_fit": why_it_doesnt_fit,
+        "media_type": media_type,
+        "slides_analyzed": slides_analyzed,
+    }
+    df = result.get("dominant_format") if isinstance(result, dict) else None
+    if isinstance(df, str) and df.strip():
+        gp["dominant_format"] = df.strip()[:200]
+    ps = result.get("per_slide_notes") if isinstance(result, dict) else None
+    if isinstance(ps, list) and ps:
+        gp["per_slide_notes"] = [str(x)[:200] for x in ps[:12]]
+
+    base_reel = {
+        k: v
+        for k, v in reel.items()
+        if k not in ("child_posts", "scraped_reel_id", "_enriched_format")
+    }
+
+    return {
+        **base_reel,
+        "similarity_score": score,
+        "verdict": verdict,
+        "video_analyzed": used_video,
+        "media_type": media_type,
+        "slides_analyzed": slides_analyzed,
+        "what_the_video_is_about": video_summary,
+        "why_it_fits": why_it_fits,
+        "why_it_doesnt_fit": why_it_doesnt_fit,
+        "gemini_parsed": gp,
+    }
+
+
 def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None:
     if not settings.apify_api_token or not settings.openrouter_api_key:
         raise RuntimeError("APIFY_API_TOKEN and OPENROUTER_API_KEY required")
@@ -486,6 +685,7 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
         "after_date_filter": 0,
         "scored": 0,
         "scored_with_video": 0,
+        "scored_with_slide_images": 0,
         "upserted": 0,
         "enrich_errors": [],
         "cost_estimate_usd": 0.0,
@@ -683,9 +883,15 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
             "posted_at": posted_at,
             "keywords": meta["keywords"],
             "thumbnail_url": reel_thumbnail_url_from_apify_item(item) or None,
+            "ig_type": str(item.get("type") or "").strip(),
+            "display_url": str(item.get("displayUrl") or item.get("display_url") or "").strip(),
+            "child_posts": item.get("childPosts") if isinstance(item.get("childPosts"), list) else [],
         })
 
     def _passes_min_duration(row: Dict[str, Any]) -> bool:
+        ig_t = str(row.get("ig_type") or "").strip()
+        if _ig_type_is_static_multimodal(ig_t):
+            return True
         raw = row.get("video_duration")
         if raw is None:
             return False
@@ -730,11 +936,18 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
     # Safety ceiling only: prevents runaway jobs if upstream filters misconfigure.
     to_score = ranked[:MAX_SCORE_SAFETY_CAP]
 
+    score_carousel_n = sum(
+        1 for r in to_score if _ig_type_is_static_multimodal(str(r.get("ig_type") or ""))
+    )
+    score_video_n = len(to_score) - score_carousel_n
     progress["cost_estimate_usd"] = _estimate_cost_usd(
         raw_n=total_keyword_actor_items,
         enrich_n=len(urls_to_enrich),
-        score_n=len(to_score),
+        score_video_n=score_video_n,
+        score_carousel_n=score_carousel_n,
     )
+    progress["cost_score_video_n"] = score_video_n
+    progress["cost_score_carousel_n"] = score_carousel_n
 
     if not to_score:
         msg = (
@@ -751,59 +964,21 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
     scored: List[Dict[str, Any]] = []
     model = settings.openrouter_reel_analyze_model
     for reel in to_score:
-        prompt = _build_similarity_prompt(analysis_brief, reel["username"], reel["caption"])
-        tmp_path: Optional[Path] = None
-        if reel["video_url"]:
-            tf = NamedTemporaryFile(suffix=".mp4", delete=False)
-            tmp_path = Path(tf.name)
-            tf.close()
-            if not _download_video(reel["video_url"], tmp_path):
-                tmp_path.unlink(missing_ok=True)
-                tmp_path = None
-        try:
-            result, used_video = analyze_reel_similarity(
-                settings.openrouter_api_key,
-                model,
-                prompt,
-                video_path=tmp_path,
-            )
-            try:
-                raw_score = int(round(float(result.get("similarity_score") or 0)))
-            except (TypeError, ValueError):
-                raw_score = 0
-            score = max(0, min(100, raw_score))
-            verdict = "match" if score >= threshold else "no_match"
-            why_it_fits = (result.get("why_it_fits") or "") if verdict == "match" else ""
-            why_it_doesnt_fit = (result.get("why_it_doesnt_fit") or "") if verdict == "no_match" else ""
-            video_summary = result.get("what_the_video_is_about") or ""
-        except Exception:
-            score = 0
-            verdict = "error"
-            why_it_fits = why_it_doesnt_fit = video_summary = ""
-            used_video = False
-        finally:
-            if tmp_path and tmp_path.is_file():
-                tmp_path.unlink(missing_ok=True)
-
-        scored.append({
-            **reel,
-            "similarity_score": score,
-            "verdict": verdict,
-            "video_analyzed": used_video,
-            "what_the_video_is_about": video_summary,
-            "why_it_fits": why_it_fits,
-            "why_it_doesnt_fit": why_it_doesnt_fit,
-            "gemini_parsed": {
-                "similarity_score": score,
-                "verdict": verdict,
-                "what_the_video_is_about": video_summary,
-                "why_it_fits": why_it_fits,
-                "why_it_doesnt_fit": why_it_doesnt_fit,
-            },
-        })
+        row = score_reel_dict_for_keyword_similarity(
+            settings,
+            analysis_brief=analysis_brief,
+            reel=reel,
+            threshold=threshold,
+            model=model,
+        )
+        scored.append(row)
         progress["scored"] = len(scored)
-        if used_video:
+        if row.get("video_analyzed"):
             progress["scored_with_video"] = int(progress.get("scored_with_video") or 0) + 1
+        if int(row.get("slides_analyzed") or 0) > 0:
+            progress["scored_with_slide_images"] = int(
+                progress.get("scored_with_slide_images") or 0
+            ) + 1
         time.sleep(0.5)
 
     progress["phase"] = "upserting"

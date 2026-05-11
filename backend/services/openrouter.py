@@ -10,7 +10,7 @@ import re
 import threading
 import time
 from pathlib import Path
-from typing import Any, List
+from typing import Any, Dict, List, Optional, Sequence
 
 import httpx
 
@@ -287,6 +287,221 @@ def analyze_reel_silas(
     else:
         text = ""
     return text, video_analyzed
+
+
+def _message_content_multimodal(
+    prompt: str,
+    *,
+    video_path: Optional[Path] = None,
+    image_bytes_list: Optional[Sequence[bytes]] = None,
+    video_bytes_max: int = _MAX_VIDEO_BYTES,
+) -> tuple[List[dict[str, Any]], bool]:
+    """Build OpenRouter user message parts: text + optional video or ordered JPEG images.
+
+    Returns (content_parts_as_single_user_message_list, multimodal_pixels_sent).
+    """
+    parts: List[dict[str, Any]] = [{"type": "text", "text": prompt}]
+    multimodal = False
+
+    if video_path is not None and video_path.is_file():
+        size = video_path.stat().st_size
+        if size > 0 and size <= video_bytes_max:
+            raw = video_path.read_bytes()
+            b64 = base64.b64encode(raw).decode("ascii")
+            parts.append(
+                {"type": "image_url", "image_url": {"url": f"data:video/mp4;base64,{b64}"}}
+            )
+            multimodal = True
+        return [{"role": "user", "content": parts}], multimodal
+
+    if image_bytes_list:
+        for blob in image_bytes_list:
+            if not blob:
+                continue
+            b64 = base64.b64encode(blob).decode("ascii")
+            parts.append(
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+            )
+            multimodal = True
+
+    return [{"role": "user", "content": parts}], multimodal
+
+
+def analyze_post_silas(
+    openrouter_key: str,
+    model: str,
+    prompt: str,
+    *,
+    video_path: Path | None = None,
+    image_bytes_list: Sequence[bytes] | None = None,
+    video_bytes_max: int = _MAX_VIDEO_BYTES,
+    text_reanalyze: bool = False,
+) -> tuple[str, Dict[str, Any]]:
+    """Silas-style analysis: video MP4 and/or ordered carousel JPEG bytes via OpenRouter.
+
+    Returns (assistant_text, media_provenance) where ``media_provenance`` includes
+    ``media_type`` (video|carousel|image|none), ``slides_analyzed``, and ``video_analyzed``
+    (true only when a reel MP4 was sent — backward compatible with existing column semantics).
+    """
+    provenance: Dict[str, Any] = {
+        "media_type": "none",
+        "slides_analyzed": 0,
+        "video_analyzed": False,
+    }
+
+    images = list(image_bytes_list) if image_bytes_list else []
+    messages: List[dict[str, Any]]
+    multimodal = False
+
+    if video_path is not None and video_path.is_file():
+        msg_list, multimodal = _message_content_multimodal(
+            prompt, video_path=video_path, video_bytes_max=video_bytes_max
+        )
+        messages = msg_list
+        if multimodal:
+            provenance["media_type"] = "video"
+            provenance["video_analyzed"] = True
+        else:
+            note = (
+                "\n\nNOTE: Text re-analysis — no video. Follow the prompt (prior Silas output is included)."
+                if text_reanalyze
+                else (
+                    "\n\nNOTE: Video file too large to upload. Analyze based on caption and metadata only. "
+                    "Note this limitation in your response."
+                )
+            )
+            messages = [{"role": "user", "content": prompt + note}]
+    elif images:
+        msg_list, multimodal = _message_content_multimodal(prompt, image_bytes_list=images)
+        messages = msg_list
+        provenance["slides_analyzed"] = len(images)
+        provenance["media_type"] = "carousel" if len(images) > 1 else "image"
+    else:
+        if text_reanalyze:
+            tail = "\n\nNOTE: Text re-analysis — no video re-download. Follow the prompt."
+        else:
+            tail = (
+                "\n\nNOTE: No video or slide images available. Analyze based on caption and metadata only."
+            )
+        messages = [{"role": "user", "content": prompt + tail}]
+
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": 2000,
+        "temperature": 0.2,
+    }
+    r = _post_chat_completions_with_optional_fallback(
+        openrouter_key,
+        payload,
+        timeout=180.0,
+        primary_model=model,
+        enable_model_fallback=not multimodal,
+    )
+    data = r.json()
+    if data.get("error"):
+        raise RuntimeError(data["error"].get("message", str(data["error"])))
+    choice = data.get("choices") or []
+    if not choice:
+        raise RuntimeError("OpenRouter returned no choices")
+    message = (choice[0] or {}).get("message") or {}
+    content = message.get("content")
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list):
+        parts_txt: list[str] = []
+        for p in content:
+            if isinstance(p, dict) and p.get("type") == "text":
+                parts_txt.append(str(p.get("text") or ""))
+            elif isinstance(p, dict) and "text" in p:
+                parts_txt.append(str(p.get("text") or ""))
+            elif isinstance(p, str):
+                parts_txt.append(p)
+        text = "".join(parts_txt)
+    else:
+        text = ""
+    return text, provenance
+
+
+def analyze_post_similarity(
+    openrouter_key: str,
+    model: str,
+    prompt: str,
+    *,
+    video_path: Path | None = None,
+    image_bytes_list: Sequence[bytes] | None = None,
+    video_bytes_max: int = _MAX_VIDEO_BYTES,
+) -> tuple[dict, Dict[str, Any]]:
+    """DNA similarity JSON: video MP4 and/or ordered carousel JPEG bytes.
+
+    Returns (parsed_json_dict, media_provenance).
+    """
+    provenance: Dict[str, Any] = {
+        "media_type": "none",
+        "slides_analyzed": 0,
+        "video_analyzed": False,
+    }
+    images = list(image_bytes_list) if image_bytes_list else []
+
+    if video_path is not None and video_path.is_file():
+        msg_list, multimodal = _message_content_multimodal(
+            prompt, video_path=video_path, video_bytes_max=video_bytes_max
+        )
+        if multimodal:
+            provenance["media_type"] = "video"
+            provenance["video_analyzed"] = True
+        else:
+            messages = [
+                {
+                    "role": "user",
+                    "content": prompt
+                    + "\n\nNOTE: No video available — base similarity on the caption and metadata only.",
+                }
+            ]
+            multimodal = False
+        if multimodal:
+            messages = msg_list
+    elif images:
+        msg_list, multimodal = _message_content_multimodal(prompt, image_bytes_list=images)
+        messages = msg_list
+        provenance["slides_analyzed"] = len(images)
+        provenance["media_type"] = "carousel" if len(images) > 1 else "image"
+    else:
+        messages = [
+            {
+                "role": "user",
+                "content": prompt
+                + "\n\nNOTE: No video or slide images available — base similarity on the caption and metadata only.",
+            }
+        ]
+        multimodal = False
+
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": 512,
+        "temperature": 0.1,
+    }
+    r = _post_chat_completions_with_optional_fallback(
+        openrouter_key,
+        payload,
+        timeout=180.0,
+        primary_model=model,
+        enable_model_fallback=not multimodal,
+    )
+    data = r.json()
+
+    if data.get("error"):
+        raise RuntimeError(data["error"].get("message", str(data["error"])))
+    choice = (data.get("choices") or [{}])[0]
+    content = (choice.get("message") or {}).get("content") or ""
+    if isinstance(content, list):
+        content = "".join(
+            p.get("text", "") if isinstance(p, dict) else str(p) for p in content
+        )
+    cleaned = re.sub(r"^```json\s*", "", content.strip())
+    cleaned = re.sub(r"```\s*$", "", cleaned).strip()
+    return json.loads(cleaned), provenance
 
 
 def analyze_reel_similarity(

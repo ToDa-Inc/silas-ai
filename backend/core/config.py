@@ -58,6 +58,31 @@ class Settings(BaseSettings):
         ),
     )
 
+    apify_max_concurrent_runs: int = Field(
+        default=20,
+        ge=0,
+        le=32,
+        validation_alias=AliasChoices("APIFY_MAX_CONCURRENT_RUNS"),
+        description=(
+            "Max concurrent Apify actor runs across all processes (DB slot table). "
+            "0 disables the limiter. Keep below Apify account max (often 32)."
+        ),
+    )
+    apify_slot_ttl_seconds: int = Field(
+        default=1800,
+        ge=120,
+        le=86400,
+        validation_alias=AliasChoices("APIFY_SLOT_TTL_SECONDS"),
+        description="Stale slot cleanup: release holder if heartbeat/acquired older than this many seconds.",
+    )
+    apify_slot_wait_timeout_seconds: float = Field(
+        default=900.0,
+        ge=5.0,
+        le=7200.0,
+        validation_alias=AliasChoices("APIFY_SLOT_WAIT_TIMEOUT_SECONDS"),
+        description="Max seconds to wait for a free Apify slot before failing run_actor.",
+    )
+
     @field_validator("apify_api_token", mode="before")
     @classmethod
     def strip_apify_token(cls, v: object) -> object:

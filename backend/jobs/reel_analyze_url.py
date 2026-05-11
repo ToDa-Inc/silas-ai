@@ -1,10 +1,13 @@
-"""Single-reel analyze by URL: Apify → download MP4 → Gemini (OpenRouter) → scored output.
+"""Single-post analyze by URL: Apify instagram-scraper → video or slide JPEGs → Gemini → scores.
 
 Flow:
-  1. Apify xMc5Ga1oCONPmWJIa (URL input) → reel metadata + videoUrl
-  2. Download videoUrl → temp .mp4
-  3. Gemini 3 Flash Preview via OpenRouter → Silas scoring text
-  4. Parse scores → upsert scraped_reels (source=url_paste) + reel_analyses
+  1. ``resolve_post_media`` (``apify~instagram-scraper``) → metadata + ``videoUrl`` or slide URLs
+  2. Download MP4 (reel) or ordered slide images (carousel / image post)
+  3. Gemini 3 Flash Preview via OpenRouter (``analyze_post_silas``)
+  4. Parse scores → upsert ``scraped_reels`` (source=url_paste) + ``reel_analyses``
+
+``skip_apify=True`` (auto-analyze backlog): uses DB row + caption; carousel/image rows optionally
+re-fetch slides once via the same resolver for multimodal analysis.
 
 See docs/ANALYZE-REEL-ENDPOINT-SPEC.md, docs/REEL-VIDEO-ANALYSIS-SPEC.md.
 """
@@ -22,9 +25,14 @@ import httpx
 from core.config import Settings
 from core.database import get_supabase_for_settings
 from core.id_generator import generate_reel_id
-from services.apify import instagram_reel_scraper_input, run_actor
 from services.apify_posted_at import apify_instagram_item_posted_at_iso
-from services.openrouter import analyze_reel_silas
+from services.instagram_media import (
+    ResolvedPostMedia,
+    download_slide_images,
+    media_kind_from_apify_item,
+    resolve_post_media,
+)
+from services.openrouter import analyze_post_silas, analyze_reel_silas
 from services.reel_analyze_parse import parse_silas_analysis_text
 from services.reel_analyze_prompt import (
     PROMPT_VERSION,
@@ -96,6 +104,15 @@ def _download_video(url: str, dest: Path) -> None:
         dest.write_bytes(r.content)
 
 
+def _format_key_from_apify_item(item: dict) -> str:
+    mk = media_kind_from_apify_item(item)
+    if mk == "carousel":
+        return "carousel"
+    if mk == "image":
+        return "image"
+    return "reel"
+
+
 def instagram_reel_url_is_valid(url: str) -> bool:
     t = url.lower()
     if "instagram.com" not in t:
@@ -114,6 +131,7 @@ def _upsert_scraped_reel_for_url_paste(
     post_url: str,
     owner: str,
     item: dict,
+    format_key: str = "reel",
 ) -> Optional[str]:
     """Insert/update a scraped_reels row with source='url_paste'. Returns the row id."""
     url_key = canonical_instagram_post_url(post_url)
@@ -158,7 +176,7 @@ def _upsert_scraped_reel_for_url_paste(
         "caption": caption or None,
         "hashtags": _hashtags(item, caption),
         "posted_at": apify_instagram_item_posted_at_iso(item),
-        "format": "reel",
+        "format": (canonicalize_stored_format_key(format_key) or format_key or "reel"),
         "source": "url_paste",
         "video_duration": video_duration,
     }
@@ -193,6 +211,7 @@ def _upsert_reel_analysis(
     model: str,
     video_analyzed: bool,
     source: str = "analyze_url",
+    media_provenance: Optional[Dict[str, Any]] = None,
 ) -> Optional[str]:
     """Write structured analysis into reel_analyses. Returns the analysis row id."""
     url_key = canonical_instagram_post_url(post_url)
@@ -221,6 +240,9 @@ def _upsert_reel_analysis(
     r_s = parsed.get("raw_scores")
     if isinstance(r_s, dict) and r_s:
         full_analysis_json["raw_scores"] = r_s
+
+    if isinstance(media_provenance, dict) and media_provenance:
+        full_analysis_json["media_provenance"] = media_provenance
 
     nf = parsed.get("normalized_format")
     if isinstance(nf, str) and nf.strip():
@@ -381,29 +403,160 @@ def _execute_reel_analyze_url_core(
         comments = int(sr.get("comments") or 0)
         caption = _caption_from_scraped_reel_row(sr)
         post_url = str(sr.get("post_url") or reel_url)
-        is_carousel = (canonicalize_stored_format_key(sr.get("format")) or "") == "carousel"
+        fmt_raw = str(sr.get("format") or "").strip().lower()
+        is_carousel_row = (canonicalize_stored_format_key(sr.get("format")) or "") == "carousel"
+        is_image_row = fmt_raw == "image"
         model = settings.openrouter_reel_analyze_model
-        prompt = build_reel_analysis_prompt(
-            owner=owner,
-            views="" if is_carousel else f"{views:,}",
-            likes=f"{likes:,}",
-            comments=f"{comments:,}",
-            caption=caption,
-            niche_context=niche_context,
-            text_reanalyze=True,
-            prior_full_text=prior if prior else None,
-            is_carousel=is_carousel,
-        )
-        full_text, video_analyzed = analyze_reel_silas(
-            settings.openrouter_api_key,
-            model,
-            prompt,
-            video_path=None,
-            text_reanalyze=True,
-        )
+
+        media_prov: Dict[str, Any] = {
+            "media_type": "none",
+            "slides_analyzed": 0,
+            "video_analyzed": False,
+        }
+        full_text = ""
+        resolved_skip: Optional[ResolvedPostMedia] = None
+
+        if (is_carousel_row or is_image_row) and settings.apify_api_token:
+            resolved_skip = resolve_post_media(settings.apify_api_token, post_url or url_key)
+            if resolved_skip and resolved_skip.slide_urls:
+                slide_bytes = download_slide_images(resolved_skip.slide_urls)
+                if slide_bytes:
+                    is_carousel_prompt = media_kind_from_apify_item(resolved_skip.item) == "carousel"
+                    ig_owner = _owner_username(resolved_skip.item) or owner
+                    ig_views = _views_int(resolved_skip.item)
+                    ig_likes = int(
+                        resolved_skip.item.get("likesCount")
+                        or resolved_skip.item.get("likes")
+                        or likes
+                    )
+                    ig_comments = int(
+                        resolved_skip.item.get("commentsCount")
+                        or resolved_skip.item.get("comments")
+                        or comments
+                    )
+                    ig_caption = _caption_text(resolved_skip.item) or caption
+                    prompt = build_reel_analysis_prompt(
+                        owner=ig_owner,
+                        views="" if is_carousel_prompt else f"{ig_views:,}",
+                        likes=f"{ig_likes:,}",
+                        comments=f"{ig_comments:,}",
+                        caption=ig_caption,
+                        niche_context=niche_context,
+                        text_reanalyze=False,
+                        prior_full_text=None,
+                        is_carousel=is_carousel_prompt,
+                    )
+                    full_text, media_prov = analyze_post_silas(
+                        settings.openrouter_api_key,
+                        model,
+                        prompt,
+                        image_bytes_list=slide_bytes,
+                    )
+                    owner, views, likes, comments, caption = (
+                        ig_owner,
+                        ig_views,
+                        ig_likes,
+                        ig_comments,
+                        ig_caption,
+                    )
+                else:
+                    prompt = build_reel_analysis_prompt(
+                        owner=owner,
+                        views="" if is_carousel_row else f"{views:,}",
+                        likes=f"{likes:,}",
+                        comments=f"{comments:,}",
+                        caption=caption,
+                        niche_context=niche_context,
+                        text_reanalyze=True,
+                        prior_full_text=prior if prior else None,
+                        is_carousel=is_carousel_row,
+                    )
+                    full_text, video_analyzed_fb = analyze_reel_silas(
+                        settings.openrouter_api_key,
+                        model,
+                        prompt,
+                        video_path=None,
+                        text_reanalyze=True,
+                    )
+                    media_prov = {
+                        "media_type": "none",
+                        "slides_analyzed": 0,
+                        "video_analyzed": bool(video_analyzed_fb),
+                    }
+            else:
+                prompt = build_reel_analysis_prompt(
+                    owner=owner,
+                    views="" if is_carousel_row else f"{views:,}",
+                    likes=f"{likes:,}",
+                    comments=f"{comments:,}",
+                    caption=caption,
+                    niche_context=niche_context,
+                    text_reanalyze=True,
+                    prior_full_text=prior if prior else None,
+                    is_carousel=is_carousel_row,
+                )
+                full_text, video_analyzed_fb = analyze_reel_silas(
+                    settings.openrouter_api_key,
+                    model,
+                    prompt,
+                    video_path=None,
+                    text_reanalyze=True,
+                )
+                media_prov = {
+                    "media_type": "none",
+                    "slides_analyzed": 0,
+                    "video_analyzed": bool(video_analyzed_fb),
+                }
+        else:
+            prompt = build_reel_analysis_prompt(
+                owner=owner,
+                views="" if is_carousel_row else f"{views:,}",
+                likes=f"{likes:,}",
+                comments=f"{comments:,}",
+                caption=caption,
+                niche_context=niche_context,
+                text_reanalyze=True,
+                prior_full_text=prior if prior else None,
+                is_carousel=is_carousel_row,
+            )
+            full_text, video_analyzed_fb = analyze_reel_silas(
+                settings.openrouter_api_key,
+                model,
+                prompt,
+                video_path=None,
+                text_reanalyze=True,
+            )
+            media_prov = {
+                "media_type": "none",
+                "slides_analyzed": 0,
+                "video_analyzed": bool(video_analyzed_fb),
+            }
+
         parsed = parse_silas_analysis_text(full_text)
+        video_analyzed_col = bool(media_prov.get("video_analyzed"))
         reel_row_id = str(sr["id"])
         persist_source = f"{analysis_source}_llm_only"
+
+        if (
+            resolved_skip
+            and int(media_prov.get("slides_analyzed") or 0) > 0
+            and isinstance(resolved_skip.item, dict)
+        ):
+            try:
+                new_id = _upsert_scraped_reel_for_url_paste(
+                    supabase,
+                    client_id=client_id,
+                    job_id=analysis_job_id,
+                    post_url=_post_url_from_item(resolved_skip.item, post_url),
+                    owner=_owner_username(resolved_skip.item) or owner,
+                    item=resolved_skip.item,
+                    format_key=_format_key_from_apify_item(resolved_skip.item),
+                )
+                if new_id:
+                    reel_row_id = new_id
+            except Exception:
+                pass
+
         try:
             supabase.table("scraped_reels").update({"scrape_job_id": analysis_job_id}).eq(
                 "id", reel_row_id
@@ -423,8 +576,9 @@ def _execute_reel_analyze_url_core(
                 parsed=parsed,
                 full_text=full_text,
                 model=model,
-                video_analyzed=video_analyzed,
+                video_analyzed=video_analyzed_col,
                 source=persist_source,
+                media_provenance=media_prov,
             )
         except Exception as e:
             persist_error = str(e)[:800]
@@ -443,7 +597,8 @@ def _execute_reel_analyze_url_core(
             "prompt_version": PROMPT_VERSION,
             "model": model,
             "analyzed_at": datetime.now(timezone.utc).isoformat(),
-            "video_analyzed": video_analyzed,
+            "video_analyzed": video_analyzed_col,
+            "media_provenance": media_prov,
             "skip_apify": True,
         }
         if parsed.get("weighted_total") is not None:
@@ -476,34 +631,15 @@ def _execute_reel_analyze_url_core(
             result_body["persist_error"] = persist_error
         return result_body
 
-    items = run_actor(
-        settings.apify_api_token,
-        settings.apify_reel_actor,
-        instagram_reel_scraper_input(
-            [reel_url],
-            1,
-            include_shares_count=settings.apify_include_shares_count,
-        ),
-    )
-    if not items:
-        raise ReelAnalyzeTerminalError("reel_not_found")
-
-    item = items[0]
-    video_url = item.get("videoUrl") or item.get("video_url")
-    if not video_url:
-        raise ReelAnalyzeTerminalError("private_account")
-
-    tmp_f = NamedTemporaryFile(suffix=".mp4", delete=False)
-    tmp_path: Optional[Path] = Path(tmp_f.name)
-    tmp_f.close()
+    tmp_path: Optional[Path] = None
     try:
-        try:
-            _download_video(str(video_url), tmp_path)
-        except Exception:
-            if tmp_path.is_file():
-                tmp_path.unlink(missing_ok=True)
-            tmp_path = None
+        if not settings.apify_api_token:
+            raise RuntimeError("APIFY_API_TOKEN required")
+        resolved = resolve_post_media(settings.apify_api_token, reel_url)
+        if not resolved:
+            raise ReelAnalyzeTerminalError("reel_not_found")
 
+        item = resolved.item
         owner = _owner_username(item)
         views = _views_int(item)
         likes = int(item.get("likesCount") or item.get("likes") or 0)
@@ -513,26 +649,110 @@ def _execute_reel_analyze_url_core(
         url_key = canonical_instagram_post_url(post_url)
         model = settings.openrouter_reel_analyze_model
 
-        prompt = build_reel_analysis_prompt(
-            owner=owner,
-            views=f"{views:,}",
-            likes=f"{likes:,}",
-            comments=f"{comments:,}",
-            caption=caption,
-            niche_context=niche_context,
-        )
+        mk = media_kind_from_apify_item(item)
+        is_carousel_prompt = mk == "carousel"
+        media_prov: Dict[str, Any] = {
+            "media_type": "none",
+            "slides_analyzed": 0,
+            "video_analyzed": False,
+        }
+        full_text = ""
 
-        full_text, video_analyzed = analyze_reel_silas(
-            settings.openrouter_api_key,
-            model,
-            prompt,
-            video_path=tmp_path,
-        )
+        if resolved.kind == "video" and resolved.video_url:
+            tmp_f = NamedTemporaryFile(suffix=".mp4", delete=False)
+            tmp_path = Path(tmp_f.name)
+            tmp_f.close()
+            try:
+                _download_video(str(resolved.video_url), tmp_path)
+            except Exception:
+                if tmp_path.is_file():
+                    tmp_path.unlink(missing_ok=True)
+                tmp_path = None
+            if tmp_path and tmp_path.is_file():
+                prompt = build_reel_analysis_prompt(
+                    owner=owner,
+                    views=f"{views:,}",
+                    likes=f"{likes:,}",
+                    comments=f"{comments:,}",
+                    caption=caption,
+                    niche_context=niche_context,
+                    text_reanalyze=False,
+                    prior_full_text=None,
+                    is_carousel=False,
+                )
+                full_text, media_prov = analyze_post_silas(
+                    settings.openrouter_api_key,
+                    model,
+                    prompt,
+                    video_path=tmp_path,
+                )
+            else:
+                prompt = build_reel_analysis_prompt(
+                    owner=owner,
+                    views=f"{views:,}",
+                    likes=f"{likes:,}",
+                    comments=f"{comments:,}",
+                    caption=caption,
+                    niche_context=niche_context,
+                    text_reanalyze=False,
+                    prior_full_text=None,
+                    is_carousel=False,
+                )
+                full_text, media_prov = analyze_post_silas(
+                    settings.openrouter_api_key,
+                    model,
+                    prompt,
+                    video_path=None,
+                    image_bytes_list=None,
+                    text_reanalyze=False,
+                )
+        elif resolved.slide_urls:
+            slide_bytes = download_slide_images(resolved.slide_urls)
+            prompt = build_reel_analysis_prompt(
+                owner=owner,
+                views="" if is_carousel_prompt else f"{views:,}",
+                likes=f"{likes:,}",
+                comments=f"{comments:,}",
+                caption=caption,
+                niche_context=niche_context,
+                text_reanalyze=False,
+                prior_full_text=None,
+                is_carousel=is_carousel_prompt,
+            )
+            full_text, media_prov = analyze_post_silas(
+                settings.openrouter_api_key,
+                model,
+                prompt,
+                image_bytes_list=slide_bytes or None,
+            )
+        else:
+            if not caption.strip():
+                raise ReelAnalyzeTerminalError("private_account")
+            prompt = build_reel_analysis_prompt(
+                owner=owner,
+                views="" if is_carousel_prompt else f"{views:,}",
+                likes=f"{likes:,}",
+                comments=f"{comments:,}",
+                caption=caption,
+                niche_context=niche_context,
+                text_reanalyze=False,
+                prior_full_text=None,
+                is_carousel=is_carousel_prompt,
+            )
+            full_text, media_prov = analyze_post_silas(
+                settings.openrouter_api_key,
+                model,
+                prompt,
+                video_path=None,
+                image_bytes_list=None,
+                text_reanalyze=False,
+            )
 
         parsed = parse_silas_analysis_text(full_text)
 
         duration_int = video_duration_seconds_from_item(item) or 0
         ts = apify_instagram_item_posted_at_iso(item)
+        video_analyzed_col = bool(media_prov.get("video_analyzed"))
 
         reel_row_id: Optional[str] = None
         analysis_id: Optional[str] = None
@@ -545,6 +765,7 @@ def _execute_reel_analyze_url_core(
                 post_url=post_url,
                 owner=owner,
                 item=item,
+                format_key=_format_key_from_apify_item(item),
             )
             analysis_id = _upsert_reel_analysis(
                 supabase,
@@ -556,8 +777,9 @@ def _execute_reel_analyze_url_core(
                 parsed=parsed,
                 full_text=full_text,
                 model=model,
-                video_analyzed=video_analyzed,
+                video_analyzed=video_analyzed_col,
                 source=analysis_source,
+                media_provenance=media_prov,
             )
         except Exception as e:
             persist_error = str(e)[:800]
@@ -577,7 +799,8 @@ def _execute_reel_analyze_url_core(
             "prompt_version": PROMPT_VERSION,
             "model": model,
             "analyzed_at": datetime.now(timezone.utc).isoformat(),
-            "video_analyzed": video_analyzed,
+            "video_analyzed": video_analyzed_col,
+            "media_provenance": media_prov,
         }
         if parsed.get("weighted_total") is not None:
             analysis_payload["weighted_total"] = parsed.get("weighted_total")

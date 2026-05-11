@@ -1,7 +1,7 @@
-"""Auto-analyze scraped reels that have no reel_analyses row (text-only, skip_apify).
+"""Auto-analyze scraped reels missing reel_analyses.
 
-The 7-day "mature metrics" rule applies only in format_digest.py (ranking), not here — we need
-analysis rows for all reels so format classification and backlog can catch up.
+Uses ``skip_apify=True`` URL analysis: reels stay caption-only re-analysis; carousel/image rows
+optionally trigger a one-off Apify resolve to fetch slide URLs for multimodal Gemini scoring.
 """
 
 from __future__ import annotations

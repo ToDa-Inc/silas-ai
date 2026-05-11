@@ -13,6 +13,15 @@ class UrlAdaptFormatRecommendationTest(unittest.TestCase):
             "carousel",
         )
 
+    def test_image_format_routes_like_carousel(self):
+        self.assertEqual(
+            recommend_url_adapt_format(
+                {"normalized_format": "text_overlay"},
+                reel_meta={"format": "image", "video_duration": 8},
+            ),
+            "carousel",
+        )
+
     def test_short_video_routes_to_text_overlay(self):
         self.assertEqual(
             recommend_url_adapt_format(

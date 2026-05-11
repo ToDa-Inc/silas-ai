@@ -38,13 +38,15 @@ def _looks_like_carousel(raw: Any) -> bool:
     text = str(raw or "").strip()
     if not text:
         return False
+    lowered = text.lower()
+    if lowered == "image":
+        return True
     canonical = canonicalize_stored_format_key(text)
     if canonical == "carousel":
         return True
     normalized = normalize_format_string(text)
     if normalized == "carousel":
         return True
-    lowered = text.lower()
     return any(token in lowered for token in ("carousel", "sidecar", "album", "multi_image", "multi-image"))
 
 

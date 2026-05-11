@@ -370,6 +370,11 @@ def build_reel_analysis_prompt(
             "- Duration feel: [snappy <10s / medium 10-30s / long 30-60s]",
             "- Slide count feel: [tight 3-5 / medium 6-8 / long 9-10]",
         )
+        t += (
+            "\n\nYou are receiving this carousel as ordered slide images in the user message "
+            "(slide 1 first, then slide 2, etc.). Use those images as your primary evidence; "
+            "the caption is secondary context."
+        )
 
     if text_reanalyze:
         prior = (prior_full_text or "").strip()

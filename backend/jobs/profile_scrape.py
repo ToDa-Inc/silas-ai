@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
@@ -11,8 +12,10 @@ from typing import Any, Dict, List, Optional
 from core.config import Settings
 from core.database import get_supabase_for_settings
 from core.id_generator import generate_reel_id
+from jobs.keyword_reel_similarity import score_reel_dict_for_keyword_similarity
 from services.apify import (
     INSTAGRAM_SCRAPER,
+    enrich_reel_urls_direct,
     instagram_profile_posts_input,
     instagram_reel_scraper_input,
     run_actor,
@@ -24,6 +27,13 @@ from services.apify_reel_fields import saves_and_shares_from_item, video_duratio
 from services.reel_thumbnail_url import reel_thumbnail_url_from_apify_item
 from services.first_day_stats import update_milestones_for_competitor
 from services.format_digest_jobs import enqueue_auto_analyze_scraped, enqueue_format_digest_recompute
+from services.profile_similarity_gate import (
+    DEFAULT_PROFILE_SIMILARITY_THRESHOLD,
+    REJECTED_EXAMPLES_CAP,
+    enriched_item_to_similarity_reel_dict,
+    index_enriched_items_by_lookup_url,
+    lookup_enriched_for_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +41,8 @@ logger = logging.getLogger(__name__)
 _COST_REEL_ACTOR_PER_RESULT_USD = 0.0023
 # apify~instagram-scraper: same order of magnitude for directUrls profile posts
 _COST_INSTAGRAM_SCRAPER_PER_RESULT_USD = 0.0023
+# instagram-scraper directUrls enrich (same as scraped_reels_refresh)
+_COST_ENRICH_PER_RESULT_USD = 0.0023
 
 # Daily own-reel discovery: short lookback + overlap for missed cron runs.
 _DEFAULT_OWN_ONLY_NEWER_THAN = "2 days"
@@ -145,7 +157,7 @@ def run_profile_scrape(settings: Settings, job: Dict[str, Any]) -> None:
 
     clres = (
         supabase.table("clients")
-        .select("outlier_ratio_threshold")
+        .select("outlier_ratio_threshold, client_dna")
         .eq("id", client_id)
         .limit(1)
         .execute()
@@ -155,6 +167,17 @@ def run_profile_scrape(settings: Settings, job: Dict[str, Any]) -> None:
     threshold = float(
         clres.data[0].get("outlier_ratio_threshold") or DEFAULT_OUTLIER_RATIO_THRESHOLD
     )
+    dna = clres.data[0].get("client_dna") if isinstance(clres.data[0].get("client_dna"), dict) else {}
+    analysis_brief = str(dna.get("analysis_brief") or "").strip()
+    if not settings.openrouter_api_key:
+        raise RuntimeError(
+            "OPENROUTER_API_KEY required for competitor profile_scrape (similarity gate)"
+        )
+    if not analysis_brief:
+        raise RuntimeError(
+            "client_dna.analysis_brief is empty; competitor scrape requires it for relevance gating"
+        )
+
     only_newer_than = payload.get("only_newer_than")
     raw_limit = int(payload.get("results_limit") or payload.get("limit") or 30)
     results_limit = max(1, min(50, raw_limit))
@@ -209,7 +232,11 @@ def run_profile_scrape(settings: Settings, job: Dict[str, Any]) -> None:
         account_avg_likes = int(comp.get("avg_likes") or 0)
         account_avg_comments = int(comp.get("avg_comments") or 0)
 
-    batch: List[Dict[str, Any]] = []
+    similarity_threshold = int(
+        payload.get("similarity_threshold") or DEFAULT_PROFILE_SIMILARITY_THRESHOLD
+    )
+
+    candidates: List[Dict[str, Any]] = []
     for item in videos:
         url = _post_url(item)
         if not url:
@@ -265,7 +292,7 @@ def run_profile_scrape(settings: Settings, job: Dict[str, Any]) -> None:
             "source": "profile",
             "video_duration": video_duration,
         }
-        batch.append(row)
+        candidates.append({"post_url": str(row["post_url"]), "row": row})
 
     for item in carousel_posts:
         url = _post_url(item)
@@ -315,7 +342,110 @@ def run_profile_scrape(settings: Settings, job: Dict[str, Any]) -> None:
             "source": "profile",
             "video_duration": None,
         }
-        batch.append(row)
+        candidates.append({"post_url": str(row["post_url"]), "row": row})
+
+    reels_seen = len(candidates)
+    batch: List[Dict[str, Any]] = []
+    rejected_examples: List[Dict[str, Any]] = []
+    similarity_scored = 0
+    similarity_errors = 0
+    reels_rejected_similarity = 0
+    enrich_missing = 0
+    enrich_errors: List[str] = []
+    all_enriched_items: List[dict] = []
+
+    if candidates:
+        urls_order: List[str] = []
+        seen_u: set[str] = set()
+        for c in candidates:
+            pu = c["post_url"]
+            if pu not in seen_u:
+                seen_u.add(pu)
+                urls_order.append(pu)
+        for i in range(0, len(urls_order), 40):
+            chunk = urls_order[i : i + 40]
+            items_enr, errs = enrich_reel_urls_direct(settings.apify_api_token, chunk)
+            all_enriched_items.extend(items_enr or [])
+            enrich_errors.extend(errs or [])
+            if i + 40 < len(urls_order):
+                time.sleep(2.0)
+
+        enriched_index = index_enriched_items_by_lookup_url(all_enriched_items)
+        model = settings.openrouter_reel_analyze_model
+
+        for c in candidates:
+            post_url = c["post_url"]
+            row = c["row"]
+            enriched = lookup_enriched_for_url(enriched_index, post_url)
+            if not enriched:
+                enrich_missing += 1
+                reels_rejected_similarity += 1
+                if len(rejected_examples) < REJECTED_EXAMPLES_CAP:
+                    rejected_examples.append(
+                        {
+                            "post_url": post_url,
+                            "similarity_score": None,
+                            "verdict": "enrich_missing",
+                            "why_it_doesnt_fit": "",
+                        }
+                    )
+                continue
+            try:
+                reel = enriched_item_to_similarity_reel_dict(enriched, keywords=[])
+            except Exception as e:
+                similarity_errors += 1
+                reels_rejected_similarity += 1
+                if len(rejected_examples) < REJECTED_EXAMPLES_CAP:
+                    rejected_examples.append(
+                        {
+                            "post_url": post_url,
+                            "similarity_score": None,
+                            "verdict": "reel_dict_error",
+                            "why_it_doesnt_fit": f"{type(e).__name__}: {e}"[:200],
+                        }
+                    )
+                time.sleep(0.5)
+                continue
+
+            scored = score_reel_dict_for_keyword_similarity(
+                settings,
+                analysis_brief=analysis_brief,
+                reel=reel,
+                threshold=similarity_threshold,
+                model=model,
+            )
+            similarity_scored += 1
+            verdict = str(scored.get("verdict") or "")
+            score = int(scored.get("similarity_score") or 0)
+            why_no = str(scored.get("why_it_doesnt_fit") or "")
+
+            if verdict == "error":
+                similarity_errors += 1
+                reels_rejected_similarity += 1
+                if len(rejected_examples) < REJECTED_EXAMPLES_CAP:
+                    rejected_examples.append(
+                        {
+                            "post_url": post_url,
+                            "similarity_score": score,
+                            "verdict": verdict,
+                            "why_it_doesnt_fit": why_no,
+                        }
+                    )
+            elif score >= similarity_threshold:
+                row["similarity_score"] = score
+                batch.append(row)
+            else:
+                reels_rejected_similarity += 1
+                if len(rejected_examples) < REJECTED_EXAMPLES_CAP:
+                    rejected_examples.append(
+                        {
+                            "post_url": post_url,
+                            "similarity_score": score,
+                            "verdict": verdict,
+                            "why_it_doesnt_fit": why_no,
+                        }
+                    )
+            time.sleep(0.5)
 
     done_at = datetime.now(timezone.utc)
     ts_upsert = done_at.isoformat()
@@ -388,10 +518,20 @@ def run_profile_scrape(settings: Settings, job: Dict[str, Any]) -> None:
                 "apify_items": len(items),
                 "posts_scrape_items": posts_scrape_n,
                 "reels_processed": len(batch),
+                "reels_seen": reels_seen,
+                "reels_rejected_similarity": reels_rejected_similarity,
+                "similarity_threshold": similarity_threshold,
+                "similarity_scored": similarity_scored,
+                "similarity_errors": similarity_errors,
+                "enrich_missing": enrich_missing,
+                "enrich_errors": enrich_errors[:20],
+                "rejected_examples": rejected_examples,
+                "similarity_enrich_items": len(all_enriched_items),
                 "carousel_posts_found": len(carousel_posts),
                 "estimated_cost_usd": round(
                     len(items) * _COST_REEL_ACTOR_PER_RESULT_USD
-                    + posts_scrape_n * _COST_INSTAGRAM_SCRAPER_PER_RESULT_USD,
+                    + posts_scrape_n * _COST_INSTAGRAM_SCRAPER_PER_RESULT_USD
+                    + len(all_enriched_items) * _COST_ENRICH_PER_RESULT_USD,
                     4,
                 ),
             },

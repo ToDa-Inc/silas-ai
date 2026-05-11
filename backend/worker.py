@@ -3,6 +3,8 @@ Background worker: polls claim_next_job() and runs job handlers.
 
 Run (from backend/):
   python worker.py
+
+Job types include batch_rescore_scraped_reels_similarity (DNA rescore for existing scraped_reels).
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from jobs.profile_scrape import run_profile_scrape
 from jobs.auto_analyze_scraped import run_auto_analyze_scraped
 from jobs.format_digest_recompute import run_format_digest_recompute
 from jobs.milestone_scrape import run_milestone_scrape
+from jobs.batch_rescore_scraped_reels_similarity import run_batch_rescore_scraped_reels_similarity
 from jobs.keyword_reel_similarity import run_keyword_reel_similarity
 from jobs.niche_reel_scrape import run_niche_reel_scrape
 from jobs.reel_analyze_url import run_reel_analyze_bulk, run_reel_analyze_url
@@ -142,6 +145,8 @@ def _process_job_sync(settings: Settings, job: Dict[str, Any]) -> None:
         run_niche_reel_scrape(settings, job)
     elif jt == "keyword_reel_similarity":
         run_keyword_reel_similarity(settings, job)
+    elif jt == "batch_rescore_scraped_reels_similarity":
+        run_batch_rescore_scraped_reels_similarity(settings, job)
     elif jt == "scraped_reels_refresh":
         run_scraped_reels_refresh(settings, job)
     elif jt == "daily_intelligence_tick":
