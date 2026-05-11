@@ -2906,6 +2906,32 @@ def get_client_reel_metrics(
     )
 
 
+def _enrich_niche_similarity_score_from_scrape(
+    analysis_row: Dict[str, Any], scraped_meta: Dict[str, Any]
+) -> None:
+    """If ``keyword_similarity`` JSON omits ``similarity_score``, copy ``scraped_reels.similarity_score``."""
+    raw = scraped_meta.get("similarity_score")
+    if raw is None:
+        return
+    try:
+        col_score = int(raw)
+    except (TypeError, ValueError):
+        return
+    fa = analysis_row.get("full_analysis_json")
+    if not isinstance(fa, dict):
+        return
+    ks = fa.get("keyword_similarity")
+    if not isinstance(ks, dict):
+        return
+    if ks.get("similarity_score") is not None:
+        return
+    fa2 = dict(fa)
+    ks2 = dict(ks)
+    ks2["similarity_score"] = col_score
+    fa2["keyword_similarity"] = ks2
+    analysis_row["full_analysis_json"] = fa2
+
+
 @router.get("/clients/{slug}/reels/{reel_id}/analysis", response_model=ReelAnalysisDetailOut)
 def get_reel_analysis_by_reel_id(
     slug: str,
@@ -2916,7 +2942,7 @@ def get_reel_analysis_by_reel_id(
     """Full Silas analysis JSON for a scraped reel (requires reel_analyses row)."""
     rc = (
         supabase.table("scraped_reels")
-        .select("id, post_url")
+        .select("id, post_url, similarity_score")
         .eq("id", reel_id)
         .eq("client_id", client_id)
         .limit(1)
@@ -2925,7 +2951,8 @@ def get_reel_analysis_by_reel_id(
     if not rc.data:
         raise HTTPException(status_code=404, detail="Reel not found for this client")
 
-    post_url = canonical_instagram_post_url(str(rc.data[0].get("post_url") or ""))
+    scraped_meta = dict(rc.data[0])
+    post_url = canonical_instagram_post_url(str(scraped_meta.get("post_url") or ""))
 
     ares = (
         supabase.table("reel_analyses")
@@ -2936,7 +2963,9 @@ def get_reel_analysis_by_reel_id(
         .execute()
     )
     if ares.data:
-        return ares.data[0]
+        row = dict(ares.data[0])
+        _enrich_niche_similarity_score_from_scrape(row, scraped_meta)
+        return row
 
     if post_url:
         ares2 = (
@@ -2948,7 +2977,9 @@ def get_reel_analysis_by_reel_id(
             .execute()
         )
         if ares2.data:
-            return ares2.data[0]
+            row = dict(ares2.data[0])
+            _enrich_niche_similarity_score_from_scrape(row, scraped_meta)
+            return row
 
     raise HTTPException(status_code=404, detail="No analysis stored for this reel")
 

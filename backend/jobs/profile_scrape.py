@@ -34,6 +34,7 @@ from services.profile_similarity_gate import (
     index_enriched_items_by_lookup_url,
     lookup_enriched_for_url,
 )
+from services.similarity_scoring_executor import score_items_bounded
 
 logger = logging.getLogger(__name__)
 
@@ -351,6 +352,7 @@ def run_profile_scrape(settings: Settings, job: Dict[str, Any]) -> None:
     similarity_errors = 0
     reels_rejected_similarity = 0
     enrich_missing = 0
+    similarity_scoring_meta: Dict[str, Any] = {}
     enrich_errors: List[str] = []
     all_enriched_items: List[dict] = []
 
@@ -372,6 +374,7 @@ def run_profile_scrape(settings: Settings, job: Dict[str, Any]) -> None:
 
         enriched_index = index_enriched_items_by_lookup_url(all_enriched_items)
         model = settings.openrouter_reel_analyze_model
+        score_inputs: List[Dict[str, Any]] = []
 
         for c in candidates:
             post_url = c["post_url"]
@@ -407,13 +410,29 @@ def run_profile_scrape(settings: Settings, job: Dict[str, Any]) -> None:
                 time.sleep(0.5)
                 continue
 
+            score_inputs.append({"row": row, "reel": reel, "post_url": post_url})
+
+        def _score_one(item: Dict[str, Any]) -> Dict[str, Any]:
             scored = score_reel_dict_for_keyword_similarity(
                 settings,
                 analysis_brief=analysis_brief,
-                reel=reel,
+                reel=item["reel"],
                 threshold=similarity_threshold,
                 model=model,
             )
+            return {
+                "row": item["row"],
+                "post_url": item["post_url"],
+                "scored": scored,
+            }
+
+        scored_items, similarity_scoring_meta = score_items_bounded(
+            settings, score_inputs, _score_one
+        )
+        for scored_item in scored_items:
+            row = scored_item["row"]
+            post_url = str(scored_item["post_url"])
+            scored = scored_item["scored"]
             similarity_scored += 1
             verdict = str(scored.get("verdict") or "")
             score = int(scored.get("similarity_score") or 0)
@@ -445,7 +464,6 @@ def run_profile_scrape(settings: Settings, job: Dict[str, Any]) -> None:
                             "why_it_doesnt_fit": why_no,
                         }
                     )
-            time.sleep(0.5)
 
     done_at = datetime.now(timezone.utc)
     ts_upsert = done_at.isoformat()
@@ -523,6 +541,7 @@ def run_profile_scrape(settings: Settings, job: Dict[str, Any]) -> None:
                 "similarity_threshold": similarity_threshold,
                 "similarity_scored": similarity_scored,
                 "similarity_errors": similarity_errors,
+                **similarity_scoring_meta,
                 "enrich_missing": enrich_missing,
                 "enrich_errors": enrich_errors[:20],
                 "rejected_examples": rejected_examples,

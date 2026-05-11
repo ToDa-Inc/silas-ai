@@ -58,16 +58,6 @@ class Settings(BaseSettings):
         ),
     )
 
-    apify_max_concurrent_runs: int = Field(
-        default=20,
-        ge=0,
-        le=32,
-        validation_alias=AliasChoices("APIFY_MAX_CONCURRENT_RUNS"),
-        description=(
-            "Max concurrent Apify actor runs across all processes (DB slot table). "
-            "0 disables the limiter. Keep below Apify account max (often 32)."
-        ),
-    )
     apify_slot_ttl_seconds: int = Field(
         default=1800,
         ge=120,
@@ -163,6 +153,23 @@ class Settings(BaseSettings):
         le=30.0,
         validation_alias=AliasChoices("OPENROUTER_MIN_INTERVAL_S"),
         description="Minimum spacing between OpenRouter requests in this process.",
+    )
+    openrouter_requests_per_minute: int = Field(
+        default=15,
+        ge=0,
+        le=600,
+        validation_alias=AliasChoices("OPENROUTER_REQUESTS_PER_MINUTE"),
+        description=(
+            "Global OpenRouter request pacing across API + worker processes. "
+            "0 disables the DB-backed pacer."
+        ),
+    )
+    openrouter_scoring_workers: int = Field(
+        default=4,
+        ge=1,
+        le=16,
+        validation_alias=AliasChoices("OPENROUTER_SCORING_WORKERS"),
+        description="Bounded per-job worker count for similarity scoring calls.",
     )
 
     openrouter_reel_analyze_model: str = Field(

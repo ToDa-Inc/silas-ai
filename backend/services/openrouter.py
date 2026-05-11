@@ -14,6 +14,8 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import httpx
 
+from services.openrouter_limiter import wait_for_openrouter_request_slot
+
 _MAX_VIDEO_BYTES = 15 * 1024 * 1024
 _OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -121,6 +123,7 @@ def _post_chat_completions_with_optional_fallback(
             for attempt in range(max_attempts):
                 body = {**payload, "model": model}
                 _wait_for_process_slot(min_interval)
+                wait_for_openrouter_request_slot(settings)
                 r = client.post(_OPENROUTER_CHAT_URL, headers=headers, json=body)
                 last = r
                 if r.status_code == 429:

@@ -118,8 +118,8 @@ const SORT_KEY_LABELS: Record<AnySortKey, string> = {
   comments: "Comments",
   saves: "Saves",
   shares: "Shares",
-  outlier_ratio: "Breakout / niche",
-  similarity_score: "Breakout / niche",
+  outlier_ratio: "Vs account",
+  similarity_score: "Niche fit",
   video_duration: "Duration",
   first_seen_at: "First seen",
   total_score: "Score",
@@ -203,11 +203,21 @@ function compareForSort(a: ScrapedReelRow, b: ScrapedReelRow, key: AnySortKey): 
       const vb = viewsToCommentsRatio(b);
       return num(va == null ? null : Number(va), vb == null ? null : Number(vb));
     }
-    case "outlier_ratio":
+    case "outlier_ratio": {
+      const va = a.outlier_ratio != null ? Number(a.outlier_ratio) : null;
+      const vb = b.outlier_ratio != null ? Number(b.outlier_ratio) : null;
+      return num(
+        va != null && Number.isFinite(va) ? va : null,
+        vb != null && Number.isFinite(vb) ? vb : null,
+      );
+    }
     case "similarity_score": {
-      const va = a.outlier_ratio ?? a.similarity_score ?? null;
-      const vb = b.outlier_ratio ?? b.similarity_score ?? null;
-      return num(va, vb);
+      const va = a.similarity_score != null ? Number(a.similarity_score) : null;
+      const vb = b.similarity_score != null ? Number(b.similarity_score) : null;
+      return num(
+        va != null && Number.isFinite(va) ? va : null,
+        vb != null && Number.isFinite(vb) ? vb : null,
+      );
     }
     case "posted_at":
     case "first_seen_at": {
@@ -1386,7 +1396,7 @@ export function IntelligenceReelsTable({
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-zinc-200/90 bg-zinc-50/90 dark:border-white/10 dark:bg-zinc-950/60">
-        <table className="w-full min-w-[1120px] border-collapse text-left [&_td]:cursor-default">
+        <table className="w-full min-w-[1200px] border-collapse text-left [&_td]:cursor-default">
           <thead>
             <tr className="border-b border-zinc-200/90 text-[10px] uppercase tracking-widest text-zinc-500 dark:border-white/10 dark:text-app-fg-subtle">
               <th className="w-10 px-2 py-3 font-medium">
@@ -1406,7 +1416,7 @@ export function IntelligenceReelsTable({
               <th className="py-3 pr-2 font-medium">Account</th>
               <SortHeader
                 label="Score"
-                hint="Score after analysis (0–100). Tap Analyze if there’s no score yet. Niche-discovered reels show a fit % instead."
+                hint="Silas score after analysis, or open niche fit from View analysis. Niche fit % is in its own column."
                 serverSortable={false}
                 primaryActive={localPrimarySort?.key === "total_score"}
                 primaryDir={localPrimarySort?.dir ?? "desc"}
@@ -1424,21 +1434,24 @@ export function IntelligenceReelsTable({
                 onClick={(s) => handleSort("views", s)}
               />
               <SortHeader
-                label="Breakout / niche"
-                hint="For competitors: views vs their usual (higher = stronger breakout). For niche finds: how well the reel fits your niche (%)."
+                label="Vs account"
+                hint="Views vs this creator’s usual posts on file — above ~1× is hotter than their baseline (breakout-style read)."
                 serverSortable
-                primaryActive={
-                  !localPrimarySort &&
-                  (serverState.sortBy === "outlier_ratio" ||
-                    serverState.sortBy === "similarity_score")
-                }
+                primaryActive={!localPrimarySort && serverState.sortBy === "outlier_ratio"}
                 primaryDir={serverState.sortDir}
-                secondaryActive={
-                  secondarySort?.key === "outlier_ratio" ||
-                  secondarySort?.key === "similarity_score"
-                }
+                secondaryActive={secondarySort?.key === "outlier_ratio"}
                 secondaryDir={secondarySort?.dir ?? "desc"}
                 onClick={(s) => handleSort("outlier_ratio", s)}
+              />
+              <SortHeader
+                label="Niche fit"
+                hint={NICHE_SIMILARITY_SCORE_TOOLTIP}
+                serverSortable
+                primaryActive={!localPrimarySort && serverState.sortBy === "similarity_score"}
+                primaryDir={serverState.sortDir}
+                secondaryActive={secondarySort?.key === "similarity_score"}
+                secondaryDir={secondarySort?.dir ?? "desc"}
+                onClick={(s) => handleSort("similarity_score", s)}
               />
               <SortHeader
                 label="Comments"
@@ -1514,7 +1527,7 @@ export function IntelligenceReelsTable({
             {displayRows.length === 0 ? (
               <tr>
                 <td
-                  colSpan={14}
+                  colSpan={15}
                   className="py-12 text-center text-sm text-zinc-500 dark:text-app-fg-muted"
                 >
                   {total === 0
@@ -1526,6 +1539,7 @@ export function IntelligenceReelsTable({
             {displayRows.map((row, i) => {
               const a = row.analysis;
               const nicheMatch = isNicheMatchOnly(row);
+              const nicheFitLabel = formatNicheMatchPercent(row.similarity_score);
               const silas = a && !nicheMatch ? formatSilasScoreSummary(a) : null;
               const canAnalyze = isAnalyzable(row);
               const hasPost = rowHasPostUrl(row);
@@ -1645,7 +1659,7 @@ export function IntelligenceReelsTable({
                   <td className="py-2.5 pr-2 align-middle tabular-nums">
                     {row.views != null ? row.views.toLocaleString() : "—"}
                   </td>
-                  <td className="py-2.5 pr-2 align-middle">
+                  <td className="py-2.5 pr-2 align-middle tabular-nums">
                     {row.outlier_ratio != null ? (
                       <Tooltip
                         content={`How this reel’s views compare with this account’s usual posts — well above 1× is a breakout.`}
@@ -1661,11 +1675,16 @@ export function IntelligenceReelsTable({
                           {formatTheirUsualMultiplier(row.outlier_ratio) ?? `${Number(row.outlier_ratio).toFixed(1)}×`}
                         </span>
                       </Tooltip>
-                    ) : formatNicheMatchPercent(row.similarity_score) != null ? (
+                    ) : (
+                      <span className={EMPTY_CELL_CLASS}>—</span>
+                    )}
+                  </td>
+                  <td className="py-2.5 pr-2 align-middle tabular-nums">
+                    {nicheFitLabel ? (
                       <Tooltip content={NICHE_SIMILARITY_SCORE_TOOLTIP}>
                         <span className="inline-flex items-center gap-1 font-bold tabular-nums text-purple-600 dark:text-purple-400">
                           <Target className="h-3 w-3 shrink-0" aria-hidden />
-                          {formatNicheMatchPercent(row.similarity_score)}
+                          {nicheFitLabel}
                         </span>
                       </Tooltip>
                     ) : (

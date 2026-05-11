@@ -52,7 +52,7 @@ Optional: `backend/.env` or `config/.env` for overrides (see load order in root 
    - [Apify Console](https://console.apify.com/) → **Settings** → **Integrations** → API token.  
    - Same value as `APIFY_API_TOKEN` in `config/.env` if you already use the Node scripts.  
    - **403 Forbidden** from `api.apify.com/v2/acts/.../runs`: token invalid/revoked, no Apify credits, or wrong actor. Create a new token, confirm billing, then restart the API. The backend uses actor **`apify~instagram-reel-scraper`** by default (override with **`APIFY_REEL_ACTOR`** in `.env` if needed).
-   - **Concurrent runs / Apify cap:** set **`APIFY_MAX_CONCURRENT_RUNS`** (default `20` in code) and apply **`backend/sql/phase21_apify_run_slots.sql`** in Supabase so API + worker replicas share a global slot pool. Set to **`0`** to disable the limiter (local only). See **`backend/RAILWAY.md`** for splitting API and worker on Railway.
+   - **Concurrent runs / Apify cap:** apply **`backend/sql/phase21_apify_run_slots.sql`** in Supabase so API + worker replicas share the code-level global slot pool. See **`backend/RAILWAY.md`** for splitting API and worker on Railway.
    - **Saves / shares show 0:** Instagram often does not expose save counts in scraped public data. **Shares** need Apify’s paid **`includeSharesCount`** add-on and are disabled by default (`APIFY_INCLUDE_SHARES_COUNT=false`) to avoid daily sync over-spend. Re-sync after changing plan.
    - **Duration missing for some reels:** The actor only fills **`videoDuration`** when Instagram returns it for that item; we also read a few alternate fields. Gaps are normal for some post types.
 
@@ -62,6 +62,7 @@ Optional: `backend/.env` or `config/.env` for overrides (see load order in root 
 
 7. **`OPENROUTER_MODEL`** — defaults to `google/gemini-3-flash-preview`.
    **`OPENROUTER_MODEL_FALLBACK`** — defaults to `google/gemini-3.1-flash-lite-preview`; on **HTTP 429** the client waits per **Retry-After** / backoff (see **`OPENROUTER_429_MAX_ATTEMPTS`**, **`OPENROUTER_429_MAX_SLEEP_S`** in `.env.example`), then may try the fallback (text/chat; **not** used for image generation or video multimodal). Account-wide/concurrent traffic still counts against the same API key—add OpenRouter credits or reduce worker parallelism if 429 persists.
+   **OpenRouter scoring throughput:** by default, similarity scoring uses **4 bounded workers** and a Supabase-backed global pacer of **15 requests/minute** (`OPENROUTER_SCORING_WORKERS`, `OPENROUTER_REQUESTS_PER_MINUTE`). Apply **`backend/sql/phase22_openrouter_rate_limit.sql`** before enabling multiple API/worker processes.
 
 8. **`OPENAI_API_KEY`** — required for **Create → Generate image** (gpt-image-1.5). Set in repo root `.env`.
 

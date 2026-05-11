@@ -29,8 +29,7 @@ Use **two Railway services in the same project** (same GitHub repo, same `backen
 
 5. **Networking → Public** — enable HTTP. Railway sets `$PORT` (often `8080` in the UI).
 6. **Healthcheck Path** → `/health` (see `backend/main.py`).
-7. **Variables:** `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`, `APIFY_API_TOKEN`, `OPENROUTER_API_KEY`, `CORS_ORIGINS`, etc.  
-   Set **`APIFY_MAX_CONCURRENT_RUNS`** (e.g. `20`) on the API too — the API process calls Apify from some routes (e.g. Intelligence), and slots are global per Supabase project.
+7. **Variables:** `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`, `APIFY_API_TOKEN`, `OPENROUTER_API_KEY`, `CORS_ORIGINS`, etc.
 8. Deploy, then open `https://<api-service-url>/openapi.json` and confirm `/api/v1/cron/…` routes exist.
 9. Point **GitHub Actions** secrets at this host (`SYNC_ALL_URL`, `NICHE_DISCOVERY_CRON_URL`, etc.).
 10. On the **dashboard** (Vercel) service, set `CONTENT_API_URL` / `NEXT_PUBLIC_CONTENT_API_URL` to this API’s public URL.
@@ -45,11 +44,11 @@ Use **two Railway services in the same project** (same GitHub repo, same `backen
    ```
 
 3. **Networking** — public HTTP is optional; the worker only needs outbound HTTPS to Supabase and Apify.
-4. **Variables** — copy the same backend env as the API (at minimum `SUPABASE_*`, `APIFY_*`, `OPENROUTER_*`, and any keys your jobs use). Set **`APIFY_MAX_CONCURRENT_RUNS`** to the same value as the API.
+4. **Variables** — copy the same backend env as the API (at minimum `SUPABASE_*`, `APIFY_*`, `OPENROUTER_*`, and any keys your jobs use).
 
 ### Apify concurrency slots (Supabase)
 
-When `APIFY_MAX_CONCURRENT_RUNS` is greater than `0`, `services.apify.run_actor()` acquires a row in `public.apify_run_slots` via RPC before starting an Apify actor.
+`services.apify.run_actor()` acquires a row in `public.apify_run_slots` via RPC before starting an Apify actor.
 
 Apply SQL once in the Supabase SQL Editor:
 
@@ -57,9 +56,20 @@ Apply SQL once in the Supabase SQL Editor:
 
 Without this migration, `claim_apify_run_slot` / `release_apify_run_slot` RPCs are missing and actor runs will fail with a clear error after the wait timeout.
 
+### OpenRouter request pacing (Supabase)
+
+Similarity scoring runs with a bounded worker pool (`OPENROUTER_SCORING_WORKERS`, default `4`) and reserves OpenRouter request timestamps globally (`OPENROUTER_REQUESTS_PER_MINUTE`, default `15`) before each chat completion.
+
+Apply SQL once in the Supabase SQL Editor:
+
+- [`backend/sql/phase22_openrouter_rate_limit.sql`](sql/phase22_openrouter_rate_limit.sql)
+
+This keeps 300-reel scoring jobs moving faster than sequential scoring while avoiding account-wide bursts when API and worker services both call OpenRouter.
+
 ### Scaling
 
-- Scale **worker** replicas when `background_jobs` backs up (CPU/RAM permitting). Keep **`APIFY_MAX_CONCURRENT_RUNS`** below your Apify account concurrent cap (often 32); default in code is `20` to leave headroom.
+- Scale **worker** replicas when `background_jobs` backs up (CPU/RAM permitting). The Apify slot limit defaults to `20` in code to leave headroom below the common account cap.
+- Keep OpenRouter pacing conservative first: default `15` requests/minute with `4` scoring workers. If real runs show no 429s, raise cautiously.
 - Scale **API** replicas based on HTTP load. More API replicas do **not** replace workers unless you still run `start.sh` on API (avoid that in production).
 
 ### Local / legacy: API + worker in one container

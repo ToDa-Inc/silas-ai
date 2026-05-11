@@ -30,6 +30,7 @@ from services.instagram_post_url import (
 from services.niche_prerank import prerank_reels_for_similarity
 from services.openrouter import analyze_post_similarity, analyze_reel_similarity
 from services.instagram_media import download_slide_images, slide_urls_from_item
+from services.similarity_scoring_executor import score_items_bounded
 from services.similarity_discovery_keywords import (
     DEFAULT_MAX_KEYWORDS,
     blacklisted_short_codes,
@@ -961,25 +962,27 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
     progress["phase"] = "scoring"
     supabase.table("background_jobs").update({"result": dict(progress)}).eq("id", job_id).execute()
 
-    scored: List[Dict[str, Any]] = []
     model = settings.openrouter_reel_analyze_model
-    for reel in to_score:
-        row = score_reel_dict_for_keyword_similarity(
+
+    def _score_one(reel: Dict[str, Any]) -> Dict[str, Any]:
+        return score_reel_dict_for_keyword_similarity(
             settings,
             analysis_brief=analysis_brief,
             reel=reel,
             threshold=threshold,
             model=model,
         )
-        scored.append(row)
-        progress["scored"] = len(scored)
+
+    scored, score_meta = score_items_bounded(settings, to_score, _score_one)
+    progress.update(score_meta)
+    progress["scored"] = len(scored)
+    for row in scored:
         if row.get("video_analyzed"):
             progress["scored_with_video"] = int(progress.get("scored_with_video") or 0) + 1
         if int(row.get("slides_analyzed") or 0) > 0:
             progress["scored_with_slide_images"] = int(
                 progress.get("scored_with_slide_images") or 0
             ) + 1
-        time.sleep(0.5)
 
     progress["phase"] = "upserting"
     supabase.table("background_jobs").update({"result": dict(progress)}).eq("id", job_id).execute()

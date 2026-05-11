@@ -1,6 +1,5 @@
 -- Global Apify actor concurrency slots (shared across API + worker replicas).
--- Apply in Supabase SQL Editor after deploy. Required for services.apify.run_actor slot limiter
--- when APIFY_MAX_CONCURRENT_RUNS > 0.
+-- Apply in Supabase SQL Editor after deploy. Required for services.apify.run_actor slot limiter.
 
 CREATE TABLE IF NOT EXISTS public.apify_run_slots (
   slot_no integer PRIMARY KEY CHECK (slot_no >= 1 AND slot_no <= 32),

@@ -1,0 +1,4 @@
+# Smoke-test URLs (same shapes as competitor_list.md)
+https://www.instagram.com/reel/DWjcX07ker3/?igsh=MWwyenU4eHBnOXVkbg==
+https://www.instagram.com/reel/DW-5OMggmIO/?igsh=am53bjJhdmJ0dHdv
+https://www.instagram.com/p/DTxrNwljEFd/?igsh=MTR1MXBwOXRodmljMQ==

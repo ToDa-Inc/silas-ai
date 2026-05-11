@@ -38,11 +38,10 @@ class TestApifyErrorClassification(unittest.TestCase):
 
 
 class TestApifyRunSlot(unittest.TestCase):
-    def test_max_zero_skips_rpc(self) -> None:
+    def test_missing_supabase_skips_rpc(self) -> None:
         s = SimpleNamespace(
-            apify_max_concurrent_runs=0,
-            supabase_url="https://x.supabase.co",
-            supabase_service_role_key="k",
+            supabase_url="",
+            supabase_service_role_key="",
         )
         with patch("services.apify_limiter.get_supabase_for_settings") as m:
             with apify_run_slot(s, "actor"):  # type: ignore[arg-type]
@@ -51,7 +50,6 @@ class TestApifyRunSlot(unittest.TestCase):
 
     def test_acquire_and_release_on_success(self) -> None:
         s = SimpleNamespace(
-            apify_max_concurrent_runs=4,
             apify_slot_ttl_seconds=120,
             apify_slot_wait_timeout_seconds=30.0,
             supabase_url="https://x.supabase.co",
@@ -83,7 +81,6 @@ class TestApifyRunSlot(unittest.TestCase):
 
     def test_wait_timeout_when_no_slot(self) -> None:
         s = SimpleNamespace(
-            apify_max_concurrent_runs=2,
             apify_slot_ttl_seconds=120,
             apify_slot_wait_timeout_seconds=0.1,
             supabase_url="https://x.supabase.co",
