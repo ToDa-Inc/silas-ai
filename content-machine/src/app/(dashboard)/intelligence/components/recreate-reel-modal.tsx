@@ -6,8 +6,11 @@ import { FileText, Images, Loader2, Sparkles, UserRound, Video, X } from "lucide
 import { ReelThumbnail } from "@/components/reel-thumbnail";
 import type { ClientCarouselTemplate, ClientCoverTemplate, ClientCta, ScrapedReelRow } from "@/lib/api";
 import {
+  CONTENT_DEFAULTS_UPDATED_EVENT,
   fetchClientGenerationLibraries,
   generationStart,
+  readClientGenerationLibrariesSnapshot,
+  type ClientGenerationLibraryBundle,
 } from "@/lib/api-client";
 
 type Props = {
@@ -339,6 +342,40 @@ export function RecreateReelModal({
       cancelled = true;
     };
   }, [open, clientSlug, orgSlug]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const applyLibraries = (bundle: ClientGenerationLibraryBundle) => {
+      setCarouselTemplates(bundle.carouselTemplates);
+      setSelectedCarouselTemplateId((current) => {
+        if (current && bundle.carouselTemplates.some((template) => template.id === current)) return current;
+        return bundle.carouselTemplates.length === 1 ? bundle.carouselTemplates[0].id : null;
+      });
+      setCoverTemplates(bundle.coverTemplates);
+      setSelectedCoverTemplateId((current) => {
+        if (current && bundle.coverTemplates.some((template) => template.id === current)) return current;
+        return bundle.coverTemplates.length === 1 ? bundle.coverTemplates[0].id : null;
+      });
+      setCtaLibrary(bundle.ctaLibrary);
+      setSelectedCtaId((current) => {
+        if (current && bundle.ctaLibrary.some((cta) => cta.id === current)) return current;
+        return bundle.ctaLibrary.length === 1 ? bundle.ctaLibrary[0].id : null;
+      });
+    };
+
+    const refresh = (event?: Event) => {
+      if (event instanceof CustomEvent && event.detail) {
+        applyLibraries(event.detail as ClientGenerationLibraryBundle);
+        return;
+      }
+      const snapshot = readClientGenerationLibrariesSnapshot();
+      if (snapshot) applyLibraries(snapshot);
+    };
+
+    window.addEventListener(CONTENT_DEFAULTS_UPDATED_EVENT, refresh);
+    return () => window.removeEventListener(CONTENT_DEFAULTS_UPDATED_EVENT, refresh);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;

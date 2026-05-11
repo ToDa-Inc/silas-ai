@@ -855,6 +855,10 @@ export type ClientGenerationLibraryBundle = {
   coverTemplates: ClientCoverTemplate[];
 };
 
+export const CONTENT_DEFAULTS_UPDATED_EVENT = "content-defaults-updated";
+export const CONTENT_DEFAULTS_UPDATED_AT_KEY = "content-defaults:updated-at";
+export const CONTENT_DEFAULTS_PAYLOAD_KEY = "content-defaults:generation-libraries";
+
 function objectRecord(raw: unknown): Record<string, unknown> {
   return raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
 }
@@ -900,6 +904,39 @@ export async function fetchClientGenerationLibraries(
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "fetch failed" };
   }
+}
+
+export function readClientGenerationLibrariesSnapshot(): ClientGenerationLibraryBundle | null {
+  if (typeof window === "undefined") return null;
+  const raw = window.localStorage.getItem(CONTENT_DEFAULTS_PAYLOAD_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<ClientGenerationLibraryBundle>;
+    return {
+      ctaLibrary: normalizeCtaLibraryFromRaw(parsed.ctaLibrary),
+      carouselTemplates: normalizeCarouselTemplates(parsed.carouselTemplates),
+      coverTemplates: normalizeCoverTemplates(parsed.coverTemplates),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function broadcastClientGenerationLibrariesSnapshot(
+  bundle: ClientGenerationLibraryBundle,
+): void {
+  if (typeof window === "undefined") return;
+  const normalized: ClientGenerationLibraryBundle = {
+    ctaLibrary: normalizeCtaLibraryFromRaw(bundle.ctaLibrary),
+    carouselTemplates: normalizeCarouselTemplates(bundle.carouselTemplates),
+    coverTemplates: normalizeCoverTemplates(bundle.coverTemplates),
+  };
+  window.localStorage.setItem(CONTENT_DEFAULTS_UPDATED_AT_KEY, String(Date.now()));
+  window.localStorage.setItem(CONTENT_DEFAULTS_PAYLOAD_KEY, JSON.stringify(normalized));
+  window.dispatchEvent(new CustomEvent<ClientGenerationLibraryBundle>(
+    CONTENT_DEFAULTS_UPDATED_EVENT,
+    { detail: normalized },
+  ));
 }
 
 /** Client-side fetch of the active client's CTA library. Used by the Generate

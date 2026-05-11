@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, Loader2, Plus, Save, Trash2 } from "lucide-react";
 import {
+  broadcastClientGenerationLibrariesSnapshot,
   fetchClientRowClient,
   normalizeCtaLibraryFromRaw,
   normalizeGenerationLibrariesFromRow,
@@ -118,10 +119,7 @@ export function GenerationLibrariesPanel({ clientSlug, orgSlug, client, disabled
       setCtaLibrary(nextCtas);
       setBaselineSig(ctaSig(nextCtas));
       setStatus("Next steps saved.");
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem("content-defaults:updated-at", String(Date.now()));
-        window.dispatchEvent(new Event("content-defaults-updated"));
-      }
+      broadcastClientGenerationLibrariesSnapshot(normalizeGenerationLibrariesFromRow(putRes.data));
       router.refresh();
     } finally {
       setSaveBusy(false);

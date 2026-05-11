@@ -11,6 +11,8 @@ import type { ClientCarouselTemplate, ClientCoverTemplate, ClientCta, ScrapedRee
 import { formatCommentViewPct } from "@/lib/reel-comment-view";
 import {
   clientApiContext,
+  CONTENT_DEFAULTS_UPDATED_AT_KEY,
+  CONTENT_DEFAULTS_UPDATED_EVENT,
   fetchAdaptPreviewReels,
   fetchClientGenerationLibraries,
   fetchFormatDigests,
@@ -21,7 +23,9 @@ import {
   generationGetSession,
   generationListSessions,
   generationStart,
+  readClientGenerationLibrariesSnapshot,
   recommendFormatForIdea,
+  type ClientGenerationLibraryBundle,
   type FormatDigestSummary,
   type GenerationSession,
 } from "@/lib/api-client";
@@ -943,14 +947,8 @@ export default function GeneratePage() {
     return ctx;
   }, []);
 
-  const refreshGenerationLibraries = useCallback(async (cs: string, os: string) => {
-    if (!cs || !os) return;
-    const libsRes = await fetchClientGenerationLibraries(cs, os);
-    if (!libsRes.ok) {
-      show(libsRes.error, "error");
-      return;
-    }
-    const { ctaLibrary: ctas, carouselTemplates: carousels, coverTemplates: covers } = libsRes.data;
+  const applyGenerationLibraries = useCallback((bundle: ClientGenerationLibraryBundle) => {
+    const { ctaLibrary: ctas, carouselTemplates: carousels, coverTemplates: covers } = bundle;
     setCtaLibrary(ctas);
     setSelectedCtaId((current) => {
       if (current && ctas.some((cta) => cta.id === current)) return current;
@@ -966,7 +964,17 @@ export default function GeneratePage() {
       if (current && covers.some((template) => template.id === current)) return current;
       return covers.length === 1 ? covers[0].id : null;
     });
-  }, [show]);
+  }, []);
+
+  const refreshGenerationLibraries = useCallback(async (cs: string, os: string) => {
+    if (!cs || !os) return;
+    const libsRes = await fetchClientGenerationLibraries(cs, os);
+    if (!libsRes.ok) {
+      show(libsRes.error, "error");
+      return;
+    }
+    applyGenerationLibraries(libsRes.data);
+  }, [applyGenerationLibraries, show]);
 
   /** Persist mode + clear composer so a stale URL doesn't leak into idea mode (or vice versa). */
   const onChangeMode = useCallback((next: Mode) => {
@@ -1002,30 +1010,38 @@ export default function GeneratePage() {
   useEffect(() => {
     if (!clientSlug || !orgSlug) return;
 
-    const refresh = () => {
+    const refresh = (event?: Event) => {
+      if (event instanceof CustomEvent && event.detail) {
+        applyGenerationLibraries(event.detail as ClientGenerationLibraryBundle);
+        return;
+      }
+      const snapshot = readClientGenerationLibrariesSnapshot();
+      if (snapshot) applyGenerationLibraries(snapshot);
       void refreshGenerationLibraries(clientSlug, orgSlug);
     };
     const refreshOnVisible = () => {
       if (document.visibilityState === "visible") refresh();
     };
 
-    window.addEventListener("content-defaults-updated", refresh);
+    window.addEventListener(CONTENT_DEFAULTS_UPDATED_EVENT, refresh);
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refreshOnVisible);
     return () => {
-      window.removeEventListener("content-defaults-updated", refresh);
+      window.removeEventListener(CONTENT_DEFAULTS_UPDATED_EVENT, refresh);
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refreshOnVisible);
     };
-  }, [clientSlug, orgSlug, refreshGenerationLibraries]);
+  }, [applyGenerationLibraries, clientSlug, orgSlug, refreshGenerationLibraries]);
 
   useEffect(() => {
     if (!clientSlug || !orgSlug) return;
-    const updatedAt = window.localStorage.getItem("content-defaults:updated-at");
+    const updatedAt = window.localStorage.getItem(CONTENT_DEFAULTS_UPDATED_AT_KEY);
     if (updatedAt) {
+      const snapshot = readClientGenerationLibrariesSnapshot();
+      if (snapshot) applyGenerationLibraries(snapshot);
       void refreshGenerationLibraries(clientSlug, orgSlug);
     }
-  }, [clientSlug, orgSlug, refreshGenerationLibraries]);
+  }, [applyGenerationLibraries, clientSlug, orgSlug, refreshGenerationLibraries]);
 
   /** When Format = Auto and the user typed enough idea text, infer format once for template UI (matches submit-time recommend). */
   useEffect(() => {
