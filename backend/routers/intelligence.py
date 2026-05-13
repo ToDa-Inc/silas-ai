@@ -39,6 +39,7 @@ from models.reel import (
     ReelAnalysisOut,
     ReelMetricsListOut,
     ReelMetricsSeriesOut,
+    ScrapedReelBookmarkBody,
     ScrapedReelOut,
     TopicSearchBody,
 )
@@ -2308,6 +2309,7 @@ def list_niche_discovery_reels(
 # CASE expression and are deferred until there's real demand.
 _REELS_SORT_WHITELIST = (
     "posted_at",
+    "posted_date",  # DATE generated column — UTC day, avoids timestamp-precision tiebreaker problem
     "views",
     "likes",
     "comments",
@@ -2318,6 +2320,35 @@ _REELS_SORT_WHITELIST = (
     "video_duration",
     "first_seen_at",
 )
+
+
+def _parse_sort_rules(
+    sort: Optional[str],
+    sort_by: str,
+    sort_dir: str,
+) -> list[tuple[str, bool]]:
+    """Return (column, desc) tuples for ORDER BY chaining.
+
+    New format:  sort=views:desc,posted_date:asc   (up to 3 col:dir pairs)
+    Legacy compat: sort_by=views + sort_dir=desc  (single column)
+    """
+    if sort:
+        rules: list[tuple[str, bool]] = []
+        for part in sort.split(",")[:3]:
+            part = part.strip()
+            if ":" in part:
+                col, _, raw_dir = part.partition(":")
+                col = col.strip()
+                raw_dir = raw_dir.strip()
+            else:
+                col = part.strip()
+                raw_dir = "desc"
+            if col in _REELS_SORT_WHITELIST:
+                rules.append((col, raw_dir.lower() != "asc"))
+        if rules:
+            return rules
+    col = sort_by if sort_by in _REELS_SORT_WHITELIST else "posted_at"
+    return [(col, (sort_dir or "desc").lower() != "asc")]
 
 
 @router.get("/clients/{slug}/reels", response_model=list[ScrapedReelOut])
@@ -2334,6 +2365,10 @@ def list_reels(
             "account_username matches clients.instagram_handle when that handle is set."
         ),
     ),
+    bookmarked_only: bool = Query(
+        False,
+        description="Only reels marked as favourites (is_bookmarked) for this client.",
+    ),
     include_analysis: bool = Query(
         False,
         description="Attach Silas analysis summary (id, score, rating) when a reel_analyses row exists.",
@@ -2348,13 +2383,19 @@ def list_reels(
     sort_by: str = Query(
         "posted_at",
         description=(
-            "Sort field. Allowed: posted_at, views, likes, comments, saves, "
-            "shares, outlier_ratio, similarity_score, video_duration, first_seen_at."
+            "Legacy single-sort column. Prefer the `sort` param for multi-sort."
         ),
     ),
     sort_dir: str = Query(
         "desc",
-        description="Sort direction: 'asc' or 'desc' (default desc).",
+        description="Sort direction for sort_by: 'asc' or 'desc' (default desc).",
+    ),
+    sort: Optional[str] = Query(
+        None,
+        description=(
+            "Multi-sort: comma-separated col:dir pairs, e.g. posted_date:desc,comments:desc "
+            "(up to 3 levels). Overrides sort_by/sort_dir when present."
+        ),
     ),
     source: Optional[str] = Query(
         None,
@@ -2430,17 +2471,17 @@ def list_reels(
         base_filters = base_filters.gte("posted_at", posted_after)
     if posted_before:
         base_filters = base_filters.lte("posted_at", posted_before)
+    if bookmarked_only:
+        base_filters = base_filters.eq("is_bookmarked", True)
 
-    sort_col = sort_by if sort_by in _REELS_SORT_WHITELIST else "posted_at"
-    desc = (sort_dir or "desc").lower() != "asc"
+    sort_rules = _parse_sort_rules(sort, sort_by, sort_dir)
 
     # Range over [offset, offset+limit) — supabase-py uses inclusive bounds.
     page_end = offset + limit - 1
-    res = (
-        base_filters.order(sort_col, desc=desc, nullsfirst=False)
-        .range(offset, page_end)
-        .execute()
-    )
+    q = base_filters
+    for sort_col, desc in sort_rules:
+        q = q.order(sort_col, desc=desc, nullsfirst=False)
+    res = q.range(offset, page_end).execute()
     data = res.data or []
     for row in data:
         enrich_engagement_metrics(row)
@@ -2489,6 +2530,8 @@ def list_reels(
             count_q = count_q.gte("posted_at", posted_after)
         if posted_before:
             count_q = count_q.lte("posted_at", posted_before)
+        if bookmarked_only:
+            count_q = count_q.eq("is_bookmarked", True)
         count_res = count_q.execute()
         total = int(count_res.count or 0)
     except Exception:
@@ -2590,6 +2633,40 @@ def reel_source_preview(
             status_code=404,
             detail="This reel is not in your workspace yet. Analyze it in Intelligence first, or pick a quick pick.",
         )
+    row = dict(res.data[0])
+    enrich_engagement_metrics(row)
+    normalize_scraped_reel_row_for_api(row)
+    return ScrapedReelOut.model_validate(row)
+
+
+@router.patch("/clients/{slug}/reels/{reel_id}", response_model=ScrapedReelOut)
+def patch_scraped_reel_bookmark(
+    slug: str,
+    reel_id: str,
+    body: ScrapedReelBookmarkBody,
+    client_id: Annotated[str, Depends(resolve_client_id)],
+    supabase: Annotated[Client, Depends(get_supabase)],
+) -> dict:
+    """Set or clear favourites flag (column ``is_bookmarked`` on ``scraped_reels``)."""
+    _ = slug
+    try:
+        res = (
+            supabase.table("scraped_reels")
+            .update({"is_bookmarked": body.is_bookmarked})
+            .eq("id", reel_id)
+            .eq("client_id", client_id)
+            .execute()
+        )
+    except Exception as e:
+        logger.exception("patch_scraped_reel_bookmark: update failed reel_id=%s", reel_id)
+        raw = (str(e).strip() or e.__class__.__name__)[:480]
+        hint = (
+            "If the error mentions ``is_bookmarked`` or an unknown column, run "
+            "``backend/sql/phase27_scraped_reels_is_bookmarked.sql`` once in the Supabase SQL editor."
+        )
+        raise HTTPException(status_code=500, detail=f"{raw} — {hint}") from e
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Reel not found for this client")
     row = dict(res.data[0])
     enrich_engagement_metrics(row)
     normalize_scraped_reel_row_for_api(row)

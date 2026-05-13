@@ -1,3 +1,5 @@
+import type { VideoSpecAppearance, VideoTextTreatmentId } from "./schema";
+
 export type CaptionLayerInput = {
   hook: { text?: string | null; durationSec: number };
   blocks: Array<{
@@ -7,6 +9,8 @@ export type CaptionLayerInput = {
     startSec: number;
     endSec: number;
     animation?: "pop" | "fade" | "slide-up" | "none" | null;
+    appearance?: VideoSpecAppearance | null;
+    textTreatment?: VideoTextTreatmentId | null;
   }>;
 };
 
@@ -17,6 +21,8 @@ export type ActiveCaptionLayer = {
   startSec: number;
   animation: "pop" | "fade" | "slide-up" | "none";
   kind: "hook" | "block";
+  appearance?: VideoSpecAppearance | null;
+  textTreatment?: VideoTextTreatmentId | null;
 };
 
 export function activeCaptionLayers(spec: CaptionLayerInput, sec: number): ActiveCaptionLayer[] {
@@ -45,6 +51,8 @@ export function activeCaptionLayers(spec: CaptionLayerInput, sec: number): Activ
         startSec: b.startSec,
         animation: b.animation ?? "fade",
         kind: "block",
+        appearance: b.appearance ?? undefined,
+        textTreatment: b.textTreatment ?? undefined,
       });
     });
 

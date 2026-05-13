@@ -311,6 +311,8 @@ export type ScrapedReelRow = {
   outbreaker_ratio_source?: "milestone_avg" | "account_avg_fallback" | null;
   /** GET /dashboard/competitor-wins — views ÷ that competitor's account_avg_views. */
   win_ratio?: number | null;
+  /** Favourites star (PATCH …/reels/{id}); persisted as ``is_bookmarked`` in DB. */
+  is_bookmarked?: boolean | null;
   /** Computed server-side for consistent UX labels (optional on older API builds). */
   provenance?: ApiReelProvenance | null;
 };
@@ -713,6 +715,7 @@ export function fetchDashboardCompetitorWins(days = 3, limit = DASHBOARD_LANE_LI
 
 export type ReelsListSortBy =
   | "posted_at"
+  | "posted_date"
   | "views"
   | "likes"
   | "comments"
@@ -722,6 +725,9 @@ export type ReelsListSortBy =
   | "similarity_score"
   | "video_duration"
   | "first_seen_at";
+
+/** One level of a multi-sort rule. Encoded as "col:dir" pairs in the URL. */
+export type SortRule = { col: ReelsListSortBy; dir: "asc" | "desc" };
 
 export type ReelsMediaType = "all" | "short" | "long" | "carousel";
 
@@ -740,9 +746,16 @@ export type ReelsListFilters = {
   maxComments?: number | null;
   postedAfter?: string | null;
   postedBefore?: string | null;
+  /** Favourites-only list (GET ``bookmarked_only=true``). */
+  favouritesOnly?: boolean;
+  /** @deprecated use ``favouritesOnly`` */
+  bookmarkedOnly?: boolean;
 };
 
 export type ReelsListQuery = ReelsListFilters & {
+  /** Multi-sort rules — up to 3 levels. When set, overrides sortBy/sortDir. */
+  sortRules?: SortRule[];
+  /** Legacy single-sort — used when sortRules is not set. */
   sortBy?: ReelsListSortBy;
   sortDir?: "asc" | "desc";
   limit?: number;
@@ -769,8 +782,12 @@ export async function fetchReelsList(query: ReelsListQuery = {}): Promise<{
   params.set("include_analysis", String(query.includeAnalysis ?? true));
   params.set("limit", String(query.limit ?? 100));
   if (query.offset && query.offset > 0) params.set("offset", String(query.offset));
-  if (query.sortBy) params.set("sort_by", query.sortBy);
-  if (query.sortDir) params.set("sort_dir", query.sortDir);
+  if (query.sortRules?.length) {
+    params.set("sort", query.sortRules.map((r) => `${r.col}:${r.dir}`).join(","));
+  } else {
+    if (query.sortBy) params.set("sort_by", query.sortBy);
+    if (query.sortDir) params.set("sort_dir", query.sortDir);
+  }
   if (query.outlierOnly) params.set("outlier_only", "true");
   if (query.ownReelsOnly) params.set("own_reels_only", "true");
   if (query.source) params.set("source", query.source);
@@ -785,6 +802,7 @@ export async function fetchReelsList(query: ReelsListQuery = {}): Promise<{
   if (query.maxComments != null) params.set("max_comments", String(query.maxComments));
   if (query.postedAfter) params.set("posted_after", query.postedAfter);
   if (query.postedBefore) params.set("posted_before", query.postedBefore);
+  if (query.favouritesOnly ?? query.bookmarkedOnly) params.set("bookmarked_only", "true");
 
   try {
     const { headers, clientSlug } = await getCachedServerApiContext();

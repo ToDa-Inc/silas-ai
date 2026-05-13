@@ -162,6 +162,12 @@ class GenerationStartBody(BaseModel):
             "if the template is later edited."
         ),
     )
+    carousel_slide_count: Optional[int] = Field(
+        None,
+        ge=3,
+        le=10,
+        description="Carousel length (3–10). Stored on the session; template refs cycle if count > references.",
+    )
 
 
 class GenerationRecommendFormatBody(BaseModel):
@@ -199,9 +205,14 @@ class PatchGenerationSessionBody(BaseModel):
     selected_carousel_template: Optional[SelectedCarouselTemplate] = Field(
         None,
         description=(
-            "Replace the carousel reference snapshot. Allowed only for carousel sessions "
-            "with no generated carousel slides yet."
+            "Replace the carousel reference snapshot (backgrounds / roles). "
+            "When carousel_slides already exist, set clear_carousel_slides=true to apply "
+            "(this clears current slides; use Generate slides afterward)."
         ),
+    )
+    clear_carousel_slides: Optional[bool] = Field(
+        None,
+        description="When true with existing slides, clear carousel_slides and script outline so a new template applies.",
     )
 
 
@@ -332,6 +343,7 @@ class GenerationSessionOut(BaseModel):
     selected_cta: Optional[Dict[str, Any]] = None
     selected_carousel_template: Optional[Dict[str, Any]] = None
     selected_cover_template: Optional[Dict[str, Any]] = None
+    carousel_slide_count: Optional[int] = None
     status: str
     feedback: Optional[str] = None
     prompt_version: Optional[str] = None

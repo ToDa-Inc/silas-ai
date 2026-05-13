@@ -126,6 +126,64 @@ def test_explicit_hook_timing_is_capped_to_source_video_duration():
     assert spec.totalSec == 7
 
 
+def test_hook_duration_with_pauses_does_not_repack_block_windows():
+    """Studio sends hook trim + derived ``pausesSec``; must not run ``relayout_spec`` on text blocks."""
+    spec = apply_ops_to_spec(
+        _base_spec(),
+        [
+            {"op": "replace", "path": "/hook/durationSec", "value": 3.0},
+            {"op": "replace", "path": "/pausesSec", "value": [2.8]},
+            {"op": "replace", "path": "/totalSec", "value": 7.0},
+        ],
+    )
+    assert spec.hook.durationSec == 3.0
+    assert spec.blocks[0].startSec == 5.8
+    assert spec.blocks[0].endSec == 7.0
+    assert spec.pausesSec == [2.8]
+
+
+def test_layout_patch_does_not_repack_block_windows():
+    spec = apply_ops_to_spec(
+        _base_spec(),
+        [{"op": "replace", "path": "/layout/stackGrowth", "value": "down"}],
+    )
+    block = spec.blocks[0]
+    assert block.startSec == 5.8
+    assert block.endSec == 7.0
+
+
+def test_text_align_patch_does_not_repack_block_windows():
+    spec = apply_ops_to_spec(
+        _base_spec(),
+        [{"op": "replace", "path": "/layout/textAlign", "value": "left"}],
+    )
+    block = spec.blocks[0]
+    assert block.startSec == 5.8
+    assert block.endSec == 7.0
+
+
+def test_replace_nested_block_appearance_when_appearance_key_missing():
+    """Studio sends RFC6902 ``replace`` on ``/blocks/N/appearance/fontId``; jsonpatch requires parents + leaf."""
+    base = dict(_base_spec())
+    base["blocks"] = [
+        {
+            "id": "cta",
+            "text": "CTA text",
+            "isCTA": True,
+            "startSec": 5.8,
+            "endSec": 7.0,
+            "animation": "pop",
+            "appearance": None,
+        }
+    ]
+    spec = apply_ops_to_spec(
+        base,
+        [{"op": "replace", "path": "/blocks/0/appearance/fontId", "value": "playfair"}],
+    )
+    assert spec.blocks[0].appearance is not None
+    assert spec.blocks[0].appearance.fontId == "playfair"
+
+
 if __name__ == "__main__":
     test_explicit_block_timings_survive_spec_patch()
     test_finalize_spec_preserves_existing_layer_windows_when_text_matches()

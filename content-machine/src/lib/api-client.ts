@@ -706,6 +706,37 @@ export async function enqueueReelAnalyzeBulk(
   }
 }
 
+/** PATCH …/reels/{reelId} — favourites star (body ``is_bookmarked``). */
+export async function patchScrapedReelBookmark(
+  clientSlug: string,
+  orgSlug: string,
+  reelId: string,
+  isBookmarked: boolean,
+): Promise<{ ok: true; data: ScrapedReelRow } | { ok: false; error: string }> {
+  const base = getContentApiBase();
+  const headers = await clientApiHeaders({ orgSlug });
+  try {
+    const res = await contentApiFetch(
+      `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/reels/${encodeURIComponent(reelId)}`,
+      {
+        method: "PATCH",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ is_bookmarked: isBookmarked }),
+      },
+    );
+    const json = (await res.json().catch(() => ({}))) as ScrapedReelRow & { detail?: unknown };
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: formatFastApiError(json as Record<string, unknown>, `Failed (${res.status})`),
+      };
+    }
+    return { ok: true, data: json as ScrapedReelRow };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "fetch failed" };
+  }
+}
+
 export type TextBlock = { text: string; isCTA?: boolean };
 
 export type ThumbnailEditOptions = {
@@ -754,6 +785,8 @@ export type GenerationSession = {
   selected_cta?: SelectedCtaPayload | null;
   selected_carousel_template?: SelectedCarouselTemplatePayload | null;
   selected_cover_template?: SelectedCoverTemplatePayload | null;
+  /** 3–10; set at session start for carousel sessions */
+  carousel_slide_count?: number | null;
   status: string;
   feedback?: string | null;
   prompt_version?: string | null;
@@ -1258,6 +1291,7 @@ export async function generationStart(
     selected_cta?: SelectedCtaPayload;
     selected_carousel_template?: SelectedCarouselTemplatePayload;
     selected_cover_template?: SelectedCoverTemplatePayload;
+    carousel_slide_count?: number;
   },
 ): Promise<{ ok: true; data: GenerationSession } | { ok: false; error: string }> {
   const base = getContentApiBase();
@@ -1429,6 +1463,8 @@ export async function generationPatchSession(
   sessionId: string,
   body: {
     selected_carousel_template: SelectedCarouselTemplatePayload;
+    /** When slides already exist, must be true to apply a new template (server clears slides). */
+    clear_carousel_slides?: boolean;
   },
 ): Promise<{ ok: true; data: GenerationSession } | { ok: false; error: string }> {
   const base = getContentApiBase();

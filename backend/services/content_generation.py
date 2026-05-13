@@ -339,10 +339,8 @@ def _format_carousel_template_block(selected_carousel_template: Optional[Dict[st
     if desc:
         lines.append(f"description: {desc}")
     lines.append(
-        "Each template slide has a reference image that defines the visual frame for that "
-        "slide index: write copy that fits the role (cover / body / screenshot / CTA). "
-        "When this recipe is selected, the carousel uses the same slide count as the template "
-        "(between 3 and 10 slides)."
+        "Template reference slides define visual style (backgrounds) and optional slide roles. "
+        "The user picks how many slides to generate (3–10); backgrounds repeat in order if needed."
     )
     for slide in slides[:10]:
         idx = int(slide.get("idx") or 0)

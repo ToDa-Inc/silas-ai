@@ -68,6 +68,10 @@ class VideoSpecBlock(BaseModel):
     startSec: float = Field(ge=0.0)
     endSec: float = Field(gt=0.0)
     animation: VideoAnimation = "fade"
+    """Optional look overrides for this beat only (inherits from top-level ``appearance``)."""
+    appearance: Optional["VideoSpecAppearance"] = None
+    """Optional lettering treatment for this beat (inherits from top-level ``textTreatment``)."""
+    textTreatment: Optional[VideoTextTreatmentId] = None
 
     @model_validator(mode="after")
     def _order(self) -> "VideoSpecBlock":

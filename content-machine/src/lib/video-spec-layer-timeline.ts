@@ -96,13 +96,19 @@ export function buildLayerRows(spec: VideoSpec): VideoLayerRow[] {
     },
   ];
 
-  spec.blocks.forEach((b, i) => {
+  const chronicle = spec.blocks.map((b, origIdx) => ({ b, origIdx }));
+  chronicle.sort((a, b) => {
+    if (a.b.startSec !== b.b.startSec) return a.b.startSec - b.b.startSec;
+    return a.origIdx - b.origIdx;
+  });
+
+  chronicle.forEach(({ b, origIdx }, orderIdx) => {
     const startSec = roundCs(Math.max(0, b.startSec));
     const endSec = roundCs(Math.max(startSec, b.endSec));
     rows.push({
       id: b.id,
       kind: "block",
-      label: b.isCTA ? "CTA" : `Text ${i + 1}`,
+      label: b.isCTA ? "CTA" : `Text ${orderIdx + 1}`,
       text: b.text,
       startSec,
       endSec,
@@ -110,7 +116,7 @@ export function buildLayerRows(spec: VideoSpec): VideoLayerRow[] {
       leftPct: roundCs((startSec / total) * 100),
       widthPct: roundCs(((endSec - startSec) / total) * 100),
       isCTA: Boolean(b.isCTA),
-      blockIndex: i,
+      blockIndex: origIdx,
     });
   });
 

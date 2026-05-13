@@ -37,6 +37,25 @@ function baseSpec(): VideoSpec {
   };
 }
 
+test("buildLayerRows orders block rows by startSec (strip matches timeline, blockIndex stays spec index)", () => {
+  const shuffled: VideoSpec = {
+    ...baseSpec(),
+    blocks: [
+      { id: "b2", text: "Second beat", isCTA: true, startSec: 4.5, endSec: 6, animation: "pop" },
+      { id: "b1", text: "First beat", isCTA: false, startSec: 2, endSec: 4, animation: "fade" },
+    ],
+  };
+  const rows = buildLayerRows(shuffled);
+  assert.deepEqual(
+    rows.map((r) => ({ id: r.id, blockIndex: r.blockIndex })),
+    [
+      { id: "hook", blockIndex: null },
+      { id: "b1", blockIndex: 1 },
+      { id: "b2", blockIndex: 0 },
+    ],
+  );
+});
+
 test("buildLayerRows returns hook and block rows with timeline positions", () => {
   const rows = buildLayerRows(baseSpec());
 

@@ -66,7 +66,7 @@ export default function TopBannerTemplate({ spec, frame, fps }: VideoSpecWithTim
                   margin: 0,
                   lineHeight: 1.2,
                   letterSpacing: '-0.02em',
-                  ...(isBoldOutlineTreatment(spec) ? cardBoldOutlineCaptionStyle(spec) : {}),
+                  ...(isBoldOutlineTreatment(spec) ? cardBoldOutlineCaptionStyle() : {}),
                   wordWrap: 'break-word',
                   overflowWrap: 'break-word',
                   textAlign: ta,

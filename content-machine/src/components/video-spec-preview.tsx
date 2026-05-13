@@ -25,6 +25,10 @@ const LAYER_HANDLE_PX = 12;
 /** Ignore sub-pixel jitter as non-drags. */
 const DRAG_THRESHOLD_PX = 3;
 
+function clamp01(x: number): number {
+  return Math.max(0, Math.min(1, x));
+}
+
 /** Player ref — only need frame subscription for the edit playhead + seek. */
 type PlayerHandle = {
   getCurrentFrame?: () => number;
@@ -57,9 +61,15 @@ function VideoSpecPreviewBase({
   const playerRef = useRef<PlayerHandle | null>(null);
   const stripRef = useRef<HTMLDivElement | null>(null);
 
-  const durationInFrames = useMemo(
-    () => Math.max(1, Math.ceil((spec?.totalSec ?? 8) * FPS)),
+  /** Same seconds basis as ruler + layer bars (not ceil(frameCount)-1). */
+  const timelineSec = useMemo(
+    () => Math.max(0.001, spec?.totalSec ?? 8),
     [spec?.totalSec],
+  );
+
+  const durationInFrames = useMemo(
+    () => Math.max(1, Math.ceil(timelineSec * FPS)),
+    [timelineSec],
   );
 
   const initialFrame = useMemo(
@@ -104,13 +114,13 @@ function VideoSpecPreviewBase({
 
   const rulerMarks = useMemo(() => {
     if (!spec) return [];
-    const total = Math.max(0.001, spec.totalSec);
+    const total = timelineSec;
     const count = Math.min(7, Math.max(3, Math.floor(total) + 1));
     return Array.from({ length: count }, (_, i) => {
       const sec = count === 1 ? 0 : (total / (count - 1)) * i;
       return { sec, leftPct: (sec / total) * 100 };
     });
-  }, [spec]);
+  }, [spec, timelineSec]);
 
   /** Layer edge drag: left handle edits startSec, right handle edits endSec. */
   const dragStateRef = useRef<{
@@ -131,7 +141,7 @@ function VideoSpecPreviewBase({
       e.preventDefault();
       e.stopPropagation();
       const stripRect = stripEl.getBoundingClientRect();
-      const pxPerSec = stripRect.width / Math.max(0.001, spec.totalSec);
+      const pxPerSec = stripRect.width / timelineSec;
       dragStateRef.current = {
         layer,
         edge,
@@ -175,13 +185,14 @@ function VideoSpecPreviewBase({
       document.addEventListener("pointerup", onUp);
       document.addEventListener("pointercancel", onUp);
     },
-    [onResizeLayerTimingDraft, onResizeLayerTimingCommit, spec],
+    [onResizeLayerTimingDraft, onResizeLayerTimingCommit, spec, timelineSec],
   );
 
+  /** Align with ruler/layer `leftPct` (sec / totalSec), not frame-index / (frames-1). */
   const playheadPct = useMemo(() => {
-    if (durationInFrames <= 1) return 0;
-    return (currentFrame / (durationInFrames - 1)) * 100;
-  }, [currentFrame, durationInFrames]);
+    const sec = currentFrame / FPS;
+    return clamp01(sec / timelineSec) * 100;
+  }, [currentFrame, timelineSec]);
 
   if (!spec) {
     return (
@@ -256,7 +267,7 @@ function VideoSpecPreviewBase({
           <div
             ref={stripRef}
             className="relative overflow-hidden rounded-lg border border-app-divider/60 bg-app-chip-bg/25 p-2"
-            title={`${spec.totalSec.toFixed(1)}s total · click a layer · drag left/right handles to set when text appears and disappears`}
+            title={`${timelineSec.toFixed(1)}s total · click a layer · drag left/right handles to set when text appears and disappears`}
           >
             <div className="relative mb-1 h-4 border-b border-app-divider/40">
               {rulerMarks.map((m) => (
@@ -301,7 +312,7 @@ function VideoSpecPreviewBase({
                         <span className="shrink-0 text-[8.5px] font-black uppercase tracking-wide">{s.label}</span>
                         <span className="min-w-0 truncate text-[9px] font-semibold opacity-90">{s.text}</span>
                         <span className="ml-auto shrink-0 text-[8.5px] font-bold tabular-nums opacity-80">
-                          {s.durationSec.toFixed(1)}s
+                          {s.startSec.toFixed(1)}→{s.endSec.toFixed(1)}s
                         </span>
                       </div>
                     </button>
@@ -347,7 +358,7 @@ function VideoSpecPreviewBase({
               className="rounded-sm bg-app-chip-bg/50 px-1.5 py-px text-[9px] font-bold tabular-nums text-app-fg-muted"
               title={`${layers.length} layer${layers.length === 1 ? "" : "s"} · drag each bar edge to trim timing`}
             >
-              {spec.totalSec.toFixed(1)}s
+              {timelineSec.toFixed(1)}s
             </span>
           </div>
         </div>

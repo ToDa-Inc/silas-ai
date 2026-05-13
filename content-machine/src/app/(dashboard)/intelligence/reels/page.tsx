@@ -7,6 +7,7 @@ import {
   getCachedServerApiContext,
   type ReelsMediaType,
   type ReelsListSortBy,
+  type SortRule,
 } from "@/lib/api";
 import { IntelligenceToolbar } from "../components/intelligence-toolbar";
 import { IntelligenceReelsTable } from "./intelligence-reels-table";
@@ -24,6 +25,9 @@ type ReelsSearchParams = {
   source?: string;
   media_type?: string;
   creator?: string;
+  favourites?: string;
+  /** Legacy URL; still parsed — use ``favourites`` in new links. */
+  bookmarked?: string;
   sort?: string;
   dir?: string;
   page?: string;
@@ -44,6 +48,7 @@ type PageProps = {
 
 const SORT_WHITELIST: readonly ReelsListSortBy[] = [
   "posted_at",
+  "posted_date",
   "views",
   "likes",
   "comments",
@@ -54,6 +59,32 @@ const SORT_WHITELIST: readonly ReelsListSortBy[] = [
   "video_duration",
   "first_seen_at",
 ];
+
+/**
+ * Parse the ?sort= URL param into SortRule[].
+ *
+ * New format:  ?sort=posted_date:desc,comments:desc   (up to 3 col:dir pairs)
+ * Legacy compat: ?sort=views&dir=desc                 (no colon — single rule)
+ */
+function parseSortRules(sortRaw: string, legacyDir: string): SortRule[] {
+  if (!sortRaw) return [];
+  if (sortRaw.includes(":")) {
+    return sortRaw
+      .split(",")
+      .slice(0, 3)
+      .flatMap<SortRule>((part) => {
+        const colon = part.indexOf(":");
+        const col = part.slice(0, colon).trim() as ReelsListSortBy;
+        const dir = part.slice(colon + 1).trim();
+        if (!SORT_WHITELIST.includes(col)) return [];
+        return [{ col, dir: dir === "asc" ? "asc" : "desc" }];
+      });
+  }
+  // Legacy: ?sort=views&dir=desc (no colon in value)
+  const col = sortRaw as ReelsListSortBy;
+  if (!SORT_WHITELIST.includes(col)) return [];
+  return [{ col, dir: legacyDir === "asc" ? "asc" : "desc" }];
+}
 
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 200;
@@ -76,6 +107,11 @@ export default async function IntelligenceReelsPage({ searchParams }: PageProps)
   const sp = await searchParams;
 
   const outliersOnly = sp.outliers === "1" || sp.outliers === "true";
+  const favouritesOnly =
+    sp.favourites === "1" ||
+    sp.favourites === "true" ||
+    sp.bookmarked === "1" ||
+    sp.bookmarked === "true";
   const ownOnly = sp.own === "1" || sp.own === "true";
   const competitorId = (sp.competitor ?? "").trim();
   const source = ownOnly ? "" : (sp.source ?? "").trim();
@@ -84,9 +120,10 @@ export default async function IntelligenceReelsPage({ searchParams }: PageProps)
     ? mediaTypeRaw
     : "all";
   const creator = (sp.creator ?? "").trim();
-  const sortRaw = (sp.sort ?? "").trim() as ReelsListSortBy;
-  const sortBy: ReelsListSortBy = SORT_WHITELIST.includes(sortRaw) ? sortRaw : "posted_at";
-  const sortDir: "asc" | "desc" = sp.dir === "asc" ? "asc" : "desc";
+  const sortRules = parseSortRules((sp.sort ?? "").trim(), (sp.dir ?? "").trim());
+  const sortFirst = sortRules[0];
+  const sortBy: ReelsListSortBy = sortFirst?.col ?? "posted_at";
+  const sortDir: "asc" | "desc" = sortFirst?.dir ?? "desc";
   const pageSize = clampInt(sp.per, DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE);
   const page = clampInt(sp.page, 1, 1, 1_000);
   const offset = (page - 1) * pageSize;
@@ -116,8 +153,7 @@ export default async function IntelligenceReelsPage({ searchParams }: PageProps)
       includeAnalysis: true,
       limit: pageSize,
       offset,
-      sortBy,
-      sortDir,
+      sortRules: sortRules.length ? sortRules : undefined,
       outlierOnly: outliersOnly || undefined,
       ownReelsOnly: ownOnly || undefined,
       source: source || undefined,
@@ -132,6 +168,7 @@ export default async function IntelligenceReelsPage({ searchParams }: PageProps)
       maxComments,
       postedAfter,
       postedBefore,
+      favouritesOnly: favouritesOnly || undefined,
     }),
     fetchCompetitors(),
     fetchBaseline(),
@@ -158,10 +195,19 @@ export default async function IntelligenceReelsPage({ searchParams }: PageProps)
     competitor?: string | null;
     source?: string | null;
     own?: boolean;
+    /** Strip ``favourites=1`` when switching catalog slice (not Favourites). */
+    dropFavourites?: boolean;
+    /** Favourites-only (starred reels, any source). */
+    forceFavourites?: boolean;
   }) => {
     const p = new URLSearchParams();
     if (opts.outliers) p.set("outliers", "1");
     if (opts.competitor) p.set("competitor", opts.competitor);
+    if (opts.forceFavourites) {
+      p.set("favourites", "1");
+    } else if (favouritesOnly && opts.dropFavourites !== true) {
+      p.set("favourites", "1");
+    }
     if (opts.own) {
       p.set("own", "1");
     } else if (opts.source) {
@@ -190,7 +236,7 @@ export default async function IntelligenceReelsPage({ searchParams }: PageProps)
             </div>
             <p className="max-w-xl text-xs leading-relaxed text-app-fg-muted md:text-sm">
               Scope what you&apos;re optimizing for, then pick which slice of the library to
-              browse — your synced baseline, competitors, niche scan hits, or saved links.
+              browse — your synced baseline, competitors, niche scan hits, saved links, or favourites.
             </p>
           </div>
           <IntelligenceToolbar
@@ -247,9 +293,10 @@ export default async function IntelligenceReelsPage({ searchParams }: PageProps)
                   href: buildHref({
                     outliers: outliersOnly,
                     competitor: competitorId || null,
+                    dropFavourites: true,
                   }),
                   label: "Everything",
-                  active: !source && !ownOnly,
+                  active: !source && !ownOnly && !favouritesOnly,
                   variant: "neutral",
                 },
                 {
@@ -257,6 +304,7 @@ export default async function IntelligenceReelsPage({ searchParams }: PageProps)
                     outliers: outliersOnly,
                     competitor: competitorId || null,
                     own: true,
+                    dropFavourites: true,
                   }),
                   label: ownCatalogLabel,
                   active: ownOnly,
@@ -267,6 +315,7 @@ export default async function IntelligenceReelsPage({ searchParams }: PageProps)
                     outliers: outliersOnly,
                     competitor: competitorId || null,
                     source: "profile",
+                    dropFavourites: true,
                   }),
                   label: "Competitors",
                   active: source === "profile",
@@ -277,6 +326,7 @@ export default async function IntelligenceReelsPage({ searchParams }: PageProps)
                     outliers: outliersOnly,
                     competitor: competitorId || null,
                     source: "keyword_similarity",
+                    dropFavourites: true,
                   }),
                   label: "Niche finds",
                   active: source === "keyword_similarity",
@@ -287,16 +337,28 @@ export default async function IntelligenceReelsPage({ searchParams }: PageProps)
                     outliers: outliersOnly,
                     competitor: competitorId || null,
                     source: "url_paste",
+                    dropFavourites: true,
                   }),
-                  label: "Saved",
-                  active: source === "url_paste",
+                  label: "Saved links",
+                  active: source === "url_paste" && !favouritesOnly,
                   variant: "neutral",
                 },
                 {
                   href: buildHref({
                     outliers: outliersOnly,
                     competitor: competitorId || null,
+                    forceFavourites: true,
+                  }),
+                  label: "Favourites",
+                  active: favouritesOnly,
+                  variant: "amber",
+                },
+                {
+                  href: buildHref({
+                    outliers: outliersOnly,
+                    competitor: competitorId || null,
                     source: "niche_search",
+                    dropFavourites: true,
                   }),
                   label: "Legacy",
                   active: source === "niche_search",
@@ -342,8 +404,7 @@ export default async function IntelligenceReelsPage({ searchParams }: PageProps)
           clientSlug={clientSlug}
           orgSlug={orgSlug}
           serverState={{
-            sortBy,
-            sortDir,
+            sortRules,
             page,
             pageSize,
             creator,
@@ -360,6 +421,7 @@ export default async function IntelligenceReelsPage({ searchParams }: PageProps)
             maxComments,
             postedAfter,
             postedBefore,
+            bookmarkedOnly: favouritesOnly,
           }}
         />
       )}

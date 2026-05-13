@@ -1,16 +1,15 @@
 import React from 'react';
 import { AbsoluteFill } from 'remotion';
 import type { VideoSpecWithTimeline } from '../templateProps';
-import { resolveAppearance } from '../appearance';
+import { mergeLayerAppearance } from '../appearance';
 import { blockEntranceStyle } from '../animations';
 import { flexAlignForTextAlign } from '../alignLayout';
 import { resolveLayoutPx } from '../layout';
-import { cardBoldOutlineCaptionStyle, isBoldOutlineTreatment } from '../textTreatment';
+import { cardBoldOutlineCaptionStyle, isBoldOutlineLayer } from '../textTreatment';
 import { activeCaptionLayers, type ActiveCaptionLayer } from '../activeLayers';
 
 export default function BottomCardTemplate({ spec, frame, fps }: VideoSpecWithTimeline) {
   const sec = frame / fps;
-  const theme = resolveAppearance(spec);
   const layout = resolveLayoutPx(spec);
   const layers = activeCaptionLayers(spec, sec);
   const baseSize = 60;
@@ -21,16 +20,17 @@ export default function BottomCardTemplate({ spec, frame, fps }: VideoSpecWithTi
   const rowAlign = flexAlignForTextAlign(ta);
 
   const textShell = (layer: ActiveCaptionLayer) => {
+    const layerTheme = mergeLayerAppearance(spec, layer.kind === 'block' ? layer.appearance : null);
     const startFrame = Math.round(layer.startSec * fps);
     const animStyle = blockEntranceStyle(frame, fps, startFrame, layer.animation);
-    const ctaScaled = layer.isCTA ? Math.round(baseSize * theme.ctaScale) : baseSize;
+    const ctaScaled = layer.isCTA ? Math.round(baseSize * layerTheme.ctaScale) : baseSize;
     const fontSize = Math.round(ctaScaled * layout.scale);
     return (
     <div
       key={layer.key}
       style={{
         display: 'inline-block',
-        backgroundColor: theme.cardBg === 'transparent' ? '#ffffff' : theme.cardBg,
+        backgroundColor: layerTheme.cardBg === 'transparent' ? '#ffffff' : layerTheme.cardBg,
         borderRadius: '12px',
         padding: '24px 32px',
         maxWidth: layout.innerWidth,
@@ -42,12 +42,12 @@ export default function BottomCardTemplate({ spec, frame, fps }: VideoSpecWithTi
         style={{
           fontSize,
           fontWeight: 800,
-          fontFamily: theme.bodyFontStack,
-          color: theme.cardText,
+          fontFamily: layerTheme.bodyFontStack,
+          color: layerTheme.cardText,
           margin: 0,
           lineHeight: 1.25,
           letterSpacing: '-0.01em',
-          ...(isBoldOutlineTreatment(spec) ? cardBoldOutlineCaptionStyle(spec) : {}),
+          ...(isBoldOutlineLayer(spec, layer) ? cardBoldOutlineCaptionStyle() : {}),
           WebkitFontSmoothing: 'antialiased',
           textRendering: 'optimizeLegibility',
           wordWrap: 'break-word',

@@ -50,6 +50,9 @@ export type VideoSpecHook = {
   durationSec: number;
 };
 
+/** Optional punchy caption lettering; composes with any ``templateId`` (not a layout swap). */
+export type VideoTextTreatmentId = 'bold-outline';
+
 export type VideoSpecBlock = {
   id: string;
   text: string;
@@ -57,6 +60,10 @@ export type VideoSpecBlock = {
   startSec: number;
   endSec: number;
   animation: VideoAnimation;
+  /** Inherits from top-level ``textTreatment`` when omitted. */
+  textTreatment?: VideoTextTreatmentId | null;
+  /** Inherits from top-level ``appearance`` when omitted. */
+  appearance?: VideoSpecAppearance | null;
 };
 
 export type VerticalAnchor = 'bottom' | 'center' | 'top';
@@ -93,9 +100,6 @@ export const DEFAULT_LAYOUT: VideoSpecLayout = {
   stackGap: 0.008,
   stackGrowth: 'up',
 };
-
-/** Optional punchy caption lettering; composes with any ``templateId`` (not a layout swap). */
-export type VideoTextTreatmentId = 'bold-outline';
 
 export type VideoSpec = {
   v: 1;

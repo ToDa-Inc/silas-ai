@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 from fastapi import HTTPException
 from models.generation import GenerationStartBody, SelectedCarouselTemplate, SelectedCoverTemplate
-from routers.creation import _carousel_slide_count_from_request, _resolve_template_slide_image_bytes
+from routers.creation import carousel_slide_count_effective, _resolve_template_slide_image_bytes
 from services.content_generation import run_carousel_slide_texts
 from services.image_generation import generate_slide_image
 
@@ -70,43 +70,23 @@ class CarouselTemplateModelsTest(unittest.TestCase):
 
 
 class CarouselTemplatePromptTest(unittest.TestCase):
-    def test_template_sets_slide_count_from_recipe(self):
+    def test_session_slide_count_overrides_request(self):
         row = {
+            "carousel_slide_count": 4,
             "selected_carousel_template": {
-                "id": "template_three_refs",
-                "name": "Three reference slides",
-                "slides": [
-                    {"idx": 0, "role": "cover"},
-                    {"idx": 1, "role": "body"},
-                    {"idx": 2, "role": "cta"},
-                ],
-            }
+                "slides": [{"idx": i, "role": "body"} for i in range(8)],
+            },
         }
+        self.assertEqual(carousel_slide_count_effective(row, requested_count=6), 4)
 
-        self.assertEqual(_carousel_slide_count_from_request(row, requested_count=6), 3)
+    def test_requested_count_when_session_unset(self):
+        row: dict = {}
+        self.assertEqual(carousel_slide_count_effective(row, requested_count=8), 8)
 
-    def test_template_five_slides_uses_five(self):
-        row = {
-            "selected_carousel_template": {
-                "slides": [{"idx": i, "role": "body"} for i in range(5)],
-            }
-        }
-        self.assertEqual(_carousel_slide_count_from_request(row, requested_count=6), 5)
-
-    def test_template_with_under_three_slides_raises(self):
-        from fastapi import HTTPException
-
-        row = {
-            "selected_carousel_template": {
-                "slides": [
-                    {"idx": 0, "role": "cover"},
-                    {"idx": 1, "role": "body"},
-                ],
-            }
-        }
-        with self.assertRaises(HTTPException) as ctx:
-            _carousel_slide_count_from_request(row, 6)
-        self.assertEqual(ctx.exception.status_code, 400)
+    def test_requested_count_clamped(self):
+        row: dict = {}
+        self.assertEqual(carousel_slide_count_effective(row, requested_count=2), 3)
+        self.assertEqual(carousel_slide_count_effective(row, requested_count=11), 10)
 
     def test_slide_text_prompt_includes_template_sequence(self):
         captured = {}

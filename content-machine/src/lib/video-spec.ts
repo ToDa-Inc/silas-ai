@@ -11,14 +11,10 @@ const templateIdZ = z.enum([
 const themeIdZ = z.enum(["bold-modern", "editorial", "casual-hand", "clean-minimal"]);
 const animationZ = z.enum(["pop", "fade", "slide-up", "none"]);
 
-export const videoSpecBlockZ = z.object({
-  id: z.string(),
-  text: z.string(),
-  isCTA: z.boolean(),
-  startSec: z.number(),
-  endSec: z.number(),
-  animation: animationZ,
-});
+const textTreatmentZ = z
+  .union([z.literal("bold-outline"), z.null()])
+  .optional()
+  .transform((v): "bold-outline" | undefined => (v == null ? undefined : v));
 
 const verticalAnchorZ = z.enum(["bottom", "center", "top"]);
 const textAlignZ = z.enum(["left", "center", "right"]);
@@ -51,6 +47,18 @@ export type VideoSpecAppearance = z.infer<typeof videoSpecAppearanceFields>;
 
 export const videoSpecAppearanceZ = videoSpecAppearanceFields.default({});
 
+export const videoSpecBlockZ = z.object({
+  id: z.string(),
+  text: z.string(),
+  isCTA: z.boolean(),
+  startSec: z.number(),
+  endSec: z.number(),
+  animation: animationZ,
+  textTreatment: textTreatmentZ,
+  /** Backend / JSON-Patch may set ``null`` (same as root ``appearance``); ``.optional()`` alone rejects null. */
+  appearance: videoSpecAppearanceFields.partial().nullish(),
+});
+
 export const DEFAULT_APPEARANCE: VideoSpecAppearance = {};
 
 export const DEFAULT_LAYOUT: VideoSpecLayout = {
@@ -62,11 +70,6 @@ export const DEFAULT_LAYOUT: VideoSpecLayout = {
   stackGap: 0.008,
   stackGrowth: "up",
 };
-
-const textTreatmentZ = z
-  .union([z.literal("bold-outline"), z.null()])
-  .optional()
-  .transform((v): "bold-outline" | undefined => (v == null ? undefined : v));
 
 export const videoSpecZ = z.object({
   v: z.literal(1),
@@ -107,11 +110,22 @@ export const videoSpecZ = z.object({
 });
 
 export type VideoSpec = z.infer<typeof videoSpecZ>;
+export type VideoSpecBlock = z.infer<typeof videoSpecBlockZ>;
 
 /** Legacy ``capcut-highlight`` was a whole template; it now maps to centered + bold-outline treatment. */
 export function normalizeVideoSpecForRender(spec: VideoSpec): VideoSpec {
   if (spec.templateId !== "capcut-highlight") return spec;
   return { ...spec, templateId: "centered-pop", textTreatment: "bold-outline" };
+}
+
+/** Stable sort by ``startSec`` — mirrors backend ``VideoSpecV1._sorted_and_total`` so JSON Patch ``/blocks/N`` indices match the API. */
+export function sortVideoSpecBlocksStable(spec: VideoSpec): VideoSpec {
+  const indexed = spec.blocks.map((b, origIdx) => ({ b, origIdx }));
+  indexed.sort((a, b) => {
+    if (a.b.startSec !== b.b.startSec) return a.b.startSec - b.b.startSec;
+    return a.origIdx - b.origIdx;
+  });
+  return { ...spec, blocks: indexed.map((x) => x.b) };
 }
 
 export function parseVideoSpec(raw: unknown): VideoSpec | null {
@@ -124,7 +138,7 @@ export function parseVideoSpec(raw: unknown): VideoSpec | null {
     }
     return null;
   }
-  return normalizeVideoSpecForRender(r.data);
+  return sortVideoSpecBlocksStable(normalizeVideoSpecForRender(r.data));
 }
 
 /** Same resolution order as backend ``_session_hook_text`` (video_spec_defaults.py):
@@ -156,7 +170,7 @@ export function sessionPrimaryHookText(s: {
 
 export function applyVideoSpecPatch(spec: VideoSpec, ops: Operation[]): VideoSpec {
   const next = applyPatch(structuredClone(spec), ops, false, true).newDocument;
-  return normalizeVideoSpecForRender(videoSpecZ.parse(next));
+  return sortVideoSpecBlocksStable(normalizeVideoSpecForRender(videoSpecZ.parse(next)));
 }
 
 /** Rough client preview when API has not persisted `video_spec` yet. */

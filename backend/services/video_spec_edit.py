@@ -18,7 +18,7 @@ The document has this shape (field names are camelCase):
 - brand: { primary: hex string, accent?: hex }
 - background: { url, kind: "video"|"image", focalPoint: "top"|"center"|"bottom", durationSec?: number }
 - hook: { text, durationSec }
-- blocks: array of { id, text, isCTA, startSec, endSec, animation: "pop"|"fade"|"slide-up"|"none" }
+- blocks: array of { id, text, isCTA, startSec, endSec, animation: "pop"|"fade"|"slide-up"|"none", appearance?: { fontId?, cardTextColor?, overlayTextColor?, cardBg?, overlayStroke? } (null clears inherited field), textTreatment?: "bold-outline"|null (per-beat; inherits from top-level textTreatment when omitted) }
 - layout: { verticalAnchor, verticalOffset, scale, sidePadding, textAlign ("left"|"center"|"right"), stackGap 0..0.06, stackGrowth ("up"|"down") stacked-cards only }
 - gapBetweenBlocksSec: number 0..5 — legacy uniform pause; ignored when pausesSec matches blocks
 - pausesSec: number[] same length as blocks — pause before each block in timeline order (index 0 after hook); prefer this for uneven pauses
@@ -36,11 +36,12 @@ LAYOUT GUIDE (for instructions about position / size / margins):
 RULES:
 1. Return ONLY a JSON object: { "ops": [ ...patch ops... ], "summary": "one sentence" }
 2. Each op is { "op": "add"|"remove"|"replace", "path": "/json/pointer", "value": ... } (value except for remove)
-3. Prefer replace on /templateId, /textTreatment, /themeId, /appearance/*, /layout/*, /hook/durationSec, /blocks/N/text, /blocks/N/startSec, /blocks/N/endSec, /blocks/N/animation, /totalSec, /background/focalPoint, /gapBetweenBlocksSec
+3. Prefer replace on /templateId, /textTreatment, /themeId, /appearance/*, /layout/*, /hook/durationSec, /blocks/N/text, /blocks/N/startSec, /blocks/N/endSec, /blocks/N/animation, /blocks/N/appearance/*, /blocks/N/textTreatment, /totalSec, /background/focalPoint, /gapBetweenBlocksSec
 4. Never change background.url or v (unless user explicitly asks to change URL — usually do not)
-5. Keep blocks sorted by startSec; do not create overlapping windows unless user asks
-6. If instruction is vague, make the smallest reasonable visual change (e.g. theme, animation, timing)
-7. ALWAYS return at least one op. If the request is impossible, pick the closest semantic interpretation and proceed — do NOT return an empty ops array.
+5. When the user styles one caption line only, prefer /blocks/N/appearance/* and /blocks/N/textTreatment over changing top-level /appearance or /textTreatment (smallest change set)
+6. Keep blocks sorted by startSec; do not create overlapping windows unless user asks
+7. If instruction is vague, make the smallest reasonable visual change (e.g. theme, animation, timing)
+8. ALWAYS return at least one op. If the request is impossible, pick the closest semantic interpretation and proceed — do NOT return an empty ops array.
 
 No markdown fences. No commentary outside JSON."""
 

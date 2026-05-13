@@ -5,9 +5,50 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 import jsonpatch
+from pydantic import ValidationError
 
 from models.video_spec import VideoSpecV1, validate_video_spec_dict
 from services.video_spec_timeline import normalize_timeline_after_patch
+
+_APPEARANCE_PATCH_KEYS = (
+    "fontId",
+    "cardTextColor",
+    "overlayTextColor",
+    "cardBg",
+    "overlayStroke",
+)
+
+
+def _expand_appearance_for_patch(raw: Any) -> Dict[str, Any]:
+    """RFC 6902 ``replace`` requires leaf keys to exist. Studio sends ``replace`` on e.g.
+    ``/blocks/0/appearance/fontId``; merge optional appearance dict over null placeholders."""
+    base: Dict[str, Any] = {k: None for k in _APPEARANCE_PATCH_KEYS}
+    if isinstance(raw, dict):
+        for k in _APPEARANCE_PATCH_KEYS:
+            if k in raw:
+                base[k] = raw[k]
+    return base
+
+
+def _normalize_blocks_for_patch(blocks: Any) -> None:
+    if not isinstance(blocks, list):
+        return
+    for b in blocks:
+        if not isinstance(b, dict):
+            continue
+        b.setdefault("textTreatment", None)
+        app = b.get("appearance")
+        if app is None or not isinstance(app, dict):
+            b["appearance"] = _expand_appearance_for_patch(None)
+        else:
+            b["appearance"] = _expand_appearance_for_patch(app)
+
+
+def _validate_spec_dict(doc: Dict[str, Any]) -> VideoSpecV1:
+    try:
+        return validate_video_spec_dict(doc)
+    except ValidationError as e:
+        raise ValueError(f"invalid video spec after patch: {e}") from e
 
 
 def _document_for_json_patch(model_dump: Dict[str, Any]) -> Dict[str, Any]:
@@ -23,6 +64,10 @@ def _document_for_json_patch(model_dump: Dict[str, Any]) -> Dict[str, Any]:
     doc.setdefault("pausesSec", None)
     doc.setdefault("appearance", {})
     doc.setdefault("textTreatment", None)
+    doc["appearance"] = _expand_appearance_for_patch(doc.get("appearance"))
+    bl = doc.get("blocks")
+    if isinstance(bl, list):
+        _normalize_blocks_for_patch(bl)
     return doc
 
 
@@ -43,31 +88,64 @@ def _coerce_pauses_sec_ops(ops: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def _ops_preserve_explicit_layer_timing(ops: List[Dict[str, Any]]) -> bool:
-    """True when the editor directly authored layer windows.
+    """When True, skip ``normalize_timeline_after_patch``.
 
-    ``normalize_timeline_after_patch`` rebuilds blocks from hook + pauses, which is
-    correct for gap edits but wrong for a layer editor: it would erase explicit
-    overlapping ``startSec``/``endSec`` windows before Remotion ever sees them.
+    Relayout repacks ``blocks[*].startSec``/``endSec`` from pauses + clip cap. That is
+    correct after pause/gap/total/hook-duration edits, but **wrong** for look-only patches
+    (``/layout/*``, ``/themeId``, …): those must not erase hand-dragged layer windows.
+
+    If the batch already includes explicit ``/blocks/N/startSec|endSec`` plus derived
+    ``/pausesSec`` (layer editor), skip relayout — the document is already coherent.
     """
-    for op in ops:
-        if not isinstance(op, dict):
-            continue
-        path = str(op.get("path") or "")
-        if path == "/blocks" or path.startswith("/blocks/"):
+    if not isinstance(ops, list) or not ops:
+        return True
+    paths = [str(o.get("path") or "") for o in ops if isinstance(o, dict)]
+    if not paths:
+        return True
+
+    timeline_drivers = (
+        "/pausesSec",
+        "/gapBetweenBlocksSec",
+        "/totalSec",
+        "/background/durationSec",
+        "/hook/durationSec",
+    )
+    if any(p in timeline_drivers for p in paths):
+        explicit_edges = any(
+            p.startswith("/blocks/") and ("/startSec" in p or "/endSec" in p) for p in paths
+        )
+        # Any explicit layer window edit must not run ``normalize_timeline_after_patch`` — that
+        # repacks beats from pauses/gaps. The UI often PATCHes ``startSec``/``endSec`` together
+        # with ``totalSec`` (clip cap) without resending ``pausesSec``.
+        if explicit_edges:
             return True
-        if path in ("/hook/durationSec", "/hook/text"):
+        # Hook trim/extend: studio sends ``/hook/durationSec`` + recomputed ``/pausesSec`` from
+        # current absolute block windows — must not relayout or every text block jumps.
+        if "/hook/durationSec" in paths and "/pausesSec" in paths:
             return True
-    return False
+        return False
+
+    return any(
+        p == "/blocks"
+        or p.startswith("/blocks/")
+        or p.startswith("/layout")
+        or p in ("/hook/durationSec", "/hook/text")
+        or p.startswith("/appearance")
+        or p in ("/textTreatment", "/themeId", "/templateId")
+        or p.startswith("/brand/")
+        or (p.startswith("/background/") and p != "/background/durationSec")
+        for p in paths
+    )
 
 
 def apply_ops_to_spec(spec_dict: Dict[str, Any], ops: List[Dict[str, Any]]) -> VideoSpecV1:
     # Normalize through Pydantic first so default fields (e.g. `layout`) are present
     # on the dict we patch — otherwise `replace /layout/scale` on a pre-layout spec
     # would raise JsonPatchException("path does not exist").
-    dumped = validate_video_spec_dict(dict(spec_dict)).model_dump(mode="json")
+    dumped = _validate_spec_dict(dict(spec_dict)).model_dump(mode="json")
     base = _document_for_json_patch(dumped)
     if not isinstance(ops, list) or not ops:
-        return validate_video_spec_dict(base)
+        return _validate_spec_dict(base)
     ops = _coerce_pauses_sec_ops(ops)
     patch = jsonpatch.JsonPatch(ops)
     try:
@@ -77,6 +155,6 @@ def apply_ops_to_spec(spec_dict: Dict[str, Any], ops: List[Dict[str, Any]]) -> V
     if not isinstance(new_doc, dict):
         raise ValueError("patch result must be an object")
     if _ops_preserve_explicit_layer_timing(ops):
-        return validate_video_spec_dict(new_doc)
+        return _validate_spec_dict(new_doc)
     new_doc = normalize_timeline_after_patch(new_doc)
-    return validate_video_spec_dict(new_doc)
+    return _validate_spec_dict(new_doc)

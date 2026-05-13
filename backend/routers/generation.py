@@ -607,7 +607,13 @@ def generation_start(
     }
     if source_format_key:
         ck = canonicalize_stored_format_key(source_format_key)
-        insert_row["source_format_key"] = ck or source_format_key.strip()
+        final_fk = ck or source_format_key.strip()
+        insert_row["source_format_key"] = final_fk
+        if final_fk == "carousel":
+            csc = body.carousel_slide_count
+            insert_row["carousel_slide_count"] = (
+                max(3, min(10, int(csc))) if csc is not None else 6
+            )
     if source_url:
         insert_row["source_url"] = source_url
     if source_idea:
@@ -624,9 +630,14 @@ def generation_start(
         ins = supabase.table("generation_sessions").insert(insert_row).execute()
     except Exception as e:
         logger.exception("generation_sessions insert failed — run sql migrations?")
+        hint = str(e).strip() or e.__class__.__name__
         raise HTTPException(
             status_code=503,
-            detail="Database error (generation_sessions / phase8 columns?).",
+            detail=(
+                "Database error (generation_sessions). "
+                "If you recently pulled code, run pending SQL migrations (e.g. phase26_carousel_slide_count.sql). "
+                f"Underlying: {hint[:500]}"
+            ),
         ) from e
     if not ins.data:
         raise HTTPException(status_code=500, detail="Insert failed")
@@ -680,11 +691,12 @@ def generation_choose_angle(
             raise HTTPException(status_code=502, detail=str(e)) from e
 
         from models.generation import GenerateCarouselSlidesBody
-        from routers.creation import build_carousel_slides_payload
+        from routers.creation import build_carousel_slides_payload, carousel_slide_count_effective
 
         temp_row = dict(row)
         temp_row["chosen_angle_index"] = body.angle_index
         temp_row["hooks"] = copy_pkg["hooks"]
+        cc = carousel_slide_count_effective(temp_row, 6)
         try:
             slides = build_carousel_slides_payload(
                 supabase,
@@ -692,7 +704,7 @@ def generation_choose_angle(
                 client_id=client_id,
                 session_id=session_id,
                 row=temp_row,
-                body=GenerateCarouselSlidesBody(count=6, style=None),
+                body=GenerateCarouselSlidesBody(count=cc, style=None),
             )
         except Exception as e:
             logger.exception("generation choose-angle failed (carousel slides)")
@@ -1037,8 +1049,9 @@ def patch_generation_session(
 ) -> dict:
     """Update session artifacts that must remain editable before heavy assets exist.
 
-    Currently supports replacing ``selected_carousel_template`` for carousel sessions only,
-    and only while ``carousel_slides`` is still empty (no PNGs generated yet).
+    Replace ``selected_carousel_template`` for carousel sessions. When ``carousel_slides``
+    is already populated, the client must pass ``clear_carousel_slides=true`` so the
+    server can drop existing PNG rows before applying the new reference snapshot.
     """
     _ = slug
     row = _load_session(supabase, client_id, session_id)
@@ -1055,17 +1068,26 @@ def patch_generation_session(
         )
 
     cs_raw = row.get("carousel_slides")
-    if isinstance(cs_raw, list) and len(cs_raw) > 0:
+    has_slides = isinstance(cs_raw, list) and len(cs_raw) > 0
+    clear_requested = bool(body.clear_carousel_slides)
+
+    if has_slides and not clear_requested:
         raise HTTPException(
             status_code=400,
-            detail="Carousel reference template cannot be changed after slides are generated.",
+            detail=(
+                "Carousel slides already exist. Pass clear_carousel_slides=true with the new "
+                "template to switch style (current slides are removed; use Generate slides next)."
+            ),
         )
 
     payload = body.selected_carousel_template.model_dump(mode="json")
     now = _now_iso()
-    supabase.table("generation_sessions").update(
-        {"selected_carousel_template": payload, "updated_at": now}
-    ).eq("id", session_id).eq("client_id", client_id).execute()
+    patch: Dict[str, Any] = {"selected_carousel_template": payload, "updated_at": now}
+    if has_slides and clear_requested:
+        patch["carousel_slides"] = None
+        patch["script"] = None
+
+    supabase.table("generation_sessions").update(patch).eq("id", session_id).eq("client_id", client_id).execute()
     return _row_to_out(_load_session(supabase, client_id, session_id))
 
 

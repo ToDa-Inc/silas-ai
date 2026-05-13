@@ -83,7 +83,7 @@ import {
   segmentExcerpt,
   segmentLabel,
 } from "@/lib/video-spec-timing";
-import { effectivePausesSec, relayoutTimeline } from "@/lib/video-spec-timeline";
+import { effectivePausesSec, pauseGapToExplicitTimelinePatchOps, relayoutTimeline } from "@/lib/video-spec-timeline";
 import {
   buildLayerRows,
   computeLayerTimingChange,
@@ -97,6 +97,7 @@ import {
   inferContrast,
   inferFontMood,
   mergeAppearanceOpsIntoDraft,
+  mergeGlobalAndBlockAppearance,
   opsForContrast,
   opsForFontMood,
   type AppearanceOp,
@@ -275,6 +276,12 @@ function appearanceHasSavedOverrides(a: VideoSpecAppearance): boolean {
       (a.cardBg && String(a.cardBg).trim()) ||
       (a.overlayStroke && String(a.overlayStroke).trim()),
   );
+}
+
+function blockHasSavedStyleOverrides(b: VideoSpec["blocks"][number] | undefined): boolean {
+  if (!b) return false;
+  if (b.textTreatment != null) return true;
+  return appearanceHasSavedOverrides(b.appearance ?? {});
 }
 
 function canonicalFormatKey(k: string | null | undefined): string | null {
@@ -2184,6 +2191,9 @@ export function VideoCreateWorkspace({
   /** Generation carousel templates — same library GET as Generate; used to swap snapshots before slides exist. */
   const [carouselTemplateLibrary, setCarouselTemplateLibrary] = useState<ClientCarouselTemplate[]>([]);
   const [carouselTemplateBusy, setCarouselTemplateBusy] = useState(false);
+  /** After slides exist, user opens this to pick a new recipe (clears slides via PATCH). */
+  const [carouselStyleSwitchOpen, setCarouselStyleSwitchOpen] = useState(false);
+  const [carouselStyleSwitchDraftId, setCarouselStyleSwitchDraftId] = useState<string | null>(null);
 
   useEffect(() => {
     carouselDraftRef.current = carouselDraft;
@@ -2318,27 +2328,35 @@ export function VideoCreateWorkspace({
   const isCarousel = fk === "carousel";
   const isBroll = fk === "b_roll_reel";
   const isTalkingHead = fk === "talking_head";
-  /** PNG slides exist — carousel reference snapshot is immutable (backend + product). */
+  /** PNG slides exist — slide text/images are persisted until user switches recipe (clears slides). */
   const carouselSlidesLocked = useMemo(() => {
     const slides = session?.carousel_slides;
     return Array.isArray(slides) && slides.length > 0;
   }, [session?.carousel_slides]);
 
-  /** When a carousel recipe is snapshotted on the session, backend uses its slide count (3–10). */
-  const templateSnapshotSlideCount = useMemo(() => {
-    const snap = session?.selected_carousel_template as { slides?: unknown } | null | undefined;
-    if (!snap || typeof snap !== "object") return null;
-    const slides = snap.slides;
-    if (!Array.isArray(slides) || slides.length < 3) return null;
-    return Math.min(10, Math.max(3, slides.length));
-  }, [session?.selected_carousel_template]);
+  useEffect(() => {
+    if (!carouselSlidesLocked) {
+      setCarouselStyleSwitchOpen(false);
+      setCarouselStyleSwitchDraftId(null);
+    }
+  }, [carouselSlidesLocked]);
 
+  /** When no PNGs yet, sync slider to session target length from Generate page. */
   useEffect(() => {
     if (!isCarousel || carouselSlidesLocked) return;
-    if (templateSnapshotSlideCount != null) {
-      setCarouselCount(templateSnapshotSlideCount);
+    const slides = session?.carousel_slides;
+    if (Array.isArray(slides) && slides.length > 0) return;
+    const raw = session?.carousel_slide_count;
+    if (raw != null && typeof raw === "number" && Number.isFinite(raw)) {
+      setCarouselCount(Math.min(10, Math.max(3, raw)));
     }
-  }, [carouselSlidesLocked, isCarousel, templateSnapshotSlideCount]);
+  }, [
+    carouselSlidesLocked,
+    isCarousel,
+    session?.carousel_slide_count,
+    session?.carousel_slides,
+    session?.id,
+  ]);
 
   /** Sync the active bg-source tab with the session's background_type until the user
    *  explicitly clicks a tab; from then on the user's choice wins. b_roll_reel formats
@@ -2371,8 +2389,25 @@ export function VideoCreateWorkspace({
 
   const previewVideoSpec = useMemo(() => {
     if (!session) return null;
-    return parseVideoSpec(session.video_spec) ?? buildPreviewSpecFromSession(session);
+    const parsed = parseVideoSpec(session.video_spec);
+    if (parsed) return parsed;
+    const raw = session.video_spec;
+    const looksLikePersistedSpec =
+      raw !== null &&
+      raw !== undefined &&
+      typeof raw === "object" &&
+      !Array.isArray(raw) &&
+      (raw as { v?: unknown }).v === 1;
+    // Do not substitute ``buildPreviewSpecFromSession`` when a real v1 spec failed parse —
+    // that hid Zod/JSON mismatches and made PATCH UI (format, timeline) look broken.
+    if (looksLikePersistedSpec) return null;
+    return buildPreviewSpecFromSession(session);
   }, [session]);
+
+  const previewVideoSpecRef = useRef<VideoSpec | null>(null);
+  useEffect(() => {
+    previewVideoSpecRef.current = previewVideoSpec;
+  }, [previewVideoSpec]);
 
   /** Must run every render (before any early return) — same order as backend
    *  ``_session_hook_text``: hooks[0] → video_spec.hook → angle draft_hook. */
@@ -2405,6 +2440,7 @@ export function VideoCreateWorkspace({
 
   const sessionAppearance: VideoSpecAppearance = previewVideoSpec?.appearance ?? DEFAULT_APPEARANCE;
   const [appearanceDraft, setAppearanceDraft] = useState<VideoSpecAppearance>(sessionAppearance);
+  const [blockAppearanceDraft, setBlockAppearanceDraft] = useState<VideoSpecAppearance>({});
   const appearanceSyncKey = `${session?.id ?? ""}|${JSON.stringify(sessionAppearance)}`;
   const appearanceDraftKey = JSON.stringify(appearanceDraft);
   useEffect(() => {
@@ -2412,11 +2448,23 @@ export function VideoCreateWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appearanceSyncKey]);
 
+  const blockStyleSyncKey = `${session?.id ?? ""}|${selectedSegmentId}|${JSON.stringify(previewVideoSpec?.blocks.find((b) => b.id === selectedSegmentId)?.appearance ?? {})}`;
+  useEffect(() => {
+    if (selectedSegmentId === "hook") return;
+    const row = previewVideoSpec?.blocks.find((b) => b.id === selectedSegmentId);
+    if (!row) return;
+    setBlockAppearanceDraft({ ...(row.appearance ?? {}) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blockStyleSyncKey]);
+
   useEffect(() => {
     const n = previewVideoSpec?.blocks?.length ?? 0;
     if (n <= 0) return;
     setSelectedGapIdx((i) => Math.min(Math.max(0, i), n - 1));
   }, [session?.id, previewVideoSpec?.blocks?.length]);
+
+  const blockAppearanceDraftKey =
+    selectedSegmentId === "hook" ? "" : JSON.stringify(blockAppearanceDraft);
 
   /** Final spec rendered by the Player. Layered optimistic edits (template / look /
    *  appearance / layout / timing) win over the saved spec until the server confirms — keeps the
@@ -2455,8 +2503,16 @@ export function VideoCreateWorkspace({
         : durationAdjusted;
     // Layer bars are absolute windows. Relayout is only for the legacy gap editor;
     // running it after layer drags would push later bars and destroy overlaps.
-    if (pauseDraft != null) return relayoutTimeline(raw, { applyClipCap: false });
-    return raw;
+    const withPause = pauseDraft != null ? relayoutTimeline(raw, { applyClipCap: false }) : raw;
+    if (selectedSegmentId !== "hook" && withPause.blocks.some((b) => b.id === selectedSegmentId)) {
+      return {
+        ...withPause,
+        blocks: withPause.blocks.map((b) =>
+          b.id === selectedSegmentId ? { ...b, appearance: blockAppearanceDraft } : b,
+        ),
+      };
+    }
+    return withPause;
     // Depend on primitives, not object refs — avoids spurious recomputes when
     // `previewVideoSpec` is reparsed but its content is unchanged.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2479,16 +2535,34 @@ export function VideoCreateWorkspace({
     layerTimingDraft?.id,
     layerTimingDraft?.timing.startSec,
     layerTimingDraft?.timing.endSec,
+    selectedSegmentId,
+    blockAppearanceDraftKey,
   ]);
+
+  const styleAppearanceForChips = useMemo(() => {
+    if (!livePreviewSpec) return DEFAULT_APPEARANCE;
+    if (selectedSegmentId === "hook") return livePreviewSpec.appearance ?? DEFAULT_APPEARANCE;
+    const blk = livePreviewSpec.blocks.find((b) => b.id === selectedSegmentId);
+    return mergeGlobalAndBlockAppearance(livePreviewSpec.appearance ?? DEFAULT_APPEARANCE, blk?.appearance ?? null);
+  }, [livePreviewSpec, selectedSegmentId]);
 
   const styleThemeForCard = (pendingTheme ?? previewVideoSpec?.themeId ?? "bold-modern") as VideoThemeId;
   const styleTemplateId = pendingTemplate ?? previewVideoSpec?.templateId ?? "centered-pop";
-  const styleFontMood = inferFontMood(appearanceDraft);
-  const styleContrast = inferContrast(appearanceDraft, styleTemplateId, styleThemeForCard);
+  const styleFontMood = inferFontMood(styleAppearanceForChips);
+  const styleContrast = inferContrast(styleAppearanceForChips, styleTemplateId, styleThemeForCard);
   const effectiveTemplateId = livePreviewSpec?.templateId ?? previewVideoSpec?.templateId;
   const formatChipSelection = layoutFormatFromTemplateId(effectiveTemplateId);
-  const isBoldOutline =
-    (livePreviewSpec?.textTreatment ?? previewVideoSpec?.textTreatment) === "bold-outline";
+  const isBoldOutline = useMemo(() => {
+    if (!livePreviewSpec) return false;
+    if (selectedSegmentId === "hook") return livePreviewSpec.textTreatment === "bold-outline";
+    const blk = livePreviewSpec.blocks.find((b) => b.id === selectedSegmentId);
+    return (blk?.textTreatment ?? livePreviewSpec.textTreatment) === "bold-outline";
+  }, [livePreviewSpec, selectedSegmentId]);
+
+  const styleResetEnabled =
+    selectedSegmentId === "hook"
+      ? appearanceHasSavedOverrides(sessionAppearance)
+      : blockHasSavedStyleOverrides(previewVideoSpec?.blocks.find((b) => b.id === selectedSegmentId));
   const uiPinForPositionRow = (() => {
     const tpl = livePreviewSpec?.templateId ?? previewVideoSpec?.templateId;
     if (tpl === "top-banner") return "top" as const;
@@ -2860,6 +2934,7 @@ export function VideoCreateWorkspace({
       if (f === "center") ops.push({ op: "replace", path: "/templateId", value: "centered-pop" });
       else if (f === "stack") {
         ops.push({ op: "replace", path: "/templateId", value: "stacked-cards" });
+        ops.push({ op: "replace", path: "/layout/stackGrowth", value: "down" });
         if (cur === "top-banner") ops.push({ op: "replace", path: "/layout/verticalAnchor", value: "top" });
         if (cur === "centered-pop") {
           ops.push({ op: "replace", path: "/layout/verticalAnchor", value: "bottom" });
@@ -2879,11 +2954,19 @@ export function VideoCreateWorkspace({
   const onSetOutlineLayout = useCallback(
     async (outline: boolean) => {
       if (!session || !previewVideoSpec) return;
+      if (selectedSegmentId === "hook") {
+        await onCommitVideoSpecOps([
+          { op: "replace", path: "/textTreatment", value: outline ? "bold-outline" : null },
+        ]);
+        return;
+      }
+      const idx = previewVideoSpec.blocks.findIndex((b) => b.id === selectedSegmentId);
+      if (idx < 0) return;
       await onCommitVideoSpecOps([
-        { op: "replace", path: "/textTreatment", value: outline ? "bold-outline" : null },
+        { op: "replace", path: `/blocks/${idx}/textTreatment`, value: outline ? "bold-outline" : null },
       ]);
     },
-    [onCommitVideoSpecOps, previewVideoSpec, session],
+    [onCommitVideoSpecOps, previewVideoSpec, selectedSegmentId, session],
   );
 
   const onSetUiPin = useCallback(
@@ -2907,21 +2990,77 @@ export function VideoCreateWorkspace({
     async (ops: AppearanceOp[]) => {
       const cs = clientSlug.trim();
       const os = orgSlug.trim();
-      if (!session || !cs || !os || ops.length === 0) return;
+      if (!session || !cs || !os || ops.length === 0 || !previewVideoSpec) return;
+      const blockIdx =
+        selectedSegmentId !== "hook"
+          ? previewVideoSpec.blocks.findIndex((b) => b.id === selectedSegmentId)
+          : -1;
+      const baseAppearance: VideoSpecAppearance =
+        selectedSegmentId === "hook"
+          ? sessionAppearance
+          : (blockIdx >= 0 ? (previewVideoSpec.blocks[blockIdx]?.appearance ?? {}) : {});
+      const appearancePathPrefix =
+        blockIdx >= 0 ? (`/blocks/${blockIdx}/appearance` as const) : ("/appearance" as const);
       const meaningful = ops.filter(({ key, value }) => {
         const valN = value === "" || value === undefined ? null : value;
-        const curRaw = sessionAppearance[key] as string | undefined | null;
+        const curRaw = baseAppearance[key] as string | undefined | null;
         const curN = curRaw === "" || curRaw === undefined || curRaw === null ? null : String(curRaw);
         return curN !== valN;
       });
       if (meaningful.length === 0) return;
-      setAppearanceDraft((d) => mergeAppearanceOpsIntoDraft(d, meaningful));
+      if (selectedSegmentId === "hook") {
+        setAppearanceDraft((d) => mergeAppearanceOpsIntoDraft(d, meaningful));
+      } else {
+        setBlockAppearanceDraft((d) => mergeAppearanceOpsIntoDraft(d, meaningful));
+      }
       styleTouchedRef.current = true;
       setSpecInFlight((n) => n + 1);
       const reqId = ++specReqIdRef.current;
       try {
         const res = await patchSessionVideoSpec(cs, os, session.id, {
-          ops: appearanceOpsToPatchOps(meaningful),
+          ops: appearanceOpsToPatchOps(meaningful, appearancePathPrefix),
+        });
+        if (reqId !== specReqIdRef.current) return;
+        if (!res.ok) {
+          show(res.error, "error");
+          if (selectedSegmentId === "hook") {
+            setAppearanceDraft(sessionAppearance);
+          } else if (blockIdx >= 0) {
+            setBlockAppearanceDraft({ ...(previewVideoSpec.blocks[blockIdx]?.appearance ?? {}) });
+          }
+          return;
+        }
+        applySession(res.data);
+      } finally {
+        setSpecInFlight((n) => Math.max(0, n - 1));
+      }
+    },
+    [
+      applySession,
+      clientSlug,
+      orgSlug,
+      session,
+      sessionAppearance,
+      previewVideoSpec,
+      selectedSegmentId,
+      show,
+    ],
+  );
+
+  const onClearAppearance = useCallback(async () => {
+    const cs = clientSlug.trim();
+    const os = orgSlug.trim();
+    if (!session || !cs || !os || !previewVideoSpec) return;
+    const keys = ["fontId", "cardTextColor", "overlayTextColor", "cardBg", "overlayStroke"] as const;
+    if (selectedSegmentId === "hook") {
+      if (!appearanceHasSavedOverrides(sessionAppearance)) return;
+      styleTouchedRef.current = false;
+      setAppearanceDraft(DEFAULT_APPEARANCE);
+      setSpecInFlight((n) => n + 1);
+      const reqId = ++specReqIdRef.current;
+      try {
+        const res = await patchSessionVideoSpec(cs, os, session.id, {
+          ops: keys.map((k) => ({ op: "replace" as const, path: `/appearance/${k}`, value: null })),
         });
         if (reqId !== specReqIdRef.current) return;
         if (!res.ok) {
@@ -2933,46 +3072,53 @@ export function VideoCreateWorkspace({
       } finally {
         setSpecInFlight((n) => Math.max(0, n - 1));
       }
-    },
-    [applySession, clientSlug, orgSlug, session, sessionAppearance, show],
-  );
-
-  const onClearAppearance = useCallback(async () => {
-    const cs = clientSlug.trim();
-    const os = orgSlug.trim();
-    if (!session || !cs || !os) return;
-    if (!appearanceHasSavedOverrides(sessionAppearance)) return;
+      return;
+    }
+    const idx = previewVideoSpec.blocks.findIndex((b) => b.id === selectedSegmentId);
+    if (idx < 0) return;
+    const row = previewVideoSpec.blocks[idx];
+    if (!blockHasSavedStyleOverrides(row)) return;
     styleTouchedRef.current = false;
-    setAppearanceDraft(DEFAULT_APPEARANCE);
+    setBlockAppearanceDraft({});
     setSpecInFlight((n) => n + 1);
     const reqId = ++specReqIdRef.current;
-    const keys = ["fontId", "cardTextColor", "overlayTextColor", "cardBg", "overlayStroke"] as const;
     try {
+      const appearanceOps = keys.map((k) => ({
+        op: "replace" as const,
+        path: `/blocks/${idx}/appearance/${k}`,
+        value: null,
+      }));
+      const treatmentOp = {
+        op: "replace" as const,
+        path: `/blocks/${idx}/textTreatment`,
+        value: null,
+      };
       const res = await patchSessionVideoSpec(cs, os, session.id, {
-        ops: keys.map((k) => ({ op: "replace" as const, path: `/appearance/${k}`, value: null })),
+        ops: row.textTreatment != null ? [...appearanceOps, treatmentOp] : appearanceOps,
       });
       if (reqId !== specReqIdRef.current) return;
       if (!res.ok) {
         show(res.error, "error");
-        setAppearanceDraft(sessionAppearance);
+        setBlockAppearanceDraft({ ...(row.appearance ?? {}) });
         return;
       }
       applySession(res.data);
     } finally {
       setSpecInFlight((n) => Math.max(0, n - 1));
     }
-  }, [applySession, clientSlug, orgSlug, session, sessionAppearance, show]);
+  }, [applySession, clientSlug, orgSlug, session, sessionAppearance, previewVideoSpec, selectedSegmentId, show]);
 
   const onCommitPauseBeforeBeat = useCallback(
     async (pauseIdx: number, value: number) => {
       const cs = clientSlug.trim();
       const os = orgSlug.trim();
-      if (!session || !cs || !os || !previewVideoSpec) {
+      const specNow = previewVideoSpecRef.current;
+      if (!session || !cs || !os || !specNow) {
         setPauseDraft(null);
         return;
       }
       const rounded = Math.round(value * 1000) / 1000;
-      const cur = effectivePausesSec(previewVideoSpec);
+      const cur = effectivePausesSec(specNow);
       if (pauseIdx < 0 || pauseIdx >= cur.length) {
         setPauseDraft(null);
         return;
@@ -2981,17 +3127,15 @@ export function VideoCreateWorkspace({
         setPauseDraft(null);
         return;
       }
-      const next = [...cur];
-      next[pauseIdx] = rounded;
-      // Always `replace`: the server normalizes `video_spec` through Pydantic and
-      // `model_dump` includes `/pausesSec` (often `null` or a wrong-length legacy
-      // array). JSON Patch `add` on an existing member fails (RFC 6902), so the
-      // request would 400 and the value would never stick.
-      const op = { op: "replace" as const, path: "/pausesSec" as const, value: next };
+      const ops = pauseGapToExplicitTimelinePatchOps(specNow, pauseIdx, rounded);
+      if (ops.length === 0) {
+        setPauseDraft(null);
+        return;
+      }
       setSpecInFlight((n) => n + 1);
       const reqId = ++specReqIdRef.current;
       try {
-        const res = await patchSessionVideoSpec(cs, os, session.id, { ops: [op] });
+        const res = await patchSessionVideoSpec(cs, os, session.id, { ops });
         if (reqId !== specReqIdRef.current) return;
         if (!res.ok) {
           show(res.error, "error");
@@ -3003,7 +3147,7 @@ export function VideoCreateWorkspace({
         setPauseDraft(null);
       }
     },
-    [applySession, clientSlug, orgSlug, previewVideoSpec, session, show],
+    [applySession, clientSlug, orgSlug, session, show],
   );
 
   /** One-shot: shrink block durations so the timeline fits ``background.durationSec``. */
@@ -3056,9 +3200,10 @@ export function VideoCreateWorkspace({
     async (segmentId: string, newDurationSec: number) => {
       const cs = clientSlug.trim();
       const os = orgSlug.trim();
-      if (!session || !cs || !os || !previewVideoSpec) return;
-      const timing = beatDurationToLayerTiming(previewVideoSpec, segmentId, newDurationSec);
-      const result = computeLayerTimingChange(previewVideoSpec, segmentId, timing);
+      const specNow = previewVideoSpecRef.current;
+      if (!session || !cs || !os || !specNow) return;
+      const timing = beatDurationToLayerTiming(specNow, segmentId, newDurationSec);
+      const result = computeLayerTimingChange(specNow, segmentId, timing);
       // No-op if nothing changed (prevents an empty PATCH).
       if (result.ops.length === 0) {
         setTimingDraft(null);
@@ -3080,15 +3225,16 @@ export function VideoCreateWorkspace({
         setSpecInFlight((n) => Math.max(0, n - 1));
       }
     },
-    [applySession, clientSlug, orgSlug, previewVideoSpec, session, show],
+    [applySession, clientSlug, orgSlug, session, show],
   );
 
   const onCommitLayerTiming = useCallback(
     async (segmentId: string, timing: { startSec?: number; endSec?: number }) => {
       const cs = clientSlug.trim();
       const os = orgSlug.trim();
-      if (!session || !cs || !os || !previewVideoSpec) return;
-      const result = computeLayerTimingChange(previewVideoSpec, segmentId, timing);
+      const specNow = previewVideoSpecRef.current;
+      if (!session || !cs || !os || !specNow) return;
+      const result = computeLayerTimingChange(specNow, segmentId, timing);
       if (result.ops.length === 0) {
         setLayerTimingDraft(null);
         return;
@@ -3109,7 +3255,7 @@ export function VideoCreateWorkspace({
         setSpecInFlight((n) => Math.max(0, n - 1));
       }
     },
-    [applySession, clientSlug, orgSlug, previewVideoSpec, session, show],
+    [applySession, clientSlug, orgSlug, session, show],
   );
 
   const onCommitLayerTimingRef = useRef<typeof onCommitLayerTiming | null>(null);
@@ -3326,22 +3472,34 @@ export function VideoCreateWorkspace({
   }, [applySession, carouselCount, clientSlug, orgSlug, session, show]);
 
   const onPatchCarouselTemplate = useCallback(
-    async (templateId: string) => {
+    async (templateId: string, options?: { clearSlides?: boolean }) => {
       const tpl = carouselTemplateLibrary.find((t) => t.id === templateId);
       const cs = clientSlug.trim();
       const os = orgSlug.trim();
-      if (!tpl || !session || !cs || !os || carouselSlidesLocked) return;
+      if (!tpl || !session || !cs || !os) return;
+      const clearSlides = Boolean(options?.clearSlides);
+      if (carouselSlidesLocked && !clearSlides) return;
       setCarouselTemplateBusy(true);
       try {
         const res = await generationPatchSession(cs, os, session.id, {
           selected_carousel_template: tpl,
+          ...(clearSlides ? { clear_carousel_slides: true } : {}),
         });
         if (!res.ok) {
           show(res.error, "error");
           return;
         }
         applySession(res.data);
-        show("Carousel reference updated.", "success");
+        if (clearSlides) {
+          setCarouselStyleSwitchOpen(false);
+          setCarouselStyleSwitchDraftId(null);
+        }
+        show(
+          clearSlides
+            ? "Recipe updated — slides cleared. Adjust count if needed, then Generate slides."
+            : "Carousel recipe updated.",
+          "success",
+        );
       } finally {
         setCarouselTemplateBusy(false);
       }
@@ -3691,17 +3849,19 @@ export function VideoCreateWorkspace({
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-[10px] font-bold uppercase tracking-wider text-app-fg-muted">
-                Carousel style
+                Carousel recipe
               </p>
               <p className="mt-1 text-[11px] leading-relaxed text-app-fg-muted">
-                Sets the slide structure for this carousel. You can change it until you generate slides.
+                Background references from Media. Change anytime before slides exist; after that, use{" "}
+                <span className="font-semibold text-app-fg-secondary">Switch recipe</span> (clears slides so new
+                backgrounds apply).
               </p>
             </div>
             <Link
               href="/settings#content-defaults"
               className="shrink-0 text-[11px] font-semibold text-amber-600 hover:underline dark:text-amber-400"
             >
-              Edit styles →
+              Edit recipes →
             </Link>
           </div>
           {snap && typeof snap === "object" && typeof snap.name === "string" && snap.name.trim() ? (
@@ -3742,33 +3902,39 @@ export function VideoCreateWorkspace({
             </div>
           ) : (
             <p className="mt-3 text-xs text-app-fg-muted">
-              No reference sequence — generation runs without a structured template.
+              No reference recipe — slides use AI-generated backgrounds instead of your Media library.
             </p>
           )}
           {snapId !== "" && !snapInLibrary && carouselTemplateLibrary.length > 0 ? (
             <p className="mt-2 text-[11px] leading-relaxed text-amber-800 dark:text-amber-300/90">
-              This snapshot is not in your current recipe library. Pick a template below to replace it.
+              This snapshot is not in your current recipe library. Pick a recipe below to replace it.
             </p>
           ) : null}
+
           {carouselTemplateLibrary.length > 0 && !carouselSlidesLocked ? (
             <label className="mt-3 block">
-              <span className="sr-only">Carousel reference template</span>
+              <span className="mb-1.5 block text-[11px] font-semibold text-app-fg-muted">Change recipe</span>
+              <span className="sr-only">Carousel recipe</span>
               <div className="relative">
                 <select
                   className="w-full appearance-none rounded-xl border border-zinc-200/90 bg-white px-3 py-2.5 pr-9 text-sm text-zinc-900 shadow-sm disabled:opacity-60 dark:border-white/10 dark:bg-zinc-900/80 dark:text-app-fg"
                   value={selectedTemplateSelectValue}
-                  onChange={(e) => void onPatchCarouselTemplate(e.target.value)}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (!v) return;
+                    void onPatchCarouselTemplate(v);
+                  }}
                   disabled={
                     carouselTemplateBusy || carouselGenBusy || carouselSlideBusy || loading
                   }
                 >
                   {!snapInLibrary && snapId !== "" ? (
                     <option value="" disabled>
-                      — Choose a template to replace snapshot —
+                      — Choose a recipe to replace snapshot —
                     </option>
                   ) : (
                     <option value="" disabled={snapInLibrary}>
-                      {snapInLibrary ? "Change reference…" : "Choose a reference…"}
+                      {snapInLibrary ? "Change to…" : "Choose a recipe…"}
                     </option>
                   )}
                   {carouselTemplateLibrary.map((t) => (
@@ -3784,15 +3950,99 @@ export function VideoCreateWorkspace({
               </div>
             </label>
           ) : null}
-          {carouselSlidesLocked ? (
-            <p className="mt-3 text-[11px] text-app-fg-subtle">
-              Locked — slides already generated; reference cannot change.
-            </p>
+
+          {carouselTemplateLibrary.length > 0 && carouselSlidesLocked ? (
+            <div className="mt-3 space-y-2">
+              {!carouselStyleSwitchOpen ? (
+                <button
+                  type="button"
+                  disabled={carouselTemplateBusy || carouselGenBusy || carouselSlideBusy || loading}
+                  onClick={() => {
+                    const first = carouselTemplateLibrary[0]?.id ?? "";
+                    setCarouselStyleSwitchDraftId(snapInLibrary && snapId ? snapId : first);
+                    setCarouselStyleSwitchOpen(true);
+                  }}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-app-divider bg-app-chip-bg/40 px-3 py-2.5 text-xs font-bold text-app-fg transition-colors hover:bg-app-chip-bg/70 disabled:opacity-50 sm:w-auto"
+                >
+                  Switch carousel recipe…
+                </button>
+              ) : (
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/[0.06] p-4">
+                  <p className="text-[11px] leading-relaxed text-app-fg-muted">
+                    Pick a new recipe, then confirm.{" "}
+                    <span className="font-semibold text-app-fg">
+                      All current slides (text and images) are removed
+                    </span>{" "}
+                    so new backgrounds can render. Hooks and caption stay as they are — use{" "}
+                    <span className="font-semibold text-app-fg-secondary">Generate slides</span> below when ready.
+                  </p>
+                  <label className="mt-3 block">
+                    <span className="mb-1.5 block text-[11px] font-semibold text-app-fg-muted">New recipe</span>
+                    <div className="relative">
+                      <select
+                        className="w-full appearance-none rounded-xl border border-zinc-200/90 bg-white px-3 py-2.5 pr-9 text-sm text-zinc-900 shadow-sm dark:border-white/10 dark:bg-zinc-900/80 dark:text-app-fg"
+                        value={carouselStyleSwitchDraftId ?? ""}
+                        onChange={(e) => setCarouselStyleSwitchDraftId(e.target.value || null)}
+                        disabled={carouselTemplateBusy || carouselGenBusy || carouselSlideBusy || loading}
+                      >
+                        <option value="" disabled>
+                          Select…
+                        </option>
+                        {carouselTemplateLibrary.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.name}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown
+                        className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-app-fg-muted"
+                        aria-hidden
+                      />
+                    </div>
+                  </label>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={
+                        !carouselStyleSwitchDraftId ||
+                        carouselTemplateBusy ||
+                        carouselGenBusy ||
+                        carouselSlideBusy ||
+                        loading
+                      }
+                      onClick={() => {
+                        const id = carouselStyleSwitchDraftId;
+                        if (!id) return;
+                        void onPatchCarouselTemplate(id, { clearSlides: true });
+                      }}
+                      className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-amber-500 px-4 py-2 text-xs font-bold text-zinc-950 shadow-sm hover:opacity-95 disabled:opacity-50 sm:flex-none"
+                    >
+                      {carouselTemplateBusy ? (
+                        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+                      ) : null}
+                      Apply recipe &amp; clear slides
+                    </button>
+                    <button
+                      type="button"
+                      disabled={carouselTemplateBusy}
+                      onClick={() => {
+                        setCarouselStyleSwitchOpen(false);
+                        setCarouselStyleSwitchDraftId(null);
+                      }}
+                      className="rounded-xl border border-app-divider px-4 py-2 text-xs font-semibold text-app-fg-muted hover:bg-white/5"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           ) : null}
+
           {carouselTemplateBusy ? (
             <p className="mt-2 flex items-center gap-2 text-[11px] text-app-fg-muted">
               <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
-              Updating reference…
+              Updating recipe…
             </p>
           ) : null}
         </div>
@@ -3805,10 +4055,12 @@ export function VideoCreateWorkspace({
           generating={carouselGenBusy}
           convertingEditable={carouselConvertBusy}
           count={carouselCount}
-          countLocked={templateSnapshotSlideCount != null}
+          countLocked={false}
           countHint={
-            templateSnapshotSlideCount != null
-              ? `This session uses your saved recipe — ${templateSnapshotSlideCount} slides match the template references.`
+            session.carousel_slide_count != null &&
+            typeof session.carousel_slide_count === "number" &&
+            Number.isFinite(session.carousel_slide_count)
+              ? `Target length for this session: ${session.carousel_slide_count} slides (set on Generate).`
               : undefined
           }
           onCountChange={setCarouselCount}
@@ -4621,10 +4873,17 @@ export function VideoCreateWorkspace({
                 </div>
                 <div className="space-y-2 border-t border-app-divider/30 pt-3">
                   <div className="flex items-center justify-between gap-2">
-                    <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Style</p>
+                    <div className="min-w-0 space-y-0.5">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Style</p>
+                      <p className="text-[9px] text-app-fg-subtle">
+                        {selectedSegmentId === "hook"
+                          ? "Applies to whole video"
+                          : "Applies to selected beat"}
+                      </p>
+                    </div>
                     <button
                       type="button"
-                      disabled={!session.background_url || !appearanceHasSavedOverrides(sessionAppearance)}
+                      disabled={!session.background_url || !styleResetEnabled}
                       title="Reset to look defaults"
                       onClick={() => void onClearAppearance()}
                       className="inline-flex items-center gap-1 rounded-md border border-app-divider/60 px-1.5 py-1 text-app-fg-muted transition hover:border-amber-500/40 hover:text-app-fg disabled:opacity-30"

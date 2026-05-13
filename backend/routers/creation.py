@@ -945,17 +945,14 @@ def _template_slides_from_row(row: Dict[str, Any]) -> List[Dict[str, Any]]:
     return slides[:10]
 
 
-def _carousel_slide_count_from_request(row: Dict[str, Any], requested_count: int) -> int:
-    """When a carousel template is selected, slide count follows the template (3–10)."""
-    template_slides = _template_slides_from_row(row)
-    if template_slides:
-        n = len(template_slides)
-        if n < 3:
-            raise HTTPException(
-                status_code=400,
-                detail="Selected carousel template must have at least 3 reference slides.",
-            )
-        return max(3, min(10, n))
+def carousel_slide_count_effective(row: Dict[str, Any], requested_count: int) -> int:
+    """Prefer ``generation_sessions.carousel_slide_count``; else clamp ``requested_count`` to 3–10."""
+    raw = row.get("carousel_slide_count")
+    if raw is not None:
+        try:
+            return max(3, min(10, int(raw)))
+        except (TypeError, ValueError):
+            pass
     return max(3, min(10, int(requested_count or 6)))
 
 
@@ -1010,7 +1007,7 @@ def build_carousel_slides_payload(
     )
     template_slides = _template_slides_from_row(row)
     uses_template_images = bool(template_slides)
-    slide_count = _carousel_slide_count_from_request(row, body.count)
+    slide_count = carousel_slide_count_effective(row, body.count)
     if not uses_template_images and not settings.freepik_api_key:
         raise HTTPException(status_code=503, detail="FREEPIK_API_KEY not configured")
     try:
@@ -1040,8 +1037,12 @@ def build_carousel_slides_payload(
         else ""
     )
     slides: List[Dict[str, Any]] = []
+    n_tpl = len(template_slides)
     for i, text in enumerate(texts):
-        template_slide = template_slides[i] if i < len(template_slides) else {}
+        if uses_template_images and n_tpl > 0:
+            template_slide = template_slides[i % n_tpl]
+        else:
+            template_slide = template_slides[i] if i < len(template_slides) else {}
         slide_role = _carousel_slide_role_for_idx(i, len(texts), template_slide)
         text_box_dict = _merge_carousel_text_box_dict(slide_role, None, None)
         background_style_dict = _merge_carousel_background_style_dict(None, None)

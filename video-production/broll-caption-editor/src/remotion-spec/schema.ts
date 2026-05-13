@@ -57,6 +57,10 @@ export type VideoSpecBlock = {
   startSec: number;
   endSec: number;
   animation: VideoAnimation;
+  /** Inherits from top-level ``textTreatment`` when omitted. */
+  textTreatment?: VideoTextTreatmentId | null;
+  /** Inherits from top-level ``appearance`` when omitted. */
+  appearance?: VideoSpecAppearance | null;
 };
 
 export type VerticalAnchor = 'bottom' | 'center' | 'top';

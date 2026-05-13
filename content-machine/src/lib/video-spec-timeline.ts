@@ -5,6 +5,7 @@
  * Mirrors backend/services/video_spec_timeline.py.
  */
 
+import type { Operation } from "fast-json-patch";
 import type { VideoSpec } from "@/lib/video-spec";
 
 // Mirrors backend services/video_spec_timeline.py — keep both in sync. 5s per
@@ -116,4 +117,53 @@ export function relayoutTimeline(
     pausesSec: n > 0 ? pauses.map(roundCs) : undefined,
     totalSec,
   };
+}
+
+function pushReplace<T>(ops: Operation[], path: string, oldValue: T, value: T): void {
+  if (Object.is(oldValue, value)) return;
+  ops.push({ op: "replace", path, value });
+}
+
+/**
+ * Build JSON Patch ops that move the timeline from ``base`` → ``rel`` using **array indices
+ * from ``base.blocks``** (server order). Use after ``relayoutTimeline`` so the batch includes
+ * explicit ``/blocks/{i}/startSec`` and ``/blocks/{i}/endSec`` paths so the API skips
+ * ``normalize_timeline_after_patch``.
+ */
+export function patchOpsFromRelayoutVsBase(base: VideoSpec, rel: VideoSpec): Operation[] {
+  const ops: Operation[] = [];
+  pushReplace(ops, "/hook/durationSec", base.hook.durationSec, rel.hook.durationSec);
+  for (let i = 0; i < base.blocks.length; i += 1) {
+    const ob = base.blocks[i]!;
+    const nb = rel.blocks.find((b) => b.id === ob.id);
+    if (!nb) continue;
+    pushReplace(ops, `/blocks/${i}/startSec`, ob.startSec, nb.startSec);
+    pushReplace(ops, `/blocks/${i}/endSec`, ob.endSec, nb.endSec);
+  }
+  const n = base.blocks.length;
+  if (n > 0 && rel.pausesSec && rel.pausesSec.length === n) {
+    const curP = effectivePausesSec(base);
+    const nextP = rel.pausesSec;
+    if (curP.some((p, j) => Math.abs(p - nextP[j]!) >= 1e-4)) {
+      ops.push({ op: "replace", path: "/pausesSec", value: nextP });
+    }
+  }
+  pushReplace(ops, "/totalSec", base.totalSec, rel.totalSec);
+  return ops;
+}
+
+/** Gap editor: apply one pause value and emit explicit block-window ops (never pause-only PATCH). */
+export function pauseGapToExplicitTimelinePatchOps(
+  spec: VideoSpec,
+  pauseIdx: number,
+  newPauseSec: number,
+): Operation[] {
+  const cur = effectivePausesSec(spec);
+  if (pauseIdx < 0 || pauseIdx >= cur.length) return [];
+  const rounded = roundCs(clampGap(newPauseSec));
+  if (Math.abs(cur[pauseIdx]! - rounded) < 1e-6) return [];
+  const next = [...cur];
+  next[pauseIdx] = rounded;
+  const rel = relayoutTimeline({ ...spec, pausesSec: next }, {});
+  return patchOpsFromRelayoutVsBase(spec, rel);
 }

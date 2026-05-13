@@ -35,6 +35,12 @@ class TopicSearchBody(BaseModel):
     max_items: int = Field(50, ge=1, le=200)
 
 
+class ScrapedReelBookmarkBody(BaseModel):
+    """PATCH /clients/{slug}/reels/{reel_id} — favourites toggle (stored as ``is_bookmarked``)."""
+
+    is_bookmarked: bool
+
+
 class ReelAnalysisSummary(BaseModel):
     """Embedded on scraped reel rows when include_analysis=true."""
 
@@ -210,3 +216,4 @@ class ScrapedReelOut(BaseModel):
     proven_growth_source: Optional[str] = None
     # Dashboard competitor-wins lane (views / account_avg_views)
     win_ratio: Optional[float] = None
+    is_bookmarked: Optional[bool] = None

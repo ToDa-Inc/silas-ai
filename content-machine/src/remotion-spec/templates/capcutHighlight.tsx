@@ -1,6 +1,6 @@
 import { AbsoluteFill } from 'remotion';
 import type { VideoSpecWithTimeline } from '../templateProps';
-import { resolveAppearance } from '../appearance';
+import { mergeLayerAppearance } from '../appearance';
 import { blockEntranceStyle } from '../animations';
 import { flexAlignForTextAlign } from '../alignLayout';
 import { resolveLayoutPx } from '../layout';
@@ -17,13 +17,14 @@ import { resolveLayoutPx } from '../layout';
  */
 export default function CapcutHighlightTemplate({ spec, frame, fps }: VideoSpecWithTimeline) {
   const sec = frame / fps;
-  const theme = resolveAppearance(spec);
   const layout = resolveLayoutPx(spec);
   const hookDur = spec.hook.durationSec;
   const showHook = sec < hookDur;
 
   const inWindow = spec.blocks.filter((b) => sec >= b.startSec && sec < b.endSec);
   const activeBlock = [...inWindow].sort((a, b) => b.startSec - a.startSec)[0];
+
+  const theme = mergeLayerAppearance(spec, showHook ? null : activeBlock?.appearance ?? null);
 
   const activeText = showHook ? spec.hook.text : activeBlock?.text;
   const isCTA = !showHook && !!activeBlock?.isCTA;

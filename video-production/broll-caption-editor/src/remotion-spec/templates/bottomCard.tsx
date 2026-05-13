@@ -1,124 +1,120 @@
 import React from 'react';
 import { AbsoluteFill } from 'remotion';
 import type { VideoSpecWithTimeline } from '../templateProps';
-import { resolveAppearance } from '../appearance';
+import { mergeLayerAppearance } from '../appearance';
 import { blockEntranceStyle } from '../animations';
 import { flexAlignForTextAlign } from '../alignLayout';
 import { resolveLayoutPx } from '../layout';
-import { cardBoldOutlineCaptionStyle, isBoldOutlineTreatment } from '../textTreatment';
+import { cardBoldOutlineCaptionStyle, isBoldOutlineLayer } from '../textTreatment';
+import { activeCaptionLayers, type ActiveCaptionLayer } from '../activeLayers';
 
 export default function BottomCardTemplate({ spec, frame, fps }: VideoSpecWithTimeline) {
   const sec = frame / fps;
-  const theme = resolveAppearance(spec);
   const layout = resolveLayoutPx(spec);
-  const hookDur = spec.hook.durationSec;
-  const showHook = sec < hookDur;
-
-  const inWindow = spec.blocks.filter((b) => sec >= b.startSec && sec < b.endSec);
-  const activeBlock = [...inWindow].sort((a, b) => b.startSec - a.startSec)[0];
-
-  const activeText = showHook ? spec.hook.text : activeBlock?.text;
-  const isCTA = !showHook && !!activeBlock?.isCTA;
-  const startFrame = showHook ? 0 : Math.round((activeBlock?.startSec ?? 0) * fps);
-  const anim = (showHook ? 'fade' : activeBlock?.animation ?? 'fade') as
-    | 'pop'
-    | 'fade'
-    | 'slide-up'
-    | 'none';
-  const animStyle = blockEntranceStyle(frame, fps, startFrame, anim);
-
+  const layers = activeCaptionLayers(spec, sec);
   const baseSize = 60;
-  const ctaScaled = isCTA ? Math.round(baseSize * theme.ctaScale) : baseSize;
-  const fontSize = Math.round(ctaScaled * layout.scale);
 
   const anchor = layout.verticalAnchor;
   const pad = '160px';
   const ta = layout.textAlign;
   const rowAlign = flexAlignForTextAlign(ta);
 
-  const textShell = activeText ? (
-    <div
-      style={{
-        display: 'inline-block',
-        backgroundColor: theme.cardBg === 'transparent' ? '#ffffff' : theme.cardBg,
-        borderRadius: '12px',
-        padding: '24px 32px',
-        maxWidth: layout.innerWidth,
-        opacity: animStyle.opacity,
-        transform: animStyle.transform,
-      }}
-    >
-      <p
+  const textShell = (layer: ActiveCaptionLayer) => {
+    const layerTheme = mergeLayerAppearance(spec, layer.kind === 'block' ? layer.appearance : null);
+    const startFrame = Math.round(layer.startSec * fps);
+    const animStyle = blockEntranceStyle(frame, fps, startFrame, layer.animation);
+    const ctaScaled = layer.isCTA ? Math.round(baseSize * layerTheme.ctaScale) : baseSize;
+    const fontSize = Math.round(ctaScaled * layout.scale);
+    return (
+      <div
+        key={layer.key}
         style={{
-          fontSize,
-          fontWeight: 800,
-          fontFamily: theme.bodyFontStack,
-          color: theme.cardText,
-          margin: 0,
-          lineHeight: 1.25,
-          letterSpacing: '-0.01em',
-          ...(isBoldOutlineTreatment(spec) ? cardBoldOutlineCaptionStyle(spec) : {}),
-          WebkitFontSmoothing: 'antialiased',
-          textRendering: 'optimizeLegibility',
-          wordWrap: 'break-word',
-          overflowWrap: 'break-word',
-          textAlign: ta,
+          display: 'inline-block',
+          backgroundColor: layerTheme.cardBg === 'transparent' ? '#ffffff' : layerTheme.cardBg,
+          borderRadius: '12px',
+          padding: '24px 32px',
+          maxWidth: layout.innerWidth,
+          opacity: animStyle.opacity,
+          transform: animStyle.transform,
         }}
       >
-        {activeText}
-      </p>
-    </div>
-  ) : null;
+        <p
+          style={{
+            fontSize,
+            fontWeight: 800,
+            fontFamily: layerTheme.bodyFontStack,
+            color: layerTheme.cardText,
+            margin: 0,
+            lineHeight: 1.25,
+            letterSpacing: '-0.01em',
+            ...(isBoldOutlineLayer(spec, layer) ? cardBoldOutlineCaptionStyle() : {}),
+            WebkitFontSmoothing: 'antialiased',
+            textRendering: 'optimizeLegibility',
+            wordWrap: 'break-word',
+            overflowWrap: 'break-word',
+            textAlign: ta,
+          }}
+        >
+          {layer.text}
+        </p>
+      </div>
+    );
+  };
 
-  const textRow = activeText ? (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: rowAlign,
-        width: '100%',
-      }}
-    >
-      {textShell}
-    </div>
-  ) : null;
+  const textRow =
+    layers.length > 0 ? (
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: rowAlign,
+          gap: layout.stackGapPx,
+          width: '100%',
+        }}
+      >
+        {layers.map((layer) => textShell(layer))}
+      </div>
+    ) : null;
 
-  const bottomGradient = activeText ? (
-    <div
-      style={{
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        bottom: 0,
-        height: '48%',
-        background: 'linear-gradient(to top, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0) 100%)',
-        pointerEvents: 'none',
-      }}
-    />
-  ) : null;
+  const bottomGradient =
+    layers.length > 0 ? (
+      <div
+        style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: '48%',
+          background: 'linear-gradient(to top, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0) 100%)',
+          pointerEvents: 'none',
+        }}
+      />
+    ) : null;
 
-  const centerVignette = activeText ? (
-    <AbsoluteFill
-      style={{
-        background: 'radial-gradient(ellipse at center, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.45) 100%)',
-        pointerEvents: 'none',
-      }}
-    />
-  ) : null;
+  const centerVignette =
+    layers.length > 0 ? (
+      <AbsoluteFill
+        style={{
+          background: 'radial-gradient(ellipse at center, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.45) 100%)',
+          pointerEvents: 'none',
+        }}
+      />
+    ) : null;
 
-  const topGradient = activeText ? (
-    <div
-      style={{
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        top: 0,
-        height: '48%',
-        background: 'linear-gradient(to bottom, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0) 100%)',
-        pointerEvents: 'none',
-      }}
-    />
-  ) : null;
+  const topGradient =
+    layers.length > 0 ? (
+      <div
+        style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          top: 0,
+          height: '48%',
+          background: 'linear-gradient(to bottom, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0) 100%)',
+          pointerEvents: 'none',
+        }}
+      />
+    ) : null;
 
   let overlay: React.ReactNode = null;
   let textWrap: React.ReactNode = null;

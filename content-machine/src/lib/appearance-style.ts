@@ -161,10 +161,44 @@ export const APPEARANCE_CLEAR_OPS: AppearanceOp[] = [
   { key: "overlayStroke", value: null },
 ];
 
-export function appearanceOpsToPatchOps(ops: AppearanceOp[]): { op: "replace"; path: string; value: string | null }[] {
+const APPEARANCE_PATCH_KEYS: (keyof VideoSpecAppearance)[] = [
+  "fontId",
+  "cardTextColor",
+  "overlayTextColor",
+  "cardBg",
+  "overlayStroke",
+];
+
+/** Effective look for a caption beat: global appearance with optional block overrides. */
+export function mergeGlobalAndBlockAppearance(
+  global: VideoSpecAppearance,
+  blockPartial?: VideoSpecAppearance | null,
+): VideoSpecAppearance {
+  const o = blockPartial ?? {};
+  const out: VideoSpecAppearance = { ...global };
+  for (const k of APPEARANCE_PATCH_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(o, k)) continue;
+    const v = o[k];
+    if (v === null || v === undefined || (typeof v === "string" && !String(v).trim())) {
+      delete (out as Record<string, unknown>)[k as string];
+      const gv = global[k];
+      if (gv !== undefined && gv !== null && (typeof gv !== "string" || gv.trim())) {
+        (out as Record<string, unknown>)[k as string] = gv;
+      }
+    } else {
+      (out as Record<string, unknown>)[k as string] = v;
+    }
+  }
+  return out;
+}
+
+export function appearanceOpsToPatchOps(
+  ops: AppearanceOp[],
+  appearancePathPrefix = "/appearance",
+): { op: "replace"; path: string; value: string | null }[] {
   return ops.map(({ key, value }) => ({
     op: "replace" as const,
-    path: `/appearance/${String(key)}`,
+    path: `${appearancePathPrefix}/${String(key)}`,
     value,
   }));
 }

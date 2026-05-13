@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useTransition,
   type ReactNode,
   type SyntheticEvent,
 } from "react";
@@ -19,6 +20,7 @@ import {
   Search,
   SlidersHorizontal,
   Sparkles,
+  Star,
   Target,
   TrendingUp,
   X,
@@ -26,7 +28,7 @@ import {
 import { ReelThumbnail } from "@/components/reel-thumbnail";
 import { AppSelect } from "@/components/ui/app-select";
 import { Tooltip } from "@/components/ui/tooltip";
-import type { ReelsListSortBy, ReelsMediaType, ScrapedReelRow } from "@/lib/api";
+import type { ReelsListSortBy, ReelsMediaType, ScrapedReelRow, SortRule } from "@/lib/api";
 import { formatViewsToComments, viewsToCommentsRatio } from "@/lib/reel-comment-view";
 import {
   clientApiHeaders,
@@ -35,6 +37,7 @@ import {
   fetchActiveReelAnalysisJob,
   formatFastApiError,
   getContentApiBase,
+  patchScrapedReelBookmark,
 } from "@/lib/api-client";
 import { analysisSortScore, formatSilasScoreSummary } from "@/lib/silas-score-display";
 import {
@@ -55,7 +58,7 @@ import { ReelAnalysisDetailModal } from "../components/reel-analysis-detail-moda
 /**
  * Page-local sort keys are columns the server can't sort on (joined from
  * reel_analyses, or computed from base columns). They only ever apply as a
- * secondary sort over the loaded page.
+ * primary sort over the loaded page.
  */
 type LocalSortKey = "total_score" | "comment_view_ratio";
 type AnySortKey = ReelsListSortBy | LocalSortKey;
@@ -64,8 +67,7 @@ type AnalysisFilter = "all" | "analyzed" | "pending";
 
 /** Mirrors the URL state owned by the page-level Server Component. */
 type ServerState = {
-  sortBy: ReelsListSortBy;
-  sortDir: "asc" | "desc";
+  sortRules: SortRule[];
   page: number;
   pageSize: number;
   creator: string;
@@ -82,6 +84,7 @@ type ServerState = {
   maxComments: number | null;
   postedAfter: string | null;
   postedBefore: string | null;
+  bookmarkedOnly: boolean;
 };
 
 type Props = {
@@ -100,6 +103,7 @@ type Props = {
 /** Sort keys the backend can ORDER BY directly. */
 const SERVER_SORT_KEYS: ReadonlySet<string> = new Set<ReelsListSortBy>([
   "posted_at",
+  "posted_date",
   "views",
   "likes",
   "comments",
@@ -113,6 +117,7 @@ const SERVER_SORT_KEYS: ReadonlySet<string> = new Set<ReelsListSortBy>([
 
 const SORT_KEY_LABELS: Record<AnySortKey, string> = {
   posted_at: "Posted",
+  posted_date: "Day posted",
   views: "Views",
   likes: "Likes",
   comments: "Comments",
@@ -249,57 +254,51 @@ function compareForSort(a: ScrapedReelRow, b: ScrapedReelRow, key: AnySortKey): 
 // SortHeader
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Column header with sort affordance.
+ *
+ * sortLevel: 1-indexed position in the active sort rules (null = not sorting).
+ * Clicking cycles: not in sort → desc → asc → removed from sort.
+ * Level badge (2, 3…) appears on secondary/tertiary columns so users can see
+ * the priority order at a glance.
+ */
 function SortHeader({
   label,
-  primaryActive,
-  primaryDir,
-  secondaryActive,
-  secondaryDir,
+  sortLevel,
+  sortDir,
   onClick,
   hint,
   serverSortable,
 }: {
   label: string;
-  primaryActive: boolean;
-  primaryDir: "asc" | "desc";
-  secondaryActive: boolean;
-  secondaryDir: "asc" | "desc";
-  onClick: (withShift: boolean) => void;
+  sortLevel: number | null;
+  sortDir: "asc" | "desc";
+  onClick: () => void;
   hint?: string;
-  /**
-   * False = column is page-local sort only (joined / computed). Header still
-   * works; we just skip the "primary indicator badge" since it can't drive
-   * the URL/server.
-   */
   serverSortable: boolean;
 }) {
-  const ariaSort = primaryActive
-    ? primaryDir === "desc"
-      ? "descending"
-      : "ascending"
-    : "none";
-  const showSecondary = secondaryActive && !primaryActive;
+  const active = sortLevel !== null;
+  const ariaSort = active ? (sortDir === "desc" ? "descending" : "ascending") : "none";
   const hasInfo = Boolean(hint) || !serverSortable;
   const tooltipText = !serverSortable
     ? `${hint ? hint + " " : ""}Sorting only affects reels on this page.`
     : (hint as string);
-  // Stop bubbling on the Info trigger so clicking it never toggles sort. The
-  // Tooltip itself opens on hover/focus, not click — the icon stays a passive
-  // affordance that stays glued to the label without stealing the sort gesture.
   const stopBubble = (e: SyntheticEvent) => e.stopPropagation();
   return (
     <th aria-sort={ariaSort} className="py-3 pr-2 font-medium">
       <button
         type="button"
-        onClick={(e) => onClick(e.shiftKey)}
+        onClick={onClick}
         className={`group inline-flex items-center gap-0.5 rounded text-left uppercase tracking-widest transition-colors ${
-          primaryActive || showSecondary
+          active
             ? "text-zinc-800 dark:text-app-fg"
             : "text-zinc-500 hover:text-zinc-700 dark:text-app-fg-subtle dark:hover:text-app-fg-muted"
         }`}
         aria-label={`Sort by ${label}${
-          primaryActive ? `, currently ${primaryDir === "desc" ? "descending" : "ascending"}` : ""
-        }${secondaryActive ? `, also a secondary sort ${secondaryDir === "desc" ? "descending" : "ascending"}` : ""}. Shift+click to add as a secondary sort.`}
+          active
+            ? `, currently ${sortDir === "desc" ? "descending" : "ascending"}, priority ${sortLevel}`
+            : ""
+        }`}
       >
         <span>{label}</span>
         {hasInfo ? (
@@ -322,17 +321,11 @@ function SortHeader({
             </span>
           </Tooltip>
         ) : null}
-        {primaryActive ? (
-          primaryDir === "desc" ? (
+        {active ? (
+          sortDir === "desc" ? (
             <ArrowDown className="ml-0.5 h-3 w-3 shrink-0" aria-hidden />
           ) : (
             <ArrowUp className="ml-0.5 h-3 w-3 shrink-0" aria-hidden />
-          )
-        ) : showSecondary ? (
-          secondaryDir === "desc" ? (
-            <ArrowDown className="ml-0.5 h-3 w-3 shrink-0 opacity-60" aria-hidden />
-          ) : (
-            <ArrowUp className="ml-0.5 h-3 w-3 shrink-0 opacity-60" aria-hidden />
           )
         ) : (
           <ChevronsUpDown
@@ -340,12 +333,12 @@ function SortHeader({
             aria-hidden
           />
         )}
-        {showSecondary ? (
+        {active && sortLevel !== null && sortLevel > 1 ? (
           <span
             className="ml-0.5 rounded bg-zinc-200 px-1 text-[8px] font-bold text-zinc-700 dark:bg-white/15 dark:text-app-fg-muted"
             aria-hidden
           >
-            2
+            {sortLevel}
           </span>
         ) : null}
       </button>
@@ -473,6 +466,7 @@ export function IntelligenceReelsTable({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const [isPending, startTransition] = useTransition();
 
   // ─── URL-state setter ────────────────────────────────────────────────────
   // Given a sparse patch of search-params updates, rebuild the URL and push it.
@@ -495,14 +489,18 @@ export function IntelligenceReelsTable({
         next.delete("page");
       }
       const qs = next.toString();
-      router.push(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+      startTransition(() => {
+        router.push(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+      });
     },
-    [router, pathname, searchParams],
+    [router, pathname, searchParams, startTransition],
   );
 
   const resetServerFilters = useCallback(() => {
-    router.push(pathname, { scroll: false });
-  }, [router, pathname]);
+    startTransition(() => {
+      router.push(pathname, { scroll: false });
+    });
+  }, [router, pathname, startTransition]);
 
   // ─── Client-only state ───────────────────────────────────────────────────
   const [detailReelId, setDetailReelId] = useState<string | null>(null);
@@ -510,13 +508,7 @@ export function IntelligenceReelsTable({
   const [searchInput, setSearchInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
 
-  /** Page-local secondary sort. Always applied AFTER the server-sorted page. */
-  const [secondarySort, setSecondarySort] = useState<{
-    key: AnySortKey;
-    dir: "asc" | "desc";
-  } | null>(null);
-
-  /** Page-local primary sort, used when the column isn't server-sortable. */
+  /** Page-local primary sort, used only for non-server-sortable columns (Score, C/V). */
   const [localPrimarySort, setLocalPrimarySort] = useState<{
     key: LocalSortKey;
     dir: "asc" | "desc";
@@ -540,6 +532,9 @@ export function IntelligenceReelsTable({
   const [recreateRow, setRecreateRow] = useState<ScrapedReelRow | null>(null);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [bulkMsg, setBulkMsg] = useState<string | null>(null);
+  /** Optimistic is_bookmarked keyed by reel id; dropped when props match or request fails. */
+  const [bookmarkOverride, setBookmarkOverride] = useState<Record<string, boolean>>({});
+  const bookmarkInFlightRef = useRef<Set<string>>(new Set());
   const [trackedJobId, setTrackedJobId] = useState<string | null>(null);
   const [trackedJobType, setTrackedJobType] = useState<
     "reel_analyze_bulk" | "reel_analyze_url" | null
@@ -568,8 +563,42 @@ export function IntelligenceReelsTable({
     return [...set].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   }, [rows, serverState.creator]);
 
+  const rowsWithBookmarks = useMemo(() => {
+    if (Object.keys(bookmarkOverride).length === 0) return rows;
+    return rows.map((r) => {
+      const o = bookmarkOverride[r.id];
+      if (o === undefined) return r;
+      if (Boolean(r.is_bookmarked) === o) return r;
+      return { ...r, is_bookmarked: o };
+    });
+  }, [rows, bookmarkOverride]);
+
+  /** Drop optimistic entries once server props agree (or row left the page). */
+  useEffect(() => {
+    setBookmarkOverride((prev) => {
+      const ids = Object.keys(prev);
+      if (ids.length === 0) return prev;
+      const next = { ...prev };
+      let changed = false;
+      for (const id of ids) {
+        if (bookmarkInFlightRef.current.has(id)) continue;
+        const r = rows.find((x) => x.id === id);
+        if (r == null) {
+          delete next[id];
+          changed = true;
+          continue;
+        }
+        if (Boolean(r.is_bookmarked) === next[id]) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [rows]);
+
   const displayRows = useMemo(() => {
-    let out = rows;
+    let out = rowsWithBookmarks;
     if (analysisFilter === "analyzed") {
       out = out.filter((r) => Boolean(r.analysis));
     } else if (analysisFilter === "pending") {
@@ -584,10 +613,8 @@ export function IntelligenceReelsTable({
         return u.includes(q) || h.includes(q) || c.includes(q);
       });
     }
-    // Sort precedence: page-local primary (only for non-server columns) →
-    // server primary order (already applied by API) → page-local secondary.
-    // Array.sort is stable since ES2019, so applying secondary alone keeps
-    // the server order as the implicit tiebreaker.
+    // Page-local primary sort applies only for non-server columns (Score, C/V).
+    // For server-sortable columns, ORDER BY is handled by the API.
     if (localPrimarySort) {
       const copy = [...out];
       copy.sort((a, b) => {
@@ -596,16 +623,38 @@ export function IntelligenceReelsTable({
       });
       out = copy;
     }
-    if (secondarySort) {
-      const copy = [...out];
-      copy.sort((a, b) => {
-        const base = compareForSort(a, b, secondarySort.key);
-        return secondarySort.dir === "asc" ? base : -base;
-      });
-      out = copy;
-    }
     return out;
-  }, [rows, analysisFilter, searchQuery, localPrimarySort, secondarySort]);
+  }, [rowsWithBookmarks, analysisFilter, searchQuery, localPrimarySort]);
+
+  const toggleBookmark = useCallback(
+    async (row: ScrapedReelRow) => {
+      const rid = row.id;
+      if (bookmarkInFlightRef.current.has(rid)) return;
+      const next = !Boolean(row.is_bookmarked);
+      setBulkMsg(null);
+      setBookmarkOverride((o) => ({ ...o, [rid]: next }));
+      bookmarkInFlightRef.current.add(rid);
+      try {
+        const res = await patchScrapedReelBookmark(clientSlug, orgSlug, rid, next);
+        if (!res.ok) {
+          setBookmarkOverride((o) => {
+            if (Object.keys(o).length === 0) return o;
+            const n = { ...o };
+            delete n[rid];
+            return n;
+          });
+          setBulkMsg(res.error);
+          return;
+        }
+        startTransition(() => {
+          router.refresh();
+        });
+      } finally {
+        bookmarkInFlightRef.current.delete(rid);
+      }
+    },
+    [clientSlug, orgSlug, router, startTransition],
+  );
 
   // ─── Bulk-selection helpers ─────────────────────────────────────────────
   const postUrlVisible = useMemo(
@@ -772,7 +821,7 @@ export function IntelligenceReelsTable({
           }
         }
       } catch {
-        if (!cancelled) setBulkMsg("Couldn’t check progress.");
+        if (!cancelled) setBulkMsg("Couldn't check progress.");
       }
     };
 
@@ -786,42 +835,54 @@ export function IntelligenceReelsTable({
     };
   }, [trackedJobId, clientSlug, orgSlug, router]);
 
+  // ─── Multi-sort helpers ─────────────────────────────────────────────────
+
+  /**
+   * O(1) lookup from column name → { level, dir }.
+   * level is 1-indexed (1 = primary sort, 2 = secondary, etc.).
+   * Only covers server-sortable columns that are in sortRules.
+   */
+  const sortInfoMap = useMemo(
+    () =>
+      new Map(
+        serverState.sortRules.map((r, i) => [r.col, { level: i + 1, dir: r.dir }] as const),
+      ),
+    [serverState.sortRules],
+  );
+
+  /** Push a new set of sort rules to the URL (up to 3). */
+  const pushSortRules = useCallback(
+    (rules: SortRule[]) => {
+      const val = rules.length ? rules.map((r) => `${r.col}:${r.dir}`).join(",") : null;
+      pushFilters({ sort: val, page: null });
+    },
+    [pushFilters],
+  );
+
   // ─── Sort handlers ──────────────────────────────────────────────────────
   /**
-   * Click on a header. Shift+click adds/cycles a secondary sort (page-local).
-   * Plain click sets primary: for server-sortable columns this pushes the new
-   * sort to the URL (server re-fetches); for non-server columns it sets a
-   * page-local primary so users can still re-order Score / C/V locally.
+   * Click on a column header.
    *
-   * Both primary tracks use a 3-state cycle (none → desc → asc → none) so a
-   * third click clears the sort entirely.
+   * Server-sortable columns: cycles through → add desc → toggle asc → remove.
+   * Multiple columns can be active simultaneously (up to 3); their order in
+   * the URL determines priority.
+   *
+   * Non-server columns (Score, C/V): page-local primary sort, same 3-state
+   * cycle. These are sorted over the already-API-sorted page.
    */
   const handleSort = useCallback(
-    (key: AnySortKey, withShift: boolean) => {
-      if (withShift) {
-        setSecondarySort((cur) => {
-          if (!cur || cur.key !== key) return { key, dir: "desc" };
-          if (cur.dir === "desc") return { key, dir: "asc" };
-          return null;
-        });
-        return;
-      }
-      // Primary click clears any secondary so users don't get surprised by
-      // a stale "page 2" sort still influencing the new primary.
-      setSecondarySort(null);
-
+    (key: AnySortKey) => {
       if (SERVER_SORT_KEYS.has(key)) {
         setLocalPrimarySort(null);
-        const k = key as ReelsListSortBy;
-        if (serverState.sortBy === k) {
-          if (serverState.sortDir === "desc") {
-            pushFilters({ sort: k, dir: "asc", page: null });
-          } else {
-            // Cycle off → reset to default (posted_at desc).
-            pushFilters({ sort: null, dir: null, page: null });
-          }
+        const col = key as ReelsListSortBy;
+        const rules = serverState.sortRules;
+        const existing = rules.find((r) => r.col === col);
+        if (!existing) {
+          pushSortRules([...rules, { col, dir: "desc" }]);
+        } else if (existing.dir === "desc") {
+          pushSortRules(rules.map((r) => (r.col === col ? { ...r, dir: "asc" as const } : r)));
         } else {
-          pushFilters({ sort: k, dir: "desc", page: null });
+          pushSortRules(rules.filter((r) => r.col !== col));
         }
       } else {
         // Page-local primary for joined/computed columns.
@@ -833,7 +894,7 @@ export function IntelligenceReelsTable({
         });
       }
     },
-    [pushFilters, serverState.sortBy, serverState.sortDir],
+    [pushSortRules, serverState.sortRules],
   );
 
   // ─── Selection helpers ──────────────────────────────────────────────────
@@ -977,10 +1038,13 @@ export function IntelligenceReelsTable({
     if (localPrimarySort) {
       return `${SORT_KEY_LABELS[localPrimarySort.key]} ${localPrimarySort.dir === "desc" ? "↓" : "↑"} · this page`;
     }
-    if (serverState.sortBy !== "posted_at" || serverState.sortDir !== "desc") {
-      return `${SORT_KEY_LABELS[serverState.sortBy]} ${serverState.sortDir === "desc" ? "↓" : "↑"}`;
-    }
-    return null;
+    const rules = serverState.sortRules;
+    if (!rules.length) return null;
+    // Single posted_at desc is the implicit default — no chip needed.
+    if (rules.length === 1 && rules[0].col === "posted_at" && rules[0].dir === "desc") return null;
+    return rules
+      .map((r) => `${SORT_KEY_LABELS[r.col as AnySortKey] ?? r.col} ${r.dir === "desc" ? "↓" : "↑"}`)
+      .join(", ");
   })();
 
   const fmtRange = (lo: number | null, hi: number | null, suffix = "") => {
@@ -1009,19 +1073,18 @@ export function IntelligenceReelsTable({
     (viewsChip ? 1 : 0) +
     (likesChip ? 1 : 0) +
     (commentsChip ? 1 : 0) +
-    (postedChip ? 1 : 0);
+    (postedChip ? 1 : 0) +
+    (serverState.bookmarkedOnly ? 1 : 0);
   const clientFilterCount =
     (analysisFilter !== "all" ? 1 : 0) +
     (searchQuery ? 1 : 0) +
-    (sortChipText ? 1 : 0) +
-    (secondarySort ? 1 : 0);
+    (sortChipText ? 1 : 0);
   const activeFilterCount = serverFilterCount + clientFilterCount;
 
   const clearAllFilters = () => {
     setAnalysisFilter("all");
     setSearchInput("");
     setSearchQuery("");
-    setSecondarySort(null);
     setLocalPrimarySort(null);
     resetServerFilters();
   };
@@ -1094,6 +1157,21 @@ export function IntelligenceReelsTable({
               { value: "short", label: "text overlay" },
               { value: "long", label: "talking head" },
               { value: "carousel", label: "Carousel" },
+            ]}
+          />
+          <AppSelect
+            ariaLabel="Bookmarked filter"
+            triggerClassName="h-9 min-w-[140px] py-0"
+            value={serverState.bookmarkedOnly ? "bookmarked" : "all"}
+            onChange={(v) =>
+              pushFilters({
+                bookmarked: v === "bookmarked" ? 1 : null,
+                page: null,
+              })
+            }
+            options={[
+              { value: "all", label: "Full catalog" },
+              { value: "bookmarked", label: "Bookmarked" },
             ]}
           />
           <div className="glass-inset relative flex h-9 min-w-[220px] items-center rounded-lg border border-zinc-200/80 bg-white/80 text-sm text-zinc-900 shadow-sm transition-colors focus-within:border-zinc-300/90 focus-within:ring-2 focus-within:ring-amber-500/30 dark:border-white/10 dark:bg-zinc-900/80 dark:text-app-fg dark:focus-within:ring-amber-400/25">
@@ -1346,6 +1424,13 @@ export function IntelligenceReelsTable({
                   }
                 />
               ) : null}
+              {serverState.bookmarkedOnly ? (
+                <FilterChip
+                  label="Bookmarked"
+                  value="Only starred reels"
+                  onClear={() => pushFilters({ bookmarked: null, page: null })}
+                />
+              ) : null}
               {analysisFilter !== "all" ? (
                 <FilterChip
                   label="Analysis"
@@ -1371,16 +1456,9 @@ export function IntelligenceReelsTable({
                     if (localPrimarySort) {
                       setLocalPrimarySort(null);
                     } else {
-                      pushFilters({ sort: null, dir: null, page: null });
+                      pushSortRules([]);
                     }
                   }}
-                />
-              ) : null}
-              {secondarySort ? (
-                <FilterChip
-                  label="Then by"
-                  value={`${SORT_KEY_LABELS[secondarySort.key]} ${secondarySort.dir === "desc" ? "↓" : "↑"} · this page`}
-                  onClear={() => setSecondarySort(null)}
                 />
               ) : null}
               <button
@@ -1395,7 +1473,11 @@ export function IntelligenceReelsTable({
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-zinc-200/90 bg-zinc-50/90 dark:border-white/10 dark:bg-zinc-950/60">
+      <div
+        className={`overflow-x-auto rounded-xl border border-zinc-200/90 bg-zinc-50/90 transition-opacity duration-150 dark:border-white/10 dark:bg-zinc-950/60 ${
+          isPending ? "pointer-events-none opacity-60" : ""
+        }`}
+      >
         <table className="w-full min-w-[1200px] border-collapse text-left [&_td]:cursor-default">
           <thead>
             <tr className="border-b border-zinc-200/90 text-[10px] uppercase tracking-widest text-zinc-500 dark:border-white/10 dark:text-app-fg-subtle">
@@ -1412,113 +1494,105 @@ export function IntelligenceReelsTable({
                 ) : null}
               </th>
               <th className="px-1 py-3 pr-2 font-medium tabular-nums">#</th>
+              <th className="w-10 py-3 pr-1 text-center font-medium" title="Bookmark for replicate">
+                <span className="sr-only">Bookmark</span>
+                <Star className="mx-auto h-3.5 w-3.5 text-zinc-400 dark:text-app-fg-faint" aria-hidden />
+              </th>
               <th className="py-3 pr-2 font-medium">Thumb</th>
               <th className="py-3 pr-2 font-medium">Account</th>
               <SortHeader
                 label="Score"
                 hint="Silas score after analysis, or open niche fit from View analysis. Niche fit % is in its own column."
                 serverSortable={false}
-                primaryActive={localPrimarySort?.key === "total_score"}
-                primaryDir={localPrimarySort?.dir ?? "desc"}
-                secondaryActive={secondarySort?.key === "total_score"}
-                secondaryDir={secondarySort?.dir ?? "desc"}
-                onClick={(s) => handleSort("total_score", s)}
+                sortLevel={localPrimarySort?.key === "total_score" ? 1 : null}
+                sortDir={localPrimarySort?.dir ?? "desc"}
+                onClick={() => handleSort("total_score")}
               />
               <SortHeader
                 label="Views"
                 serverSortable
-                primaryActive={!localPrimarySort && serverState.sortBy === "views"}
-                primaryDir={serverState.sortDir}
-                secondaryActive={secondarySort?.key === "views"}
-                secondaryDir={secondarySort?.dir ?? "desc"}
-                onClick={(s) => handleSort("views", s)}
+                sortLevel={!localPrimarySort ? (sortInfoMap.get("views")?.level ?? null) : null}
+                sortDir={sortInfoMap.get("views")?.dir ?? "desc"}
+                onClick={() => handleSort("views")}
               />
               <SortHeader
                 label="Vs account"
-                hint="Views vs this creator’s usual posts on file — above ~1× is hotter than their baseline (breakout-style read)."
+                hint="Views vs this creator's usual posts on file — above ~1× is hotter than their baseline (breakout-style read)."
                 serverSortable
-                primaryActive={!localPrimarySort && serverState.sortBy === "outlier_ratio"}
-                primaryDir={serverState.sortDir}
-                secondaryActive={secondarySort?.key === "outlier_ratio"}
-                secondaryDir={secondarySort?.dir ?? "desc"}
-                onClick={(s) => handleSort("outlier_ratio", s)}
+                sortLevel={!localPrimarySort ? (sortInfoMap.get("outlier_ratio")?.level ?? null) : null}
+                sortDir={sortInfoMap.get("outlier_ratio")?.dir ?? "desc"}
+                onClick={() => handleSort("outlier_ratio")}
               />
               <SortHeader
                 label="Niche fit"
                 hint={NICHE_SIMILARITY_SCORE_TOOLTIP}
                 serverSortable
-                primaryActive={!localPrimarySort && serverState.sortBy === "similarity_score"}
-                primaryDir={serverState.sortDir}
-                secondaryActive={secondarySort?.key === "similarity_score"}
-                secondaryDir={secondarySort?.dir ?? "desc"}
-                onClick={(s) => handleSort("similarity_score", s)}
+                sortLevel={!localPrimarySort ? (sortInfoMap.get("similarity_score")?.level ?? null) : null}
+                sortDir={sortInfoMap.get("similarity_score")?.dir ?? "desc"}
+                onClick={() => handleSort("similarity_score")}
               />
               <SortHeader
                 label="Comments"
                 serverSortable
-                primaryActive={!localPrimarySort && serverState.sortBy === "comments"}
-                primaryDir={serverState.sortDir}
-                secondaryActive={secondarySort?.key === "comments"}
-                secondaryDir={secondarySort?.dir ?? "desc"}
-                onClick={(s) => handleSort("comments", s)}
+                sortLevel={!localPrimarySort ? (sortInfoMap.get("comments")?.level ?? null) : null}
+                sortDir={sortInfoMap.get("comments")?.dir ?? "desc"}
+                onClick={() => handleSort("comments")}
               />
               <SortHeader
                 label="C/V"
                 hint="Comments divided by views. Higher % = more comments per view."
                 serverSortable={false}
-                primaryActive={localPrimarySort?.key === "comment_view_ratio"}
-                primaryDir={localPrimarySort?.dir ?? "desc"}
-                secondaryActive={secondarySort?.key === "comment_view_ratio"}
-                secondaryDir={secondarySort?.dir ?? "desc"}
-                onClick={(s) => handleSort("comment_view_ratio", s)}
+                sortLevel={localPrimarySort?.key === "comment_view_ratio" ? 1 : null}
+                sortDir={localPrimarySort?.dir ?? "desc"}
+                onClick={() => handleSort("comment_view_ratio")}
               />
               <SortHeader
                 label="Saves"
-                hint="Saves when Instagram provides the number — it’s often missing."
+                hint="Saves when Instagram provides the number — it's often missing."
                 serverSortable
-                primaryActive={!localPrimarySort && serverState.sortBy === "saves"}
-                primaryDir={serverState.sortDir}
-                secondaryActive={secondarySort?.key === "saves"}
-                secondaryDir={secondarySort?.dir ?? "desc"}
-                onClick={(s) => handleSort("saves", s)}
+                sortLevel={!localPrimarySort ? (sortInfoMap.get("saves")?.level ?? null) : null}
+                sortDir={sortInfoMap.get("saves")?.dir ?? "desc"}
+                onClick={() => handleSort("saves")}
               />
               <SortHeader
                 label="Shares"
                 hint="Shares when available from Instagram — not shown for every reel."
                 serverSortable
-                primaryActive={!localPrimarySort && serverState.sortBy === "shares"}
-                primaryDir={serverState.sortDir}
-                secondaryActive={secondarySort?.key === "shares"}
-                secondaryDir={secondarySort?.dir ?? "desc"}
-                onClick={(s) => handleSort("shares", s)}
+                sortLevel={!localPrimarySort ? (sortInfoMap.get("shares")?.level ?? null) : null}
+                sortDir={sortInfoMap.get("shares")?.dir ?? "desc"}
+                onClick={() => handleSort("shares")}
               />
               <SortHeader
                 label="Likes"
                 serverSortable
-                primaryActive={!localPrimarySort && serverState.sortBy === "likes"}
-                primaryDir={serverState.sortDir}
-                secondaryActive={secondarySort?.key === "likes"}
-                secondaryDir={secondarySort?.dir ?? "desc"}
-                onClick={(s) => handleSort("likes", s)}
+                sortLevel={!localPrimarySort ? (sortInfoMap.get("likes")?.level ?? null) : null}
+                sortDir={sortInfoMap.get("likes")?.dir ?? "desc"}
+                onClick={() => handleSort("likes")}
               />
               <SortHeader
                 label="Dur."
                 hint="Length in seconds when Instagram includes it."
                 serverSortable
-                primaryActive={!localPrimarySort && serverState.sortBy === "video_duration"}
-                primaryDir={serverState.sortDir}
-                secondaryActive={secondarySort?.key === "video_duration"}
-                secondaryDir={secondarySort?.dir ?? "desc"}
-                onClick={(s) => handleSort("video_duration", s)}
+                sortLevel={!localPrimarySort ? (sortInfoMap.get("video_duration")?.level ?? null) : null}
+                sortDir={sortInfoMap.get("video_duration")?.dir ?? "desc"}
+                onClick={() => handleSort("video_duration")}
               />
               <SortHeader
                 label="Posted"
                 serverSortable
-                primaryActive={!localPrimarySort && serverState.sortBy === "posted_at"}
-                primaryDir={serverState.sortDir}
-                secondaryActive={secondarySort?.key === "posted_at"}
-                secondaryDir={secondarySort?.dir ?? "desc"}
-                onClick={(s) => handleSort("posted_at", s)}
+                sortLevel={
+                  !localPrimarySort
+                    ? (sortInfoMap.get("posted_date")?.level ??
+                        sortInfoMap.get("posted_at")?.level ??
+                        null)
+                    : null
+                }
+                sortDir={
+                  sortInfoMap.get("posted_date")?.dir ??
+                  sortInfoMap.get("posted_at")?.dir ??
+                  "desc"
+                }
+                onClick={() => handleSort("posted_date")}
               />
               <th className="py-3 pr-2 font-medium">Open / recreate</th>
             </tr>
@@ -1527,7 +1601,7 @@ export function IntelligenceReelsTable({
             {displayRows.length === 0 ? (
               <tr>
                 <td
-                  colSpan={15}
+                  colSpan={17}
                   className="py-12 text-center text-sm text-zinc-500 dark:text-app-fg-muted"
                 >
                   {total === 0
@@ -1563,6 +1637,36 @@ export function IntelligenceReelsTable({
                   </td>
                   <td className="px-1 py-2.5 pr-2 align-middle tabular-nums text-zinc-500 dark:text-app-fg-subtle">
                     {rowIndex + 1}
+                  </td>
+                  <td className="py-2.5 pr-1 align-middle text-center">
+                    <Tooltip
+                      content={
+                        row.is_bookmarked
+                          ? "Remove from replicate shortlist"
+                          : "Save to replicate shortlist"
+                      }
+                    >
+                      <button
+                        type="button"
+                        onClick={() => void toggleBookmark(row)}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 transition-[transform,colors,opacity] duration-150 ease-out hover:bg-zinc-200/80 hover:text-amber-600 active:scale-[0.92] dark:text-app-fg-muted dark:hover:bg-white/10 dark:hover:text-amber-400"
+                        aria-label={
+                          row.is_bookmarked
+                            ? "Remove bookmark from replicate shortlist"
+                            : "Bookmark for replicate shortlist"
+                        }
+                        aria-pressed={Boolean(row.is_bookmarked)}
+                      >
+                        <Star
+                          className={`h-4 w-4 shrink-0 transition-[fill,color,transform] duration-200 ease-out ${
+                            row.is_bookmarked
+                              ? "scale-105 fill-amber-400 text-amber-600 dark:fill-amber-500/90 dark:text-amber-300"
+                              : "scale-100"
+                          }`}
+                          aria-hidden
+                        />
+                      </button>
+                    </Tooltip>
                   </td>
                   <td className="py-2.5 pr-2 align-middle">
                     <ReelThumbnail
@@ -1662,7 +1766,7 @@ export function IntelligenceReelsTable({
                   <td className="py-2.5 pr-2 align-middle tabular-nums">
                     {row.outlier_ratio != null ? (
                       <Tooltip
-                        content={`How this reel’s views compare with this account’s usual posts — well above 1× is a breakout.`}
+                        content={`How this reel's views compare with this account's usual posts — well above 1× is a breakout.`}
                       >
                         <span
                           className={`inline-flex items-center gap-1 font-bold tabular-nums ${

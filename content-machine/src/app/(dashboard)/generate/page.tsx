@@ -141,6 +141,39 @@ function CtaPickerEmpty() {
   );
 }
 
+function CarouselSlideCountPicker({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (n: number) => void;
+}) {
+  return (
+    <div>
+      <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-app-fg-subtle">
+        Slides in this carousel <span className="font-normal text-app-fg-muted">(3–10)</span>
+      </p>
+      <div className="flex flex-wrap items-center gap-3">
+        <input
+          type="range"
+          min={3}
+          max={10}
+          step={1}
+          value={value}
+          onChange={(e) => onChange(Number(e.target.value))}
+          className="w-44 max-w-full accent-amber-500"
+          aria-label="Number of carousel slides"
+        />
+        <span className="min-w-[2ch] text-sm font-bold text-app-fg">{value}</span>
+      </div>
+      <p className="mt-2 text-[11px] leading-relaxed text-app-fg-muted">
+        We split your angle across this many slides. The style you pick below sets backgrounds and layout cues —
+        not the slide count.
+      </p>
+    </div>
+  );
+}
+
 function CarouselTemplatePicker({
   templates,
   selectedId,
@@ -182,14 +215,14 @@ function CarouselTemplatePicker({
             >
               {template.name}
               <span className="ml-1.5 font-normal text-app-fg-subtle">
-                · {template.slides.length} slides
+                · {template.slides.length} ref. backgrounds
               </span>
             </button>
           );
         })}
       </div>
       <p className="mt-2 text-[11px] leading-relaxed text-app-fg-muted">
-        This slide structure will be used as a starting point, then new slides are written and rendered for this idea.
+        Backgrounds and roles from your Media library — we cycle them if you generate more slides than references.
       </p>
     </div>
   );
@@ -916,6 +949,8 @@ export default function GeneratePage() {
   const [selectedCarouselTemplateId, setSelectedCarouselTemplateId] = useState<string | null>(null);
   const [coverTemplates, setCoverTemplates] = useState<ClientCoverTemplate[]>([]);
   const [selectedCoverTemplateId, setSelectedCoverTemplateId] = useState<string | null>(null);
+  /** Target length for carousel output (3–10); style template is visual only. */
+  const [carouselSlideCount, setCarouselSlideCount] = useState(6);
   /** Debounced niche inference when Format = Auto + idea text (drives template rows without triple-fetch). */
   const [autoFormatHint, setAutoFormatHint] = useState<string | null>(null);
   const [autoFormatHintLoading, setAutoFormatHintLoading] = useState(false);
@@ -1101,6 +1136,14 @@ export default function GeneratePage() {
       autoFormatHint !== "carousel"
     );
   }, [mode, formatPreset, composerInput, autoFormatHint]);
+
+  /** Show carousel length control whenever the user is generating a carousel (idea or recreate). */
+  const showCarouselSlideCountRow = useMemo(() => {
+    if (mode === "recreate") return recreateFormat === "carousel";
+    if (mode !== "idea") return false;
+    if (formatPreset === "carousel") return true;
+    return formatPreset === "auto" && composerInput.trim().length >= 8 && autoFormatHint === "carousel";
+  }, [mode, formatPreset, composerInput, autoFormatHint, recreateFormat]);
 
   /** Top competitor reels by comments÷views — quick-pick URLs into the composer. */
   useEffect(() => {
@@ -1410,6 +1453,10 @@ export default function GeneratePage() {
         }
       }
 
+      if (startsCarousel) {
+        body = { ...body, carousel_slide_count: carouselSlideCount };
+      }
+
       const res = await generationStart(ctx.clientSlug, ctx.orgSlug, body);
       if (!res.ok) {
         show(res.error, "error");
@@ -1437,6 +1484,7 @@ export default function GeneratePage() {
     selectedCarouselTemplateId,
     selectedCoverTemplateId,
     show,
+    carouselSlideCount,
   ]);
 
   const onChooseAngle = useCallback(
@@ -1642,6 +1690,13 @@ export default function GeneratePage() {
                     ) : null}
                   </div>
 
+                  {showCarouselSlideCountRow ? (
+                    <CarouselSlideCountPicker
+                      value={carouselSlideCount}
+                      onChange={setCarouselSlideCount}
+                    />
+                  ) : null}
+
                   {ideaShowsCarouselTemplateRow ? (
                     carouselTemplates.length > 0 ? (
                       <CarouselTemplatePicker
@@ -1793,6 +1848,13 @@ export default function GeneratePage() {
                         : "Choose the kind of post you want to create — text on video, talking head, or carousel."}
                     </p>
                   </div>
+
+                  {showCarouselSlideCountRow ? (
+                    <CarouselSlideCountPicker
+                      value={carouselSlideCount}
+                      onChange={setCarouselSlideCount}
+                    />
+                  ) : null}
 
                   {recreateFormat === "carousel" ? (
                     carouselTemplates.length > 0 ? (
@@ -2133,6 +2195,19 @@ export default function GeneratePage() {
               Delete
             </button>
           </div>
+
+          {session.source_type === "url_adapt" ? (
+            <UrlAdaptReferenceCard
+              sourceUrl={session.source_url}
+              patterns={synthesizedPatterns ?? undefined}
+            />
+          ) : null}
+          {session.source_type === "script_adapt" ? (
+            <ScriptAdaptReferenceCard
+              sourceScript={session.source_script}
+              patterns={synthesizedPatterns ?? undefined}
+            />
+          ) : null}
 
           <VideoCreateWorkspace
             clientSlug={clientSlug}
