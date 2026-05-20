@@ -74,7 +74,7 @@ export type StackGrowth = 'up' | 'down';
 export type VideoSpecLayout = {
   /** Coarse vertical placement (bottom-card uses this; others mainly use offset). */
   verticalAnchor?: VerticalAnchor;
-  /** Fine nudge as a fraction of canvas height. Negative = up, positive = down. */
+  /** Fine nudge as a fraction of canvas height (−1..+1 = one full frame up/down). Negative = up, positive = down. */
   verticalOffset: number;
   /** Multiplier on the template's default fontSize. */
   scale: number;
@@ -86,6 +86,8 @@ export type VideoSpecLayout = {
   stackGap: number;
   /** stacked-cards: ``down`` = first line stays put, new cards below; ``up`` = hug bottom (default). */
   stackGrowth: StackGrowth;
+  /** Horizontal pan of the caption block as a fraction of canvas width (-1..1). */
+  textPanX: number;
 };
 
 export const DEFAULT_LAYOUT: VideoSpecLayout = {
@@ -96,6 +98,7 @@ export const DEFAULT_LAYOUT: VideoSpecLayout = {
   textAlign: 'center',
   stackGap: 0.008,
   stackGrowth: 'up',
+  textPanX: 0,
 };
 
 export type VideoSpec = {
@@ -132,6 +135,11 @@ function coerceStackGrowth(v: unknown): StackGrowth {
   return s === 'down' ? 'down' : 'up';
 }
 
+function clampTextPanX(v: unknown): number {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return 0;
+  return Math.min(1, Math.max(-1, v));
+}
+
 /** Single source of truth for templates: always returns a complete layout (older specs auto-fill). */
 export function resolveLayout(spec: VideoSpec): VideoSpecLayout {
   const l = spec.layout;
@@ -149,6 +157,7 @@ export function resolveLayout(spec: VideoSpec): VideoSpecLayout {
     textAlign: coerceTextAlign(p.textAlign),
     stackGap: clampStackGap(rawGap),
     stackGrowth: coerceStackGrowth(p.stackGrowth),
+    textPanX: clampTextPanX(p.textPanX),
   };
 }
 

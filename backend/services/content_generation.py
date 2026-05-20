@@ -769,7 +769,7 @@ def _text_overlay_rules_block() -> str:
         "Use pop for the strongest beat or CTA; fade/slide-up for supports; none only if the beat is ultra soft.\n"
         "- layout: leave as defaults (verticalOffset 0, scale 1, sidePadding 0.05, textAlign center, stackGap 0.008, stackGrowth up) "
         "UNLESS the chosen template needs it. "
-        "Only nudge verticalOffset (-0.2..0.2 = up..down as fraction of canvas) if face-cam framing or product reveal "
+        "Only nudge verticalOffset (-1..1 = up..down as fraction of full frame height) if face-cam framing or product reveal "
         "should reserve the opposite side; only bump scale (0.7..1.3) for ultra-short hooks (<3 words → 1.15) or long "
         "subline beats (>5 words → 0.85); sidePadding (0.02..0.12) is for visual breathing room only. "
         "textAlign left|center|right applies to every template. stackGap 0..0.06 (fraction of canvas height) only affects stacked-cards spacing between cards. "
@@ -974,7 +974,8 @@ def _normalize_visual_style(
             sg = "up"
 
         layout = {
-            "verticalOffset": _bounded("verticalOffset", 0.0, -0.2, 0.2),
+            "verticalOffset": _bounded("verticalOffset", 0.0, -1.0, 1.0),
+            "textPanX": _bounded("textPanX", 0.0, -1.0, 1.0),
             "scale": _bounded("scale", 1.0, 0.7, 1.3),
             "sidePadding": _bounded("sidePadding", 0.05, 0.02, 0.12),
             "textAlign": ta,

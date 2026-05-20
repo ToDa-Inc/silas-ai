@@ -236,7 +236,7 @@ class ComposeThumbnailBody(BaseModel):
     # Default False preserves the original colours; pass True only for an explicit washed look.
     wash: bool = False
     crop_y: float = Field(0.5, ge=0.0, le=1.0)
-    zoom: float = Field(1.0, ge=1.0, le=2.0)
+    zoom: float = Field(1.0, ge=1.0, le=3.0)
     template_id: VideoTemplateId = "centered-pop"
     theme_id: VideoThemeId = "bold-modern"
     text_treatment: Optional[Literal["bold-outline"]] = None

@@ -469,7 +469,8 @@ def _overlay_text(
     pos = vertical_anchor if vertical_anchor in ("top", "center", "bottom") else str(text_position).lower()
     if template == "top-banner":
         pos = "top"
-    vertical_offset = max(-0.2, min(0.2, float(layout_d.get("verticalOffset") or 0.0)))
+    vertical_offset = max(-1.0, min(1.0, float(layout_d.get("verticalOffset") or 0.0)))
+    text_pan_x = max(-1.0, min(1.0, float(layout_d.get("textPanX") or 0.0)))
     if pos == "top":
         y = int(H * 0.16)
     elif pos == "bottom":
@@ -520,6 +521,8 @@ def _overlay_text(
             x = W - left - text_w
         else:
             x = (W - text_w) // 2
+        x = int(x + text_pan_x * W)
+        x = max(left, min(W - left - text_w, x))
         draw.text(
             (x, y),
             line,
@@ -817,7 +820,7 @@ def _resize_cover(
         new_h, new_w = h, int(h * src_r)
     else:
         new_w, new_h = w, int(w / src_r)
-    z = max(1.0, min(2.0, float(zoom or 1.0)))
+    z = max(1.0, min(3.0, float(zoom or 1.0)))
     new_w = int(new_w * z)
     new_h = int(new_h * z)
     img = img.resize((new_w, new_h), Image.LANCZOS)

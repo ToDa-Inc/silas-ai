@@ -6,9 +6,13 @@ import JSZip from "jszip";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { loadFont as loadInter } from "@remotion/google-fonts/Inter";
 import { loadFont as loadPlayfairDisplay } from "@remotion/google-fonts/PlayfairDisplay";
+import { loadFont as loadPatrickHand } from "@remotion/google-fonts/PatrickHand";
 import { loadFont as loadPoppins } from "@remotion/google-fonts/Poppins";
 import { FabricImage, Rect, StaticCanvas, Textbox } from "fabric";
 import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
@@ -23,6 +27,7 @@ import {
   RefreshCw,
   RotateCcw,
   Shield,
+  SlidersHorizontal,
   Sparkles,
   Trash2,
   Video,
@@ -69,6 +74,8 @@ import {
   buildPreviewSpecFromSession,
   DEFAULT_APPEARANCE,
   DEFAULT_LAYOUT,
+  LAYOUT_VERTICAL_OFFSET_MAX,
+  LAYOUT_VERTICAL_OFFSET_MIN,
   parseVideoSpec,
   sessionPrimaryHookText,
   type VideoSpec,
@@ -101,6 +108,7 @@ import {
   opsForContrast,
   opsForFontMood,
   type AppearanceOp,
+  type ContrastId,
   type VideoThemeId,
 } from "@/lib/appearance-style";
 
@@ -122,6 +130,10 @@ const { fontFamily: CAROUSEL_INTER_FONT } = loadInter("normal", {
 });
 const { fontFamily: CAROUSEL_POPPINS_FONT } = loadPoppins("normal", {
   weights: ["600", "700", "800"],
+  subsets: ["latin", "latin-ext"],
+});
+const { fontFamily: COVER_PATRICK_FONT } = loadPatrickHand("normal", {
+  weights: ["400"],
   subsets: ["latin", "latin-ext"],
 });
 const CAROUSEL_FONT_STACKS = {
@@ -267,6 +279,16 @@ const LOOK_VISUAL: {
     swatches: ["rgba(20,20,20,0.55)", "#ffffff", "#94a3b8"],
   },
 ];
+
+function coverPreviewFontFamily(themeId: VideoSpec["themeId"], a: VideoSpecAppearance): string {
+  const fid = a.fontId;
+  if (fid === "poppins") return CAROUSEL_FONT_STACKS.poppins;
+  if (fid === "inter") return CAROUSEL_FONT_STACKS.inter;
+  if (fid === "playfair") return CAROUSEL_FONT_STACKS.playfair;
+  if (fid === "patrick") return `"${COVER_PATRICK_FONT}", "Segoe Print", "Bradley Hand", cursive`;
+  const look = LOOK_VISUAL.find((t) => t.id === themeId);
+  return look?.fontFamily ?? CAROUSEL_FONT_STACKS.playfair;
+}
 
 function appearanceHasSavedOverrides(a: VideoSpecAppearance): boolean {
   return Boolean(
@@ -535,17 +557,20 @@ function ClientImagesPicker({
   busy,
   onPick,
   emptyHint = "No client images yet.",
+  compact = false,
 }: {
   images: ClientImageRow[];
   selectedImageId: string;
   busy: boolean;
   onPick: (id: string) => void;
   emptyHint?: string;
+  /** Horizontal strip — less vertical scroll in dense editors (e.g. reel cover). */
+  compact?: boolean;
 }) {
   return (
     <div>
-      <div className="mb-3 flex items-center justify-between">
-        <p className="text-xs font-semibold text-app-fg">
+      <div className={`flex items-center justify-between ${compact ? "mb-1.5" : "mb-3"}`}>
+        <p className={`font-semibold text-app-fg ${compact ? "text-[10px]" : "text-xs"}`}>
           Client images{" "}
           <span className="font-normal text-app-fg-muted">
             ({images.length})
@@ -553,23 +578,50 @@ function ClientImagesPicker({
         </p>
         <Link
           href="/media?tab=images"
-          className="text-[11px] font-semibold text-sky-500 hover:underline dark:text-sky-400"
+          className={`font-semibold text-sky-500 hover:underline dark:text-sky-400 ${compact ? "text-[10px]" : "text-[11px]"}`}
         >
-          Manage in Media →
+          Media →
         </Link>
       </div>
 
       {images.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-app-divider/60 py-8 text-center">
-          <ImageIcon className="mx-auto mb-2 h-6 w-6 text-app-fg-subtle opacity-30" />
-          <p className="mb-3 text-xs text-app-fg-subtle">{emptyHint}</p>
+        <div
+          className={`rounded-xl border border-dashed border-app-divider/60 text-center ${compact ? "py-4" : "py-8"}`}
+        >
+          <ImageIcon className={`mx-auto text-app-fg-subtle opacity-30 ${compact ? "mb-1 h-5 w-5" : "mb-2 h-6 w-6"}`} />
+          <p className={`text-app-fg-subtle ${compact ? "mb-2 text-[10px]" : "mb-3 text-xs"}`}>{emptyHint}</p>
           <Link
             href="/media?tab=images"
             className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500/15 px-3 py-1.5 text-xs font-bold text-app-on-amber-title hover:bg-amber-500/25"
           >
             <Plus className="h-3 w-3" />
-            Upload image
+            Upload
           </Link>
+        </div>
+      ) : compact ? (
+        <div className="-mx-0.5 flex gap-1.5 overflow-x-auto pb-1 pt-0.5 [scrollbar-width:thin]">
+          {images.map((img) => {
+            const isActive = selectedImageId === img.id;
+            return (
+              <button
+                key={img.id}
+                type="button"
+                disabled={busy}
+                onClick={() => onPick(img.id)}
+                className={`w-14 shrink-0 overflow-hidden rounded-lg border p-0.5 text-left transition-colors ${
+                  isActive
+                    ? "border-amber-500/45 bg-amber-500/10 ring-1 ring-amber-500/30"
+                    : "border-app-divider hover:border-white/20"
+                } disabled:opacity-50`}
+                title={img.label || "Use this image"}
+              >
+                <div className="overflow-hidden rounded-md bg-black/10" style={{ aspectRatio: "9/16" }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={img.file_url} alt="" className="h-full w-full object-cover" />
+                </div>
+              </button>
+            );
+          })}
         </div>
       ) : (
         <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5">
@@ -888,6 +940,206 @@ function CarouselTextLayerEditor({
           ))}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+const REEL_COVER_STAGE_W = 360;
+const REEL_COVER_STAGE_H = Math.round((REEL_COVER_STAGE_W * 16) / 9);
+
+function CoverTextLayerEditor({
+  layout,
+  coverFormat,
+  coverPin,
+  previewText,
+  coverTextColor,
+  coverStroke,
+  coverCardBg,
+  coverFontFamily,
+  coverContrast,
+  textTreatment,
+  mode,
+  selectedImage,
+  thumbnailUrl,
+  thumbnailBusy,
+  wash,
+  cropY,
+  zoom,
+  disabled,
+  onLayoutPatch,
+}: {
+  layout: VideoSpecLayout;
+  coverFormat: UiFormat;
+  coverPin: "top" | "center" | "bottom";
+  previewText: string;
+  coverTextColor: string;
+  coverStroke: string;
+  coverCardBg: string;
+  coverFontFamily: string;
+  coverContrast: ContrastId;
+  textTreatment?: "bold-outline";
+  mode: "ai" | "image";
+  selectedImage: ClientImageRow | null;
+  thumbnailUrl: string | null;
+  thumbnailBusy: boolean;
+  wash: boolean;
+  cropY: number;
+  zoom: number;
+  disabled?: boolean;
+  onLayoutPatch: (patch: Partial<VideoSpecLayout>) => void;
+}) {
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{
+    startX: number;
+    startY: number;
+    textPanX0: number;
+    verticalOffset0: number;
+  } | null>(null);
+  const [dragActive, setDragActive] = useState(false);
+  const [stageW, setStageW] = useState(REEL_COVER_STAGE_W);
+
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      const w = el.getBoundingClientRect().width;
+      if (w > 0) setStageW(w);
+    });
+    ro.observe(el);
+    const w0 = el.getBoundingClientRect().width;
+    if (w0 > 0) setStageW(w0);
+    return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!dragActive) return;
+    const onMove = (e: PointerEvent) => {
+      const drag = dragRef.current;
+      const stage = stageRef.current;
+      if (!drag || !stage) return;
+      const r = stage.getBoundingClientRect();
+      const dx = e.clientX - drag.startX;
+      const dy = e.clientY - drag.startY;
+      const w = Math.max(1, r.width);
+      const h = Math.max(1, r.height);
+      onLayoutPatch({
+        textPanX: clampRange(drag.textPanX0 + dx / w, -1, 1),
+        verticalOffset: clampRange(drag.verticalOffset0 + dy / h, LAYOUT_VERTICAL_OFFSET_MIN, LAYOUT_VERTICAL_OFFSET_MAX),
+      });
+    };
+    const onUp = () => {
+      dragRef.current = null;
+      setDragActive(false);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, [dragActive, onLayoutPatch]);
+
+  const startDrag = (e: React.PointerEvent) => {
+    if (disabled || thumbnailBusy) return;
+    e.preventDefault();
+    dragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      textPanX0: layout.textPanX ?? 0,
+      verticalOffset0: layout.verticalOffset,
+    };
+    setDragActive(true);
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (disabled || thumbnailBusy) return;
+    const step = e.shiftKey ? 0.04 : 0.015;
+    const deltas: Partial<Record<string, { dpx: number; dpy: number }>> = {
+      ArrowLeft: { dpx: -step, dpy: 0 },
+      ArrowRight: { dpx: step, dpy: 0 },
+      ArrowUp: { dpx: 0, dpy: -step },
+      ArrowDown: { dpx: 0, dpy: step },
+    };
+    const d = deltas[e.key];
+    if (!d) return;
+    e.preventDefault();
+    onLayoutPatch({
+      textPanX: clampRange((layout.textPanX ?? 0) + d.dpx, -1, 1),
+      verticalOffset: clampRange(layout.verticalOffset + d.dpy, LAYOUT_VERTICAL_OFFSET_MIN, LAYOUT_VERTICAL_OFFSET_MAX),
+    });
+  };
+
+  const coverTextTop =
+    coverPin === "top"
+      ? `${16 + layout.verticalOffset * 100}%`
+      : coverPin === "bottom"
+        ? undefined
+        : `${50 + layout.verticalOffset * 100}%`;
+  const coverTextBottom = coverPin === "bottom" ? `${16 - layout.verticalOffset * 100}%` : undefined;
+
+  const sw = stageW > 0 ? stageW : REEL_COVER_STAGE_W;
+  const txPx = (layout.textPanX ?? 0) * sw;
+  const textTransformCenter = `translate(${txPx}px, -50%)`;
+
+  const showText = previewText.length > 80 ? `${previewText.slice(0, 80)}…` : previewText;
+
+  return (
+    <div
+      ref={stageRef}
+      tabIndex={disabled || thumbnailBusy ? -1 : 0}
+      onKeyDown={onKeyDown}
+      aria-label="Cover text editor. Drag the headline to move it. Arrow keys nudge; Shift+Arrow for larger steps."
+      className="relative shrink-0 overflow-hidden rounded-2xl bg-zinc-950 shadow-[0_18px_60px_rgba(0,0,0,0.35)] outline-none ring-1 ring-white/5 focus:ring-2 focus:ring-amber-500/45"
+      style={{ width: REEL_COVER_STAGE_W, height: REEL_COVER_STAGE_H }}
+    >
+      {thumbnailBusy ? (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-black/45">
+          <Loader2 className="h-6 w-6 animate-spin text-app-fg-subtle" />
+          <p className="text-[10px] text-app-fg-muted">{mode === "ai" ? "~30–60s" : "few seconds"}</p>
+        </div>
+      ) : null}
+      {mode === "image" && selectedImage ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={selectedImage.file_url}
+          alt=""
+          className={`absolute inset-0 h-full w-full object-cover ${wash ? "grayscale opacity-70" : ""}`}
+          style={{
+            objectPosition: `50% ${Math.round(cropY * 100)}%`,
+            transform: `scale(${zoom})`,
+          }}
+        />
+      ) : thumbnailUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={thumbnailUrl} alt="Reel cover" className="absolute inset-0 block h-full w-full object-cover" />
+      ) : (
+        <div className="absolute inset-0 h-full w-full bg-[radial-gradient(circle_at_50%_35%,rgba(255,255,255,0.9),rgba(245,210,160,0.45),rgba(20,20,20,0.2))]" />
+      )}
+      <div
+        className={`absolute font-bold leading-tight ${disabled || thumbnailBusy ? "cursor-default" : "cursor-grab active:cursor-grabbing"} outline outline-2 outline-amber-400/90 outline-offset-2`}
+        style={{
+          left: `${Math.round(layout.sidePadding * 100)}%`,
+          right: `${Math.round(layout.sidePadding * 100)}%`,
+          top: coverTextTop,
+          bottom: coverTextBottom,
+          transform: coverPin === "center" ? textTransformCenter : `translateX(${txPx}px)`,
+          textAlign: layout.textAlign,
+          fontSize: `${Math.round(38 * layout.scale * (sw / REEL_COVER_STAGE_W))}px`,
+          fontFamily: coverFontFamily,
+          color: coverTextColor,
+          background: coverFormat === "center" ? "transparent" : coverCardBg,
+          borderRadius: coverFormat === "center" ? undefined : "14px",
+          padding: coverFormat === "center" ? undefined : "16px",
+          WebkitTextStroke: textTreatment === "bold-outline" ? `1.8px ${coverStroke}` : undefined,
+          textShadow: coverContrast === "light" ? "0 2px 8px rgba(0,0,0,0.9)" : undefined,
+        }}
+        onPointerDown={startDrag}
+        title="Drag to move. Arrow keys to nudge; Shift+Arrow for bigger nudges."
+      >
+        {showText}
+      </div>
     </div>
   );
 }
@@ -1455,27 +1707,14 @@ function ReelCoverSection({
   const previewText = coverText.trim() || "Cover headline";
   const coverFormat = layoutFormatFromTemplateId(coverEdit.templateId);
   const coverPin = coverEdit.templateId === "top-banner" ? "top" : coverEdit.layout.verticalAnchor ?? "center";
-  const coverFontMood = inferFontMood(coverEdit.appearance);
   const coverContrast = inferContrast(coverEdit.appearance, coverEdit.templateId, coverEdit.themeId as VideoThemeId);
   const coverHasAppearanceOverrides = appearanceHasSavedOverrides(coverEdit.appearance);
-  const coverFontFamily =
-    coverEdit.appearance.fontId === "playfair"
-      ? "Georgia, 'Times New Roman', serif"
-      : coverEdit.appearance.fontId === "patrick"
-        ? "'Segoe Print', 'Bradley Hand', cursive"
-        : "ui-sans-serif, system-ui";
+  const coverFontFamily = coverPreviewFontFamily(coverEdit.themeId, coverEdit.appearance);
   const coverTextColor = coverEdit.appearance.overlayTextColor ?? (coverContrast === "light" ? "#ffffff" : "#0a0a0a");
   const coverStroke = coverEdit.textTreatment === "bold-outline" ? (coverEdit.appearance.overlayStroke ?? "#000000") : "transparent";
   const coverCardBg =
     coverEdit.appearance.cardBg ??
     (coverContrast === "light" ? "rgba(20,20,20,0.72)" : coverFormat === "center" ? "transparent" : "rgba(255,255,255,0.88)");
-  const coverTextTop =
-    coverPin === "top"
-      ? `${16 + coverEdit.layout.verticalOffset * 100}%`
-      : coverPin === "bottom"
-        ? undefined
-        : `${50 + coverEdit.layout.verticalOffset * 100}%`;
-  const coverTextBottom = coverPin === "bottom" ? `${16 - coverEdit.layout.verticalOffset * 100}%` : undefined;
   const setCoverLayout = <K extends keyof VideoSpecLayout>(key: K, value: VideoSpecLayout[K]) =>
     onCoverEditChange({ ...coverEdit, layout: { ...coverEdit.layout, [key]: value } });
   const setCoverAppearanceOps = (ops: AppearanceOp[]) =>
@@ -1494,140 +1733,128 @@ function ReelCoverSection({
         </div>
       ) : null}
 
-      <div className="grid gap-6 lg:grid-cols-[300px_minmax(0,1fr)] lg:items-start">
-        <div className="mx-auto w-full max-w-[300px] lg:mx-0">
-          <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl border border-app-divider bg-zinc-950 shadow-lg shadow-black/40 ring-1 ring-white/5">
-            {thumbnailBusy ? (
-              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-black/45">
-                <Loader2 className="h-6 w-6 animate-spin text-app-fg-subtle" />
-                <p className="text-[10px] text-app-fg-muted">{mode === "ai" ? "~30–60s" : "few seconds"}</p>
-              </div>
-            ) : null}
-            {mode === "image" && selectedImage ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={selectedImage.file_url}
-                alt=""
-                className={`h-full w-full object-cover ${coverEdit.wash ? "grayscale opacity-70" : ""}`}
-                style={{
-                  objectPosition: `50% ${Math.round(coverEdit.cropY * 100)}%`,
-                  transform: `scale(${coverEdit.zoom})`,
-                }}
-              />
-            ) : thumbnailUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={thumbnailUrl} alt="Reel cover" className="block h-full w-full object-cover" />
-            ) : (
-              <div className="h-full w-full bg-[radial-gradient(circle_at_50%_35%,rgba(255,255,255,0.9),rgba(245,210,160,0.45),rgba(20,20,20,0.2))]" />
-            )}
-            <div
-              className="absolute font-bold leading-tight"
-              style={{
-                left: `${Math.round(coverEdit.layout.sidePadding * 100)}%`,
-                right: `${Math.round(coverEdit.layout.sidePadding * 100)}%`,
-                top: coverTextTop,
-                bottom: coverTextBottom,
-                transform: coverPin === "center" ? "translateY(-50%)" : undefined,
-                textAlign: coverEdit.layout.textAlign,
-                fontSize: `${Math.round(38 * coverEdit.layout.scale)}px`,
-                fontFamily: coverFontFamily,
-                color: coverTextColor,
-                background: coverFormat === "center" ? "transparent" : coverCardBg,
-                borderRadius: coverFormat === "center" ? undefined : "14px",
-                padding: coverFormat === "center" ? undefined : "16px",
-                WebkitTextStroke: coverEdit.textTreatment === "bold-outline" ? `1.8px ${coverStroke}` : undefined,
-                textShadow: coverContrast === "light" ? "0 2px 8px rgba(0,0,0,0.9)" : undefined,
-              }}
-            >
-              {previewText.length > 80 ? `${previewText.slice(0, 80)}…` : previewText}
-            </div>
-          </div>
-          <p className="mt-2 text-center text-[10px] text-app-fg-subtle">Instagram cover · 9:16</p>
+      <div className="flex flex-col gap-4 md:flex-row md:items-start md:gap-6">
+        <div className="mx-auto flex w-full max-w-[360px] shrink-0 flex-col items-center md:sticky md:top-4 md:mx-0 md:w-[min(360px,40vw)] md:self-start">
+          <CoverTextLayerEditor
+            layout={coverEdit.layout}
+            coverFormat={coverFormat}
+            coverPin={coverPin}
+            previewText={previewText}
+            coverTextColor={coverTextColor}
+            coverStroke={coverStroke}
+            coverCardBg={coverCardBg}
+            coverFontFamily={coverFontFamily}
+            coverContrast={coverContrast}
+            textTreatment={coverEdit.textTreatment}
+            mode={mode}
+            selectedImage={selectedImage}
+            thumbnailUrl={thumbnailUrl}
+            thumbnailBusy={thumbnailBusy}
+            wash={coverEdit.wash}
+            cropY={coverEdit.cropY}
+            zoom={coverEdit.zoom}
+            onLayoutPatch={(patch: Partial<VideoSpecLayout>) =>
+              onCoverEditChange({ ...coverEdit, layout: { ...coverEdit.layout, ...patch } })
+            }
+          />
         </div>
 
-        <div className="flex min-w-0 flex-col gap-4">
-          {/* Source toggle: AI image vs. existing client image */}
-          <div className="inline-flex self-start rounded-xl border border-app-divider bg-app-chip-bg/40 p-1">
-            <button
-              type="button"
-              onClick={() => onModeChange("ai")}
-              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-semibold transition-colors ${
-                mode === "ai" ? "bg-white/10 text-app-fg shadow-sm" : "text-app-fg-muted hover:text-app-fg"
-              }`}
-            >
-              <Sparkles className="h-3 w-3" /> AI image
-            </button>
-            <button
-              type="button"
-              onClick={() => onModeChange("image")}
-              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-semibold transition-colors ${
-                mode === "image" ? "bg-white/10 text-app-fg shadow-sm" : "text-app-fg-muted hover:text-app-fg"
-              }`}
-            >
-              <ImageIcon className="h-3 w-3" /> Client image
-            </button>
-          </div>
-          <p className="text-xs leading-relaxed text-app-fg-muted">
-            {mode === "ai"
-              ? "AI generates a 9:16 background and overlays the hook. Colour is preserved unless Wash is enabled."
-              : "Pick a client photo and we overlay the hook. Colour is preserved unless Wash is enabled."}
-          </p>
-
-          {chipItems.length > 0 && (
-            <div>
-              <div className="mb-1.5 flex items-center justify-between gap-2">
-                <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">
-                  {usingCoverOptions ? "Pick a cover headline" : "Pick a hook as headline"}
-                </p>
-                {usingCoverOptions && (
-                  <button
-                    type="button"
-                    onClick={onRegenerateCovers}
-                    disabled={coverRegenBusy}
-                    className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-app-fg-muted hover:text-app-fg disabled:opacity-50"
-                    title="Generate fresh cover headlines"
-                  >
-                    {coverRegenBusy ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      <RefreshCw className="h-3 w-3" />
-                    )}
-                    {coverRegenBusy ? "Regenerating…" : "Regenerate"}
-                  </button>
-                )}
+        <div className="flex min-w-0 flex-1 flex-col gap-3">
+          <div className="space-y-3 rounded-xl border border-app-divider bg-app-chip-bg/20 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="inline-flex rounded-lg border border-app-divider bg-app-chip-bg/40 p-0.5">
+                <button
+                  type="button"
+                  onClick={() => onModeChange("ai")}
+                  className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[10px] font-semibold transition-colors ${
+                    mode === "ai" ? "bg-white/10 text-app-fg shadow-sm" : "text-app-fg-muted hover:text-app-fg"
+                  }`}
+                >
+                  <Sparkles className="h-3 w-3 shrink-0" /> AI
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onModeChange("image")}
+                  className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[10px] font-semibold transition-colors ${
+                    mode === "image" ? "bg-white/10 text-app-fg shadow-sm" : "text-app-fg-muted hover:text-app-fg"
+                  }`}
+                >
+                  <ImageIcon className="h-3 w-3 shrink-0" /> Photo
+                </button>
               </div>
-              <div className="flex flex-wrap gap-1.5">
-                {chipItems.map((txt, i) => {
-                  const active = coverText === txt;
-                  return (
-                    <button
-                      key={i}
-                      type="button"
-                      onClick={() => onCoverTextChange(active ? "" : txt)}
-                      className={`rounded-lg border px-2 py-1.5 text-left text-[11px] leading-snug transition-colors ${
-                        active
-                          ? "border-amber-500/45 bg-amber-500/10 text-app-fg"
-                          : "border-app-divider text-app-fg-muted hover:border-white/20 hover:text-app-fg"
-                      }`}
-                    >
-                      {txt.length > 72 ? txt.slice(0, 72) + "…" : txt}
-                    </button>
-                  );
-                })}
-              </div>
+              {usingCoverOptions ? (
+                <button
+                  type="button"
+                  onClick={onRegenerateCovers}
+                  disabled={coverRegenBusy}
+                  className="inline-flex items-center gap-1 rounded-md border border-app-divider px-2 py-1 text-[10px] font-semibold text-app-fg-muted transition hover:border-amber-500/40 hover:text-app-fg disabled:opacity-50"
+                  title="New headline ideas"
+                >
+                  {coverRegenBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                  Ideas
+                </button>
+              ) : null}
             </div>
-          )}
 
-          <div className="grid gap-6 rounded-xl border border-app-divider/50 bg-app-chip-bg/15 p-4 lg:grid-cols-2 lg:items-start">
-            <div className="min-w-0 space-y-4">
-              <div className="space-y-1.5">
-                <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Format</p>
-                <div className="flex flex-wrap gap-1.5">
+            {mode === "image" ? (
+              <ClientImagesPicker
+                images={images}
+                selectedImageId={selectedImageId}
+                busy={thumbnailBusy}
+                onPick={onSelectImage}
+                compact
+                emptyHint="No client images yet — upload PNG/JPG in Media."
+              />
+            ) : null}
+
+            <label className="block space-y-1">
+              <span className="text-[9px] font-bold uppercase tracking-wide text-app-fg-muted">Headline</span>
+              <textarea
+                value={coverText}
+                onChange={(e) => onCoverTextChange(e.target.value)}
+                rows={3}
+                className="glass-inset w-full resize-y rounded-lg px-2.5 py-1.5 text-sm leading-snug text-app-fg placeholder:text-app-fg-subtle focus:outline-none focus:ring-2 focus:ring-amber-500/35"
+                placeholder="Cover headline"
+              />
+            </label>
+            <p className="text-[9px] text-app-fg-subtle">Drag the text on the preview to nudge; sliders under Fine-tune.</p>
+
+            {chipItems.length > 0 && (
+              <div>
+                <p className="mb-1 text-[9px] font-bold uppercase tracking-wide text-app-fg-muted">
+                  {usingCoverOptions ? "Suggestions" : "Hooks"}
+                </p>
+                <div className="flex max-h-24 flex-wrap gap-1 overflow-y-auto [scrollbar-width:thin] pr-0.5">
+                  {chipItems.map((txt, i) => {
+                    const active = coverText === txt;
+                    return (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => onCoverTextChange(active ? "" : txt)}
+                        className={`max-w-full rounded-md border px-1.5 py-0.5 text-left text-[10px] leading-snug transition-colors ${
+                          active
+                            ? "border-amber-500/45 bg-amber-500/10 text-app-fg"
+                            : "border-app-divider text-app-fg-muted hover:border-white/20 hover:text-app-fg"
+                        }`}
+                      >
+                        {txt.length > 56 ? txt.slice(0, 56) + "…" : txt}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="min-w-0 space-y-1.5">
+                <p className="text-[9px] font-bold uppercase tracking-wide text-app-fg-muted">Format</p>
+                <div className="flex flex-wrap gap-1">
                   {(
                     [
-                      { id: "center" as const, label: "Center", templateId: "centered-pop" as const, title: "Headline stack in the middle" },
-                      { id: "card" as const, label: "Card", templateId: "bottom-card" as const, title: "Caption on a card — use Position for top / middle / bottom" },
-                      { id: "stack" as const, label: "Stack", templateId: "stacked-cards" as const, title: "One card per beat in a vertical stack" },
+                      { id: "center" as const, label: "Center", templateId: "centered-pop" as const, title: "Headline in the middle" },
+                      { id: "card" as const, label: "Card", templateId: "bottom-card" as const, title: "Caption on a card" },
+                      { id: "stack" as const, label: "Stack", templateId: "stacked-cards" as const, title: "Stacked cards" },
                     ] as const
                   ).map((t) => {
                     const active = coverFormat === t.id;
@@ -1638,7 +1865,7 @@ function ReelCoverSection({
                         aria-pressed={active}
                         title={t.title}
                         onClick={() => onCoverEditChange({ ...coverEdit, templateId: t.templateId })}
-                        className={`inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[10px] font-semibold transition ${
+                        className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-semibold transition ${
                           active ? STYLE_CHIP_ON : STYLE_CHIP_OFF
                         }`}
                       >
@@ -1648,16 +1875,14 @@ function ReelCoverSection({
                     );
                   })}
                 </div>
-              </div>
-              {(coverFormat === "card" || coverFormat === "stack") && (
-                <div className="space-y-1.5">
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Position</p>
-                  <div className="flex flex-wrap gap-1">
+                {(coverFormat === "card" || coverFormat === "stack") && (
+                  <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                    <span className="text-[9px] font-bold uppercase text-app-fg-muted">Y</span>
                     {(
                       [
                         { id: "top" as const, label: "Top" },
-                        { id: "center" as const, label: "Middle" },
-                        { id: "bottom" as const, label: "Bottom" },
+                        { id: "center" as const, label: "Mid" },
+                        { id: "bottom" as const, label: "Bot" },
                       ] as const
                     ).map((p) => {
                       const active = coverPin === p.id;
@@ -1666,15 +1891,20 @@ function ReelCoverSection({
                           key={p.id}
                           type="button"
                           aria-pressed={active}
-                          title="Where the caption block sits vertically"
+                          title="Caption vertical anchor"
                           onClick={() =>
                             onCoverEditChange({
                               ...coverEdit,
-                              templateId: coverFormat === "card" && p.id === "top" ? "top-banner" : coverEdit.templateId === "top-banner" ? "bottom-card" : coverEdit.templateId,
+                              templateId:
+                                coverFormat === "card" && p.id === "top"
+                                  ? "top-banner"
+                                  : coverEdit.templateId === "top-banner"
+                                    ? "bottom-card"
+                                    : coverEdit.templateId,
                               layout: { ...coverEdit.layout, verticalAnchor: p.id },
                             })
                           }
-                          className={`rounded-md border px-2 py-1 text-[10px] font-semibold transition ${
+                          className={`rounded-md border px-2 py-0.5 text-[10px] font-semibold transition ${
                             active ? STYLE_CHIP_ON : STYLE_CHIP_OFF
                           }`}
                         >
@@ -1683,112 +1913,11 @@ function ReelCoverSection({
                       );
                     })}
                   </div>
-                </div>
-              )}
-              <div className="space-y-2 border-t border-app-divider/30 pt-4">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Layout</p>
-                      {JSON.stringify(coverEdit.layout) !== JSON.stringify(DEFAULT_COVER_EDIT.layout) ? (
-                        <span className="rounded-sm bg-emerald-500/15 px-1 py-px text-[8px] font-semibold uppercase tracking-wide text-emerald-300">
-                          Saved
-                        </span>
-                      ) : null}
-                    </div>
-                    <p className="mt-0.5 text-[9px] text-app-fg-subtle">
-                      Alignment, nudge, and size — use Format → Position for top / middle / bottom on cards.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    disabled={JSON.stringify(coverEdit.layout) === JSON.stringify(DEFAULT_COVER_EDIT.layout)}
-                    onClick={() => onCoverEditChange({ ...coverEdit, layout: DEFAULT_COVER_EDIT.layout })}
-                    className="text-[9px] font-semibold uppercase tracking-wide text-app-fg-subtle hover:text-app-fg disabled:opacity-30"
-                  >
-                    Reset
-                  </button>
-                </div>
-                <div className="space-y-2">
-                  <div className="space-y-1">
-                    <p className="text-[9px] font-semibold uppercase tracking-wide text-app-fg-muted">Text alignment</p>
-                    <div className="flex flex-wrap gap-1">
-                      {(
-                        [
-                          { id: "left" as const, label: "Left" },
-                          { id: "center" as const, label: "Center" },
-                          { id: "right" as const, label: "Right" },
-                        ] as const
-                      ).map((opt) => {
-                        const active = coverEdit.layout.textAlign === opt.id;
-                        return (
-                          <button
-                            key={opt.id}
-                            type="button"
-                            aria-pressed={active}
-                            onClick={() => setCoverLayout("textAlign", opt.id)}
-                            className={`rounded-md border px-2 py-1 text-[10px] font-semibold transition ${
-                              active ? "border-amber-500 bg-amber-500/15 text-amber-200" : "border-app-divider text-app-fg-muted hover:border-amber-500/40"
-                            }`}
-                          >
-                            {opt.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                  <LayoutSlider
-                    label="Nudge up / down"
-                    title="Fine vertical move for the whole caption area: fraction of frame height (negative = up, positive = down). Works on every template."
-                    leftHint="Up"
-                    rightHint="Down"
-                    min={-0.2}
-                    max={0.2}
-                    step={0.01}
-                    value={coverEdit.layout.verticalOffset}
-                    formatValue={(v) => (v === 0 ? "0" : `${v > 0 ? "+" : ""}${Math.round(v * 100)}%`)}
-                    onChange={(v) => setCoverLayout("verticalOffset", v)}
-                    onCommit={(v) => setCoverLayout("verticalOffset", v)}
-                  />
-                  <LayoutSlider
-                    label="Size"
-                    leftHint="Smaller"
-                    rightHint="Larger"
-                    min={0.7}
-                    max={1.3}
-                    step={0.05}
-                    value={coverEdit.layout.scale}
-                    formatValue={(v) => `${v.toFixed(2)}x`}
-                    onChange={(v) => setCoverLayout("scale", v)}
-                    onCommit={(v) => setCoverLayout("scale", v)}
-                  />
-                </div>
-                <details className="group rounded-lg border border-app-divider/50 bg-app-chip-bg/10 px-2 py-1.5">
-                  <summary className="cursor-pointer select-none text-[9px] font-bold uppercase tracking-wide text-app-fg-muted marker:text-app-fg-subtle">
-                    Advanced layout
-                  </summary>
-                  <div className="mt-2 space-y-3 border-t border-app-divider/30 pt-2">
-                    <LayoutSlider
-                      label="Side padding"
-                      title="Horizontal inset: space between the left/right frame edge and the text block (not top/bottom)."
-                      leftHint="Tight"
-                      rightHint="Roomy"
-                      min={0.02}
-                      max={0.12}
-                      step={0.005}
-                      value={coverEdit.layout.sidePadding}
-                      formatValue={(v) => `${Math.round(v * 100)}%`}
-                      onChange={(v) => setCoverLayout("sidePadding", v)}
-                      onCommit={(v) => setCoverLayout("sidePadding", v)}
-                    />
-                  </div>
-                </details>
+                )}
               </div>
-            </div>
-            <div className="min-w-0 space-y-4">
-              <div className="space-y-1.5">
-                <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Look</p>
-                <div className="flex flex-wrap gap-1.5">
+              <div className="min-w-0 space-y-1.5">
+                <p className="text-[9px] font-bold uppercase tracking-wide text-app-fg-muted">Look</p>
+                <div className="-mx-0.5 flex gap-1 overflow-x-auto px-0.5 pb-0.5 [scrollbar-width:thin]">
                   {LOOK_VISUAL.map((t) => {
                     const active = coverEdit.themeId === t.id;
                     return (
@@ -1798,75 +1927,116 @@ function ReelCoverSection({
                         aria-pressed={active}
                         title={t.title}
                         onClick={() => onCoverEditChange({ ...coverEdit, themeId: t.id })}
-                        className={`inline-flex min-w-0 items-center gap-1.5 rounded-lg border px-2 py-1 text-[10px] font-semibold transition ${
+                        className={`inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-semibold transition ${
                           active ? STYLE_CHIP_ON : STYLE_CHIP_OFF
                         }`}
                       >
                         <span className="flex shrink-0 gap-0.5" aria-hidden>
                           {t.swatches.map((c) => (
-                            <span key={c} className="h-3 w-1.5 rounded-sm border border-white/10" style={{ background: c }} />
+                            <span key={c} className="h-2.5 w-1 rounded-sm border border-white/10" style={{ background: c }} />
                           ))}
                         </span>
-                        <span className="text-[11px] font-bold leading-none text-app-fg-muted" style={{ fontFamily: t.fontFamily }}>
+                        <span className="font-bold leading-none text-app-fg-muted" style={{ fontFamily: t.fontFamily }}>
                           Aa
                         </span>
-                        <span className="truncate">{t.label}</span>
+                        <span className="max-w-[5.5rem] truncate">{t.label}</span>
                       </button>
                     );
                   })}
                 </div>
               </div>
-              <div className="space-y-2 border-t border-app-divider/30 pt-3">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Style</p>
+            </div>
+
+            <div className="grid gap-3 border-t border-app-divider/40 pt-3 sm:grid-cols-2">
+              <div className="min-w-0 space-y-1.5">
+                <div className="flex items-center justify-between gap-1">
+                  <p className="text-[9px] font-bold uppercase tracking-wide text-app-fg-muted">Font</p>
                   <button
                     type="button"
                     disabled={!coverHasAppearanceOverrides}
-                    title="Reset to look defaults"
+                    title="Clear font / color overrides"
                     onClick={() => onCoverEditChange({ ...coverEdit, appearance: {} })}
-                    className="inline-flex items-center gap-1 rounded-md border border-app-divider/60 px-1.5 py-1 text-app-fg-muted transition hover:border-amber-500/40 hover:text-app-fg disabled:opacity-30"
+                    className="rounded p-0.5 text-app-fg-muted transition hover:text-app-fg disabled:opacity-25"
                   >
                     <RotateCcw className="h-3 w-3" aria-hidden />
-                    <span className="text-[9px] font-semibold uppercase tracking-wide">Reset</span>
                   </button>
                 </div>
-                <div className="space-y-1">
-                  <p className="text-[9px] font-semibold uppercase tracking-wide text-app-fg-muted">Font</p>
-                  <div className="flex flex-wrap gap-1">
+                <div className="flex flex-wrap gap-1">
+                  <button
+                    type="button"
+                    aria-pressed={!coverEdit.appearance.fontId}
+                    onClick={() => setCoverAppearanceOps(opsForFontMood("auto"))}
+                    className={`rounded-md border px-2 py-0.5 text-[10px] font-semibold transition ${
+                      !coverEdit.appearance.fontId ? STYLE_CHIP_ON : STYLE_CHIP_OFF
+                    }`}
+                  >
+                    Theme
+                  </button>
+                  {(["playfair", "inter", "poppins"] as const).map((fid) => {
+                    const active = coverEdit.appearance.fontId === fid;
+                    return (
+                      <button
+                        key={fid}
+                        type="button"
+                        aria-pressed={active}
+                        style={{ fontFamily: CAROUSEL_FONT_STACKS[fid] }}
+                        onClick={() => setCoverAppearanceOps([{ key: "fontId", value: fid }])}
+                        className={`rounded-md border px-2 py-0.5 text-[10px] font-semibold transition ${
+                          active ? STYLE_CHIP_ON : STYLE_CHIP_OFF
+                        }`}
+                      >
+                        {CAROUSEL_FONT_LABELS[fid]}
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    aria-pressed={coverEdit.appearance.fontId === "patrick"}
+                    style={{
+                      fontFamily: `"${COVER_PATRICK_FONT}", "Segoe Print", "Bradley Hand", cursive`,
+                    }}
+                    onClick={() => setCoverAppearanceOps([{ key: "fontId", value: "patrick" }])}
+                    className={`rounded-md border px-2 py-0.5 text-[10px] font-semibold transition ${
+                      coverEdit.appearance.fontId === "patrick" ? STYLE_CHIP_ON : STYLE_CHIP_OFF
+                    }`}
+                  >
+                    Patrick
+                  </button>
+                </div>
+              </div>
+              <div className="min-w-0 space-y-2">
+                <p className="text-[9px] font-bold uppercase tracking-wide text-app-fg-muted">Align & contrast</p>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <div className="inline-flex rounded-md border border-app-divider p-0.5">
                     {(
                       [
-                        { id: "auto" as const, label: "Auto" },
-                        { id: "modern" as const, label: "Modern" },
-                        { id: "clean" as const, label: "Clean" },
-                        { id: "editorial" as const, label: "Serif" },
-                        { id: "hand" as const, label: "Hand" },
+                        { id: "left" as const, Icon: AlignLeft, label: "Align left" },
+                        { id: "center" as const, Icon: AlignCenter, label: "Align center" },
+                        { id: "right" as const, Icon: AlignRight, label: "Align right" },
                       ] as const
-                    ).map((row) => {
-                      const active = coverFontMood === row.id;
+                    ).map(({ id, Icon, label }) => {
+                      const active = coverEdit.layout.textAlign === id;
                       return (
                         <button
-                          key={row.id}
+                          key={id}
                           type="button"
                           aria-pressed={active}
-                          onClick={() => setCoverAppearanceOps(opsForFontMood(row.id))}
-                          className={`rounded-md border px-2 py-1 text-[10px] font-semibold transition ${
-                            active ? STYLE_CHIP_ON : STYLE_CHIP_OFF
-                          }`}
+                          aria-label={label}
+                          title={label}
+                          onClick={() => setCoverLayout("textAlign", id)}
+                          className={`rounded p-1 transition ${active ? "bg-amber-500/20 text-amber-200" : "text-app-fg-muted hover:text-app-fg"}`}
                         >
-                          {row.label}
+                          <Icon className="h-3.5 w-3.5" />
                         </button>
                       );
                     })}
                   </div>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-[9px] font-semibold uppercase tracking-wide text-app-fg-muted">Contrast</p>
-                  <div className="flex flex-wrap gap-1">
+                  <div className="inline-flex flex-wrap gap-0.5">
                     {(
                       [
                         { id: "auto" as const, label: "Auto" },
-                        { id: "light" as const, label: "Light on dark" },
-                        { id: "dark" as const, label: "Dark on light" },
+                        { id: "light" as const, label: "On dark" },
+                        { id: "dark" as const, label: "On light" },
                       ] as const
                     ).map((row) => {
                       const active = coverContrast === row.id;
@@ -1875,14 +2045,19 @@ function ReelCoverSection({
                           key={row.id}
                           type="button"
                           aria-pressed={active}
-                          onClick={() => setCoverAppearanceOps(opsForContrast(row.id, { templateId: coverEdit.templateId, themeId: coverEdit.themeId as VideoThemeId }))}
-                          className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] font-semibold transition ${
+                          title={row.id === "auto" ? "Infer from look" : row.id === "light" ? "Light text" : "Dark text"}
+                          onClick={() =>
+                            setCoverAppearanceOps(
+                              opsForContrast(row.id, { templateId: coverEdit.templateId, themeId: coverEdit.themeId as VideoThemeId }),
+                            )
+                          }
+                          className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold transition ${
                             active ? STYLE_CHIP_ON : STYLE_CHIP_OFF
                           }`}
                         >
                           {row.id !== "auto" ? (
                             <span
-                              className="h-3 w-3 shrink-0 rounded-full border border-white/15"
+                              className="h-2.5 w-2.5 shrink-0 rounded-full border border-white/15"
                               style={{
                                 background:
                                   row.id === "light"
@@ -1898,132 +2073,203 @@ function ReelCoverSection({
                     })}
                   </div>
                 </div>
-                <div className="space-y-1">
-                  <p className="text-[9px] font-semibold uppercase tracking-wide text-app-fg-muted">Text treatment</p>
-                  <p className="text-[9px] text-app-fg-subtle">
-                    Outline adds a heavy outer stroke on top of your format (Center, Card, or Stack).
-                  </p>
-                  <div className="flex flex-wrap gap-1">
-                    <button
-                      type="button"
-                      aria-pressed={!coverEdit.textTreatment}
-                      title="Standard caption lettering for the selected format"
-                      onClick={() => onCoverEditChange({ ...coverEdit, textTreatment: undefined })}
-                      className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] font-semibold transition ${
-                        !coverEdit.textTreatment ? STYLE_CHIP_ON : STYLE_CHIP_OFF
-                      }`}
-                    >
-                      Default
-                    </button>
-                    <button
-                      type="button"
-                      aria-pressed={coverEdit.textTreatment === "bold-outline"}
-                      title="Punchy heavy-stroke lettering — works with Center, Card, and Stack"
-                      onClick={() => onCoverEditChange({ ...coverEdit, textTreatment: "bold-outline" })}
-                      className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[10px] font-semibold transition ${
-                        coverEdit.textTreatment === "bold-outline" ? STYLE_CHIP_ON : STYLE_CHIP_OFF
-                      }`}
-                    >
-                      <OutlineGlyph />
-                      Outline
-                    </button>
-                  </div>
+                <div className="inline-flex rounded-md border border-app-divider p-0.5">
+                  <button
+                    type="button"
+                    aria-pressed={!coverEdit.textTreatment}
+                    title="Standard lettering"
+                    onClick={() => onCoverEditChange({ ...coverEdit, textTreatment: undefined })}
+                    className={`rounded px-2 py-0.5 text-[10px] font-semibold transition ${
+                      !coverEdit.textTreatment ? "bg-amber-500/20 text-amber-200" : "text-app-fg-muted hover:text-app-fg"
+                    }`}
+                  >
+                    Normal
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={coverEdit.textTreatment === "bold-outline"}
+                    title="Heavy outline"
+                    onClick={() => onCoverEditChange({ ...coverEdit, textTreatment: "bold-outline" })}
+                    className={`inline-flex items-center gap-0.5 rounded px-2 py-0.5 text-[10px] font-semibold transition ${
+                      coverEdit.textTreatment === "bold-outline" ? "bg-amber-500/20 text-amber-200" : "text-app-fg-muted hover:text-app-fg"
+                    }`}
+                  >
+                    <OutlineGlyph />
+                    Outline
+                  </button>
                 </div>
               </div>
-              <div className="space-y-2 rounded-md border border-app-divider/50 bg-app-chip-bg/15 p-2">
-                <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Layer text</p>
-                <textarea
-                  value={coverText}
-                  onChange={(e) => onCoverTextChange(e.target.value)}
-                  rows={2}
-                  className="glass-inset w-full resize-none rounded-lg px-2 py-1.5 text-[11px] text-app-fg placeholder:text-app-fg-subtle focus:outline-none focus:ring-1 focus:ring-amber-500/35 disabled:opacity-50"
+            </div>
+
+            <details className="group rounded-lg border border-app-divider/60 bg-app-chip-bg/15 [&_summary::-webkit-details-marker]:hidden">
+              <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1.5 text-[10px] font-bold uppercase tracking-wide text-app-fg-muted hover:text-app-fg">
+                <SlidersHorizontal className="h-3.5 w-3.5 shrink-0 text-app-fg-subtle" aria-hidden />
+                Fine-tune layout
+                <ChevronDown className="ml-auto h-3.5 w-3.5 shrink-0 text-app-fg-subtle transition group-open:rotate-180" aria-hidden />
+              </summary>
+              <div className="space-y-2 border-t border-app-divider/40 px-2 pb-2 pt-2">
+                <div className="flex items-center justify-between gap-2">
+                  {JSON.stringify(coverEdit.layout) !== JSON.stringify(DEFAULT_COVER_EDIT.layout) ? (
+                    <span className="rounded-sm bg-emerald-500/15 px-1 py-px text-[8px] font-semibold uppercase tracking-wide text-emerald-300">
+                      Adjusted
+                    </span>
+                  ) : (
+                    <span />
+                  )}
+                  <button
+                    type="button"
+                    disabled={JSON.stringify(coverEdit.layout) === JSON.stringify(DEFAULT_COVER_EDIT.layout)}
+                    onClick={() => onCoverEditChange({ ...coverEdit, layout: DEFAULT_COVER_EDIT.layout })}
+                    className="text-[9px] font-semibold uppercase tracking-wide text-app-fg-subtle hover:text-app-fg disabled:opacity-30"
+                  >
+                    Reset layout
+                  </button>
+                </div>
+                <LayoutSlider
+                  label="Vertical nudge"
+                  title="Fraction of frame height"
+                  leftHint="Up"
+                  rightHint="Down"
+                  min={LAYOUT_VERTICAL_OFFSET_MIN}
+                  max={LAYOUT_VERTICAL_OFFSET_MAX}
+                  step={0.005}
+                  value={coverEdit.layout.verticalOffset}
+                  formatValue={(v) => (v === 0 ? "0" : `${v > 0 ? "+" : ""}${Math.round(v * 100)}%`)}
+                  onChange={(v) => setCoverLayout("verticalOffset", v)}
+                  onCommit={(v) => setCoverLayout("verticalOffset", v)}
+                  showSteppers
+                  stepperStep={0.02}
+                />
+                <LayoutSlider
+                  label="Horizontal pan"
+                  title="Fraction of frame width"
+                  leftHint="Left"
+                  rightHint="Right"
+                  min={-1}
+                  max={1}
+                  step={0.005}
+                  value={coverEdit.layout.textPanX ?? 0}
+                  formatValue={(v) => (v === 0 ? "0" : `${v > 0 ? "+" : ""}${Math.round(v * 100)}%`)}
+                  onChange={(v) => setCoverLayout("textPanX", v)}
+                  onCommit={(v) => setCoverLayout("textPanX", v)}
+                  showSteppers
+                  stepperStep={0.02}
+                />
+                <LayoutSlider
+                  label="Text size"
+                  leftHint="Smaller"
+                  rightHint="Larger"
+                  min={0.7}
+                  max={1.3}
+                  step={0.05}
+                  value={coverEdit.layout.scale}
+                  formatValue={(v) => `${v.toFixed(2)}x`}
+                  onChange={(v) => setCoverLayout("scale", v)}
+                  onCommit={(v) => setCoverLayout("scale", v)}
+                />
+                <LayoutSlider
+                  label="Line width"
+                  title="Side inset — higher value = narrower text block"
+                  leftHint="Wide"
+                  rightHint="Narrow"
+                  min={0.02}
+                  max={0.12}
+                  step={0.005}
+                  value={coverEdit.layout.sidePadding}
+                  formatValue={(v) => `${Math.round((1 - 2 * v) * 100)}%`}
+                  onChange={(v) => setCoverLayout("sidePadding", v)}
+                  onCommit={(v) => setCoverLayout("sidePadding", v)}
                 />
               </div>
-              <div className="flex flex-wrap gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => onCoverEditChange({ ...coverEdit, wash: !coverEdit.wash })}
-                  title="Optional: desaturate and fade the background for a softer editorial look"
-                  className={`rounded-md border px-2 py-1 text-[10px] font-semibold ${
-                    coverEdit.wash ? STYLE_CHIP_ON : STYLE_CHIP_OFF
-                  }`}
-                >
-                  Wash background
-                </button>
-              </div>
-              {mode === "image" ? (
-                <div className="grid gap-2">
-                  <label className="text-[10px] font-semibold text-app-fg-muted">
-                    Image position
-                    <input
-                      type="range"
+            </details>
+
+            <details className="group rounded-lg border border-app-divider/60 bg-app-chip-bg/15 [&_summary::-webkit-details-marker]:hidden">
+              <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1.5 text-[10px] font-bold uppercase tracking-wide text-app-fg-muted hover:text-app-fg">
+                <ImageIcon className="h-3.5 w-3.5 shrink-0 text-app-fg-subtle" aria-hidden />
+                Background
+                <ChevronDown className="ml-auto h-3.5 w-3.5 shrink-0 text-app-fg-subtle transition group-open:rotate-180" aria-hidden />
+              </summary>
+              <div className="space-y-2 border-t border-app-divider/40 px-2 pb-2 pt-2">
+                <label className="flex cursor-pointer items-center gap-2 text-[10px] text-app-fg-muted">
+                  <input
+                    type="checkbox"
+                    checked={coverEdit.wash}
+                    onChange={() => onCoverEditChange({ ...coverEdit, wash: !coverEdit.wash })}
+                    className="rounded border-app-divider"
+                  />
+                  Wash (desaturate)
+                </label>
+                {mode === "image" ? (
+                  <div className="grid gap-2">
+                    <LayoutSlider
+                      label="Photo focal (Y)"
+                      title="Vertical focus in frame"
+                      leftHint="Top"
+                      rightHint="Bottom"
                       min={0}
                       max={1}
-                      step={0.01}
+                      step={0.005}
                       value={coverEdit.cropY}
-                      onChange={(e) => onCoverEditChange({ ...coverEdit, cropY: Number(e.target.value) })}
-                      className="mt-1 w-full accent-amber-500"
+                      formatValue={(v) => `${Math.round(v * 100)}%`}
+                      onChange={(v) => onCoverEditChange({ ...coverEdit, cropY: v })}
+                      onCommit={(v) => onCoverEditChange({ ...coverEdit, cropY: v })}
+                      showSteppers
+                      stepperStep={0.05}
                     />
-                  </label>
-                  <label className="text-[10px] font-semibold text-app-fg-muted">
-                    Zoom
-                    <input
-                      type="range"
+                    <LayoutSlider
+                      label="Photo zoom"
+                      title="Scale before crop"
+                      leftHint="1×"
+                      rightHint="3×"
                       min={1}
-                      max={2}
-                      step={0.01}
+                      max={3}
+                      step={0.02}
                       value={coverEdit.zoom}
-                      onChange={(e) => onCoverEditChange({ ...coverEdit, zoom: Number(e.target.value) })}
-                      className="mt-1 w-full accent-amber-500"
+                      formatValue={(v) => `${v.toFixed(2)}×`}
+                      onChange={(v) => onCoverEditChange({ ...coverEdit, zoom: v })}
+                      onCommit={(v) => onCoverEditChange({ ...coverEdit, zoom: v })}
+                      showSteppers
+                      stepperStep={0.1}
                     />
-                  </label>
-                </div>
-              ) : null}
-            </div>
+                  </div>
+                ) : null}
+              </div>
+            </details>
           </div>
 
-          {mode === "image" && (
-            <ClientImagesPicker
-              images={images}
-              selectedImageId={selectedImageId}
-              busy={thumbnailBusy}
-              onPick={onSelectImage}
-              emptyHint="No client images yet — upload some PNG/JPG photos in Media."
-            />
-          )}
-
-          <button
-            type="button"
-            disabled={thumbnailBusy || (mode === "image" && !selectedImageId)}
-            onClick={mode === "ai" ? onGenerateAi : onComposeFromImage}
-            className="inline-flex items-center gap-2 self-start rounded-xl bg-amber-500/15 px-4 py-2 text-xs font-bold text-app-on-amber-title hover:bg-amber-500/25 disabled:opacity-50"
-            title={mode === "image" && !selectedImageId ? "Pick an image first" : undefined}
-          >
-            {thumbnailBusy ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : mode === "ai" ? (
-              <Sparkles className="h-3.5 w-3.5" />
-            ) : (
-              <ImageIcon className="h-3.5 w-3.5" />
-            )}
-            {thumbnailBusy
-              ? mode === "ai" ? "Generating…" : "Composing…"
-              : thumbnailUrl
-              ? "Regenerate cover"
-              : mode === "ai" ? "Generate cover" : "Compose cover"}
-          </button>
-
-          {thumbnailUrl && !thumbnailBusy && (
-            <a
-              href={thumbnailUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1.5 self-start text-xs font-semibold text-sky-500 hover:underline dark:text-sky-400"
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={thumbnailBusy || (mode === "image" && !selectedImageId)}
+              onClick={mode === "ai" ? onGenerateAi : onComposeFromImage}
+              className="inline-flex items-center gap-2 rounded-xl bg-amber-500/15 px-4 py-2 text-xs font-bold text-app-on-amber-title hover:bg-amber-500/25 disabled:opacity-50"
+              title={mode === "image" && !selectedImageId ? "Pick an image first" : undefined}
             >
-              <Download className="h-3.5 w-3.5" />
-              Open full size · right-click to save
-            </a>
-          )}
+              {thumbnailBusy ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : mode === "ai" ? (
+                <Sparkles className="h-3.5 w-3.5" />
+              ) : (
+                <ImageIcon className="h-3.5 w-3.5" />
+              )}
+              {thumbnailBusy
+                ? mode === "ai" ? "Generating…" : "Composing…"
+                : thumbnailUrl
+                ? "Regenerate cover"
+                : mode === "ai" ? "Generate cover" : "Compose cover"}
+            </button>
+            {thumbnailUrl && !thumbnailBusy && (
+              <a
+                href={thumbnailUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-sky-500 hover:underline dark:text-sky-400"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Open full size
+              </a>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -2431,7 +2677,7 @@ export function VideoCreateWorkspace({
   const sessionLayout: VideoSpecLayout = previewVideoSpec?.layout ?? DEFAULT_LAYOUT;
   const [layoutDraft, setLayoutDraft] = useState<VideoSpecLayout>(sessionLayout);
   const [layoutGuides, setLayoutGuides] = useState(false);
-  const layoutSyncKey = `${session?.id ?? ""}|${sessionLayout.verticalAnchor ?? "bottom"}|${sessionLayout.verticalOffset}|${sessionLayout.scale}|${sessionLayout.sidePadding}|${sessionLayout.textAlign}|${sessionLayout.stackGap}|${sessionLayout.stackGrowth}`;
+  const layoutSyncKey = `${session?.id ?? ""}|${sessionLayout.verticalAnchor ?? "bottom"}|${sessionLayout.verticalOffset}|${sessionLayout.textPanX ?? 0}|${sessionLayout.scale}|${sessionLayout.sidePadding}|${sessionLayout.textAlign}|${sessionLayout.stackGap}|${sessionLayout.stackGrowth}`;
   useEffect(() => {
     setLayoutDraft(sessionLayout);
     // sessionLayout is included transitively via the key string; we re-sync only on actual saved changes.
@@ -2522,6 +2768,7 @@ export function VideoCreateWorkspace({
     pendingTheme,
     layoutDraft.verticalAnchor,
     layoutDraft.verticalOffset,
+    layoutDraft.textPanX,
     layoutDraft.scale,
     layoutDraft.sidePadding,
     layoutDraft.textAlign,
@@ -4664,6 +4911,7 @@ export function VideoCreateWorkspace({
                         void Promise.all([
                           onCommitLayout("verticalAnchor", DEFAULT_LAYOUT.verticalAnchor),
                           onCommitLayout("verticalOffset", DEFAULT_LAYOUT.verticalOffset),
+                          onCommitLayout("textPanX", DEFAULT_LAYOUT.textPanX ?? 0),
                           onCommitLayout("scale", DEFAULT_LAYOUT.scale),
                           onCommitLayout("sidePadding", DEFAULT_LAYOUT.sidePadding),
                           onCommitLayout("textAlign", DEFAULT_LAYOUT.textAlign),
@@ -4714,12 +4962,12 @@ export function VideoCreateWorkspace({
                     </div>
                     <LayoutSlider
                       label="Nudge up / down"
-                      title="Fine vertical move for the whole caption area: fraction of frame height (negative = up, positive = down). Works on every template."
-                      leftHint="Up"
-                      rightHint="Down"
-                      min={-0.2}
-                      max={0.2}
-                      step={0.01}
+                      title="Vertical move for the whole caption area as a fraction of frame height (-100% = one full frame up, +100% = one full frame down). Combines with Top / Middle / Bottom on card layouts."
+                      leftHint="Top (-100%)"
+                      rightHint="Bottom (+100%)"
+                      min={LAYOUT_VERTICAL_OFFSET_MIN}
+                      max={LAYOUT_VERTICAL_OFFSET_MAX}
+                      step={0.005}
                       value={layoutDraft.verticalOffset}
                       disabled={!session.background_url}
                       formatValue={(v) =>
@@ -4727,6 +4975,8 @@ export function VideoCreateWorkspace({
                       }
                       onChange={(v) => setLayoutDraft((s) => ({ ...s, verticalOffset: v }))}
                       onCommit={(v) => void onCommitLayout("verticalOffset", v)}
+                      showSteppers
+                      stepperStep={0.02}
                     />
                     <LayoutSlider
                       label="Size"

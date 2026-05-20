@@ -19,7 +19,7 @@ The document has this shape (field names are camelCase):
 - background: { url, kind: "video"|"image", focalPoint: "top"|"center"|"bottom", durationSec?: number }
 - hook: { text, durationSec }
 - blocks: array of { id, text, isCTA, startSec, endSec, animation: "pop"|"fade"|"slide-up"|"none", appearance?: { fontId?, cardTextColor?, overlayTextColor?, cardBg?, overlayStroke? } (null clears inherited field), textTreatment?: "bold-outline"|null (per-beat; inherits from top-level textTreatment when omitted) }
-- layout: { verticalAnchor, verticalOffset, scale, sidePadding, textAlign ("left"|"center"|"right"), stackGap 0..0.06, stackGrowth ("up"|"down") stacked-cards only }
+- layout: { verticalAnchor, verticalOffset (-1..1 = fraction of frame height), scale, sidePadding, textAlign ("left"|"center"|"right"), stackGap 0..0.06, stackGrowth ("up"|"down") stacked-cards only }
 - gapBetweenBlocksSec: number 0..5 — legacy uniform pause; ignored when pausesSec matches blocks
 - pausesSec: number[] same length as blocks — pause before each block in timeline order (index 0 after hook); prefer this for uneven pauses
 - totalSec: number (must be >= max block endSec and >= hook.durationSec; equals background.durationSec when B-roll clip length is known)

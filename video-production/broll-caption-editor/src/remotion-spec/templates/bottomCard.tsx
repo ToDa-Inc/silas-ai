@@ -132,7 +132,7 @@ export default function BottomCardTemplate({ spec, frame, fps }: VideoSpecWithTi
           paddingRight: layout.paddingPx,
           boxSizing: 'border-box',
           pointerEvents: 'none',
-          transform: `translateY(calc(-50% + ${layout.offsetPx}px))`,
+          transform: `translate(${layout.offsetXPx}px, calc(-50% + ${layout.offsetPx}px))`,
         }}
       >
         {textRow}

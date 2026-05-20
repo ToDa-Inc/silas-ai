@@ -345,7 +345,7 @@ export async function fetchCompetitors(): Promise<{
     }
     const res = await fetch(`${base}/api/v1/clients/${clientSlug}/competitors`, {
       headers: { ...headers },
-      next: { revalidate: 30 },
+      cache: "no-store",
     });
     if (!res.ok) {
       return {
@@ -382,7 +382,7 @@ export async function fetchClient(): Promise<{
     }
     const res = await fetch(`${base}/api/v1/clients/${clientSlug}`, {
       headers: { ...headers },
-      next: { revalidate: 60 },
+      cache: "no-store",
     });
     if (res.status === 404) {
       return { ok: false, data: null, error: "Client not found" };
@@ -422,7 +422,7 @@ export async function fetchBaseline(): Promise<{
     }
     const res = await fetch(`${base}/api/v1/clients/${clientSlug}/baseline`, {
       headers: { ...headers },
-      next: { revalidate: 60 },
+      cache: "no-store",
     });
     if (res.status === 404) {
       return { ok: true, data: null };
@@ -464,7 +464,7 @@ export async function fetchOwnReels(): Promise<{
       `${base}/api/v1/clients/${clientSlug}/reels?own_reels_only=true&include_analysis=true&limit=50&sort_by=posted_at`,
       {
         headers: { ...headers },
-        next: { revalidate: 30 },
+        cache: "no-store",
       },
     );
     if (!res.ok) {
@@ -510,7 +510,7 @@ export async function fetchIntelligenceStats(): Promise<{
     }
     const res = await fetch(`${base}/api/v1/clients/${clientSlug}/stats`, {
       headers: { ...headers },
-      next: { revalidate: 30 },
+      cache: "no-store",
     });
     if (!res.ok) {
       return {
@@ -659,7 +659,7 @@ export async function fetchScrapedReels(
     }
     const res = await fetch(`${base}/api/v1/clients/${clientSlug}/reels${q}`, {
       headers: { ...headers },
-      next: { revalidate: 30 },
+      cache: "no-store",
     });
     if (!res.ok) {
       return {
@@ -819,9 +819,9 @@ export async function fetchReelsList(query: ReelsListQuery = {}): Promise<{
       `${base}/api/v1/clients/${clientSlug}/reels?${params.toString()}`,
       {
         headers: { ...headers },
-        // Filter combinations explode the cache key; rely on the URL state
-        // change to refetch on filter changes and keep TTL low.
-        next: { revalidate: 15 },
+        // Per-creator catalog: skip Next Data Cache so creator switches never reuse
+        // another session's cached page of reels.
+        cache: "no-store",
       },
     );
     if (!res.ok) {
@@ -864,7 +864,7 @@ export async function fetchOutlierCount(): Promise<{
       };
     const res = await fetch(`${base}/api/v1/clients/${clientSlug}/stats/outlier-count`, {
       headers: { ...headers },
-      next: { revalidate: 30 },
+      cache: "no-store",
     });
     if (!res.ok) return { ok: false, count: 0, error: `${res.status}` };
     const data = await res.json();

@@ -1,14 +1,5 @@
 import type { VideoSpec, VideoSpecAppearance, VideoSpecLayout } from "./video-spec";
-
-const DEFAULT_COVER_LAYOUT: VideoSpecLayout = {
-  verticalAnchor: "bottom",
-  verticalOffset: 0,
-  scale: 1,
-  sidePadding: 0.05,
-  textAlign: "center",
-  stackGap: 0.008,
-  stackGrowth: "up",
-};
+import { DEFAULT_LAYOUT } from "./video-spec";
 
 export type CoverEditState = {
   cropY: number;
@@ -27,7 +18,7 @@ export const DEFAULT_COVER_EDIT: CoverEditState = {
   wash: false,
   templateId: "centered-pop",
   themeId: "bold-modern",
-  layout: DEFAULT_COVER_LAYOUT,
+  layout: { ...DEFAULT_LAYOUT },
   appearance: {},
 };
 

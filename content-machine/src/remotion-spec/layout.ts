@@ -24,9 +24,11 @@ export type ResolvedLayout = {
   verticalAnchor: NonNullable<VideoSpecLayout['verticalAnchor']>;
   /** Vertical translate in px applied to the text container (negative = up). */
   offsetPx: number;
+  /** Horizontal translate in px (from ``textPanX`` × canvas width). */
+  offsetXPx: number;
   /** Multiplier applied to template `fontSize`. */
   scale: number;
-  /** Fine nudge only: ``translateY(offsetPx)`` — templates compose with anchor geometry. */
+  /** Fine nudge: ``translate(offsetXPx, offsetY)`` in px (templates may compose with calc). */
   translateY: string;
   /** Caption line alignment (all templates). */
   textAlign: TextAlign;
@@ -42,6 +44,7 @@ export function resolveLayoutPx(spec: VideoSpec): ResolvedLayout {
   const raw = resolveLayout(spec);
   const paddingPx = Math.round(raw.sidePadding * COMP_W);
   const offsetPx = Math.round(raw.verticalOffset * COMP_H);
+  const offsetXPx = Math.round(raw.textPanX * COMP_W);
   const verticalAnchor = raw.verticalAnchor ?? 'bottom';
   const stackGapPx = Math.round(raw.stackGap * COMP_H);
   return {
@@ -49,8 +52,9 @@ export function resolveLayoutPx(spec: VideoSpec): ResolvedLayout {
     innerWidth: COMP_W - paddingPx * 2,
     verticalAnchor,
     offsetPx,
+    offsetXPx,
     scale: raw.scale,
-    translateY: `translateY(${offsetPx}px)`,
+    translateY: `translate(${offsetXPx}px, ${offsetPx}px)`,
     textAlign: raw.textAlign,
     stackGapPx,
     stackGrowth: raw.stackGrowth,

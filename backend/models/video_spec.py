@@ -93,8 +93,8 @@ class VideoSpecLayout(BaseModel):
     # Where the text stack anchors on the canvas (bottom-card, stacked-cards).
     verticalAnchor: VerticalAnchor = Field(default="bottom")
     # Fine nudge as a fraction of canvas height. Negative = up, positive = down.
-    # Tighter range once ``verticalAnchor`` handles coarse placement.
-    verticalOffset: float = Field(default=0.0, ge=-0.2, le=0.2)
+    # Full frame in each direction (±1.0 = ±100%) so editors can align with face-cam / UI.
+    verticalOffset: float = Field(default=0.0, ge=-1.0, le=1.0)
 
     @field_validator("verticalAnchor", mode="before")
     @classmethod
@@ -105,12 +105,13 @@ class VideoSpecLayout(BaseModel):
     @field_validator("verticalOffset", mode="before")
     @classmethod
     def _coerce_vertical_offset(cls, v: Any) -> float:
-        """Clamp legacy specs that used the old wide offset range."""
+        """Clamp to the supported nudge range (legacy ±0.2 specs still load fine)."""
         try:
             x = float(v)
         except (TypeError, ValueError):
             return 0.0
-        return max(-0.2, min(0.2, x))
+        return max(-1.0, min(1.0, x))
+
     # Multiplier on the template's default fontSize (and card padding scales with it visually).
     scale: float = Field(default=1.0, ge=0.7, le=1.3)
     # Per-side horizontal padding as a fraction of canvas width (0.05 = 54px on 1080).
@@ -122,6 +123,17 @@ class VideoSpecLayout(BaseModel):
     stackGap: float = Field(default=0.008, ge=0.0, le=0.06)
     # stacked-cards only: how the vertical list grows as beats appear (see StackGrowth).
     stackGrowth: StackGrowth = Field(default="up")
+    # Horizontal pan of the caption block as a fraction of canvas width (-1..1).
+    textPanX: float = Field(default=0.0, ge=-1.0, le=1.0)
+
+    @field_validator("textPanX", mode="before")
+    @classmethod
+    def _coerce_text_pan_x(cls, v: Any) -> float:
+        try:
+            x = float(v)
+        except (TypeError, ValueError):
+            return 0.0
+        return max(-1.0, min(1.0, x))
 
     @field_validator("textAlign", mode="before")
     @classmethod

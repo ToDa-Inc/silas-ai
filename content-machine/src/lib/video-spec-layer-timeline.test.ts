@@ -25,6 +25,7 @@ function baseSpec(): VideoSpec {
     layout: {
       verticalAnchor: "bottom",
       verticalOffset: 0,
+      textPanX: 0,
       scale: 1,
       sidePadding: 0.05,
       textAlign: "center",

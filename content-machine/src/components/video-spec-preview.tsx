@@ -29,13 +29,40 @@ function clamp01(x: number): number {
   return Math.max(0, Math.min(1, x));
 }
 
-/** Player ref — only need frame subscription for the edit playhead + seek. */
+/** Player ref — frame subscription, seek, and keyboard Space → play/pause. */
 type PlayerHandle = {
   getCurrentFrame?: () => number;
   seekTo?: (frame: number) => void;
+  toggle?: () => void;
   addEventListener?: (name: string, cb: (...args: unknown[]) => void) => void;
   removeEventListener?: (name: string, cb: (...args: unknown[]) => void) => void;
 };
+
+/** Space would insert text, activate a control, or otherwise must not toggle the preview. */
+function isSpaceReservedByUi(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  return Boolean(
+    target.closest(
+      [
+        "input",
+        "textarea",
+        "select",
+        "button",
+        "a[href]",
+        "summary",
+        '[contenteditable="true"]',
+        '[role="button"]',
+        '[role="link"]',
+        '[role="menuitem"]',
+        '[role="checkbox"]',
+        '[role="radio"]',
+        '[role="combobox"]',
+        '[role="slider"]',
+        '[role="textbox"]',
+      ].join(", "),
+    ),
+  );
+}
 
 type Props = {
   spec: VideoSpec | null;
@@ -109,6 +136,20 @@ function VideoSpecPreviewBase({
       playerAtMount?.removeEventListener?.("frameupdate", onFrame);
     };
   }, [durationInFrames, initialFrame]);
+
+  /** Space scrolls the document when focus is not inside the Player; Remotion does not receive the key. */
+  useEffect(() => {
+    if (!spec) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== "Space") return;
+      if (e.repeat) return;
+      if (isSpaceReservedByUi(e.target)) return;
+      e.preventDefault();
+      playerRef.current?.toggle?.();
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [spec]);
 
   const layers = useMemo(() => (spec ? buildLayerRows(spec) : []), [spec]);
 

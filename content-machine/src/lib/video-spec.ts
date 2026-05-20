@@ -20,15 +20,25 @@ const verticalAnchorZ = z.enum(["bottom", "center", "top"]);
 const textAlignZ = z.enum(["left", "center", "right"]);
 const stackGrowthZ = z.enum(["up", "down"]);
 
+/** Fraction of canvas height; UI shows as percent (e.g. -1 → −100% = one full frame up). */
+export const LAYOUT_VERTICAL_OFFSET_MIN = -1;
+export const LAYOUT_VERTICAL_OFFSET_MAX = 1;
+
 /** Global layout modifiers (kept small on purpose — see backend models/video_spec.py). */
 export const videoSpecLayoutZ = z.object({
   verticalAnchor: verticalAnchorZ.nullish().default("bottom"),
-  verticalOffset: z.number().min(-0.2).max(0.2).default(0),
+  verticalOffset: z
+    .number()
+    .min(LAYOUT_VERTICAL_OFFSET_MIN)
+    .max(LAYOUT_VERTICAL_OFFSET_MAX)
+    .default(0),
   scale: z.number().min(0.7).max(1.3).default(1),
   sidePadding: z.number().min(0.02).max(0.12).default(0.05),
   textAlign: textAlignZ.default("center"),
   stackGap: z.number().min(0).max(0.06).default(0.008),
   stackGrowth: stackGrowthZ.default("up"),
+  /** Horizontal pan of the caption block as a fraction of canvas width (-1..1). */
+  textPanX: z.number().min(-1).max(1).default(0),
 });
 
 export type VideoSpecLayout = z.infer<typeof videoSpecLayoutZ>;
@@ -69,6 +79,7 @@ export const DEFAULT_LAYOUT: VideoSpecLayout = {
   textAlign: "center",
   stackGap: 0.008,
   stackGrowth: "up",
+  textPanX: 0,
 };
 
 export const videoSpecZ = z.object({

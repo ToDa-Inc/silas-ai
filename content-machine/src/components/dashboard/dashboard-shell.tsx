@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Menu } from "lucide-react";
 import { ToastProvider } from "@/components/ui/toast-provider";
 import { ClientSwitcher, type ClientOption } from "./client-switcher";
@@ -53,7 +53,10 @@ export function DashboardShell({
               <ClientSwitcher clients={clients} activeSlug={slug} orgLabel={orgLabel} />
             </div>
           ) : null}
-          {children}
+          {/* Remount route subtree when the active creator changes so client state
+              (Generate sessions, Intelligence selection, modals, etc.) cannot leak
+              across clients. Server props already refresh via router.refresh(). */}
+          <Fragment key={slug || "no-active-creator"}>{children}</Fragment>
         </div>
       </div>
     </ToastProvider>
