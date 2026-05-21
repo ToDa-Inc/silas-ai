@@ -204,7 +204,7 @@ export function fitCoverTextLines(
   const fontSize = Math.max(32, base);
   ctx.font = `700 ${fontSize}px ${fontFamily}`;
   const lines = wrapCoverLinesPixelWidth(text, textAreaW, fontSize, fontFamily);
-  const heights = lines.map((ln) => lineHeightPx(ctx, ln));
+  const heights = lines.map((ln) => lineHeightPx(ctx, ln, fontSize));
   const lineGap = Math.max(6, Math.floor(fontSize * 0.28));
   const totalH = heights.reduce((a, b) => a + b, 0) + lineGap * Math.max(0, lines.length - 1);
   return { fontSize, lines, lineGap, totalH };
