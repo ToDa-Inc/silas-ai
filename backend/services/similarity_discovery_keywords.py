@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-DEFAULT_MAX_KEYWORDS = 12
+# Reel keyword search (Sasky) — ~60 results per keyword, capped at 10 keywords (600 Apify rows max).
+DEFAULT_MAX_KEYWORDS = 10
 _MIN_LEN = 2
 _MAX_PHRASE_LEN = 120
 # Instagram keyword search works best with short phrases; long sentences match nothing useful.
@@ -99,20 +100,8 @@ def _from_similarity_keywords(dna: dict) -> List[str]:
     return out
 
 
-def _from_dna_keywords(dna: dict) -> List[str]:
-    fb = dna.get("keywords") or []
-    out: List[str] = []
-    if isinstance(fb, dict):
-        for v in fb.values():
-            if isinstance(v, list):
-                out.extend(str(x).strip() for x in v if x)
-    elif isinstance(fb, list):
-        out.extend(str(x).strip() for x in fb if x)
-    return out
-
-
-def _from_niche_config_topics(niche_config: Any) -> List[str]:
-    """Chip-style terms from niche rows: topic_keywords, legacy keywords, hashtags (no #)."""
+def _from_niche_config_topic_keywords(niche_config: Any) -> List[str]:
+    """Reel-caption search terms only (Strategy D) — not bio ``keywords`` (Strategy A)."""
     if not isinstance(niche_config, list):
         return []
     out: List[str] = []
@@ -120,12 +109,7 @@ def _from_niche_config_topics(niche_config: Any) -> List[str]:
     for n in niche_config:
         if not isinstance(n, dict):
             continue
-        for key in (
-            "topic_keywords",
-            "topic_keywords_de",
-            "keywords",
-            "keywords_de",
-        ):
+        for key in ("topic_keywords", "topic_keywords_de"):
             for x in n.get(key) or []:
                 s = str(x).strip()
                 if not s:
@@ -135,6 +119,18 @@ def _from_niche_config_topics(niche_config: Any) -> List[str]:
                     continue
                 seen.add(low)
                 out.append(s)
+    return out
+
+
+def _from_niche_config_hashtags(niche_config: Any) -> List[str]:
+    """Hashtag chips without ``#`` — supplementary after topic_keywords."""
+    if not isinstance(niche_config, list):
+        return []
+    out: List[str] = []
+    seen: Set[str] = set()
+    for n in niche_config:
+        if not isinstance(n, dict):
+            continue
         for hkey in ("hashtags", "hashtags_de"):
             for h in n.get(hkey) or []:
                 s = str(h).strip().lstrip("#")
@@ -145,19 +141,6 @@ def _from_niche_config_topics(niche_config: Any) -> List[str]:
                     continue
                 seen.add(low)
                 out.append(s)
-    return out
-
-
-def _from_niche_config(niche_config: Any) -> List[str]:
-    if not isinstance(niche_config, list):
-        return []
-    out: List[str] = []
-    for n in niche_config:
-        if not isinstance(n, dict):
-            continue
-        for ang in n.get("content_angles") or []:
-            if ang:
-                out.append(str(ang).strip())
     return out
 
 
@@ -203,8 +186,8 @@ def _take_until_cap(
         for raw in phrases:
             if len(out) >= cap:
                 break
-            s = " ".join(str(raw).strip().split())
-            if len(s) < _MIN_LEN or len(s) > _MAX_PHRASE_LEN:
+            s = _instagram_search_phrase(str(raw).strip())
+            if not s:
                 continue
             key = s.lower()
             if key in seen:
@@ -234,16 +217,14 @@ def similarity_scan_keywords(
 
     bl = niche_blacklist(client)
 
+    # Order = most reel-relevant first. Bio ``dna.keywords`` and long ``content_angles`` are
+    # excluded — they target user search / copy, not Sasky reel keyword discovery (Apify cost).
     buckets: List[Tuple[str, List[str]]] = [
         ("payload", [str(k).strip() for k in (payload_keywords or []) if k]),
         ("client_context.niche.keywords_manual", _from_keywords_manual(cc)),
         ("dna.similarity_keywords", _from_similarity_keywords(dna)),
-        ("dna.keywords", _from_dna_keywords(dna)),
-        (
-            "niche_config.topic_keywords+keywords+hashtags",
-            _from_niche_config_topics(client.get("niche_config")),
-        ),
-        ("niche_config.content_angles", _from_niche_config(client.get("niche_config"))),
+        ("niche_config.topic_keywords", _from_niche_config_topic_keywords(client.get("niche_config"))),
+        ("niche_config.hashtags", _from_niche_config_hashtags(client.get("niche_config"))),
     ]
 
     keywords, used = _take_until_cap(buckets, max_keywords)

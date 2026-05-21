@@ -41,6 +41,21 @@ class ScrapedReelBookmarkBody(BaseModel):
     is_bookmarked: bool
 
 
+class DeleteReelsBulkBody(BaseModel):
+    """POST /clients/{slug}/reels/delete-bulk — remove catalog rows (and linked analyses)."""
+
+    reel_ids: List[str] = Field(
+        ...,
+        min_length=1,
+        max_length=50,
+        description="scraped_reels.id values for this client (deduped server-side)",
+    )
+
+
+class DeleteReelsBulkOut(BaseModel):
+    deleted: int = Field(..., ge=0, description="Number of scraped_reels rows removed")
+
+
 class ReelAnalysisSummary(BaseModel):
     """Embedded on scraped reel rows when include_analysis=true."""
 

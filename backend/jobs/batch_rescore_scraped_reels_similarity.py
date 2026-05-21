@@ -308,8 +308,11 @@ def run_batch_rescore_scraped_reels_similarity(settings: Settings, job: Dict[str
             n_chunks,
             len(chunk),
         )
-        items, errs = enrich_reel_urls_direct(settings.apify_api_token, chunk)
+        items, errs, limit_hit = enrich_reel_urls_direct(settings.apify_api_token, chunk)
         enrich_errors.extend(errs or [])
+        if limit_hit:
+            progress["apify_usage_limit_partial_enrich"] = True
+            enrich_errors.append("apify_usage_limit: stopped after partial enrich batches")
         for item in items or []:
             raw = _post_url(item) or ""
             if not raw.strip():
@@ -319,6 +322,8 @@ def run_batch_rescore_scraped_reels_similarity(settings: Settings, job: Dict[str
         progress["enrich_batches_done"] = ci // enrich_chunk + 1
         progress["last_log"] = f"enriched chunk {progress['enrich_batches_done']}/{n_chunks}"
         _flush_progress(supabase, job_id, progress)
+        if limit_hit:
+            break
         if ci + enrich_chunk < len(urls):
             time.sleep(2.0)
 

@@ -1,4 +1,4 @@
-# Enqueues scraped_reels_refresh per active client: 30-day retention window by default,
+# Enqueues scraped_reels_refresh per active client: 14-day window, max 500 reels per client,
 # skips rows updated in the last ~20h (avoids double Apify with morning profile discovery),
 # appends reel_snapshots for metric changes.
 #

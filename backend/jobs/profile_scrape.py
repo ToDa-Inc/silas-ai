@@ -355,6 +355,7 @@ def run_profile_scrape(settings: Settings, job: Dict[str, Any]) -> None:
     similarity_scoring_meta: Dict[str, Any] = {}
     enrich_errors: List[str] = []
     all_enriched_items: List[dict] = []
+    enrich_usage_limit_hit = False
 
     if candidates:
         urls_order: List[str] = []
@@ -366,9 +367,14 @@ def run_profile_scrape(settings: Settings, job: Dict[str, Any]) -> None:
                 urls_order.append(pu)
         for i in range(0, len(urls_order), 40):
             chunk = urls_order[i : i + 40]
-            items_enr, errs = enrich_reel_urls_direct(settings.apify_api_token, chunk)
+            items_enr, errs, limit_hit = enrich_reel_urls_direct(
+                settings.apify_api_token, chunk
+            )
             all_enriched_items.extend(items_enr or [])
             enrich_errors.extend(errs or [])
+            if limit_hit:
+                enrich_usage_limit_hit = True
+                break
             if i + 40 < len(urls_order):
                 time.sleep(2.0)
 
@@ -544,6 +550,7 @@ def run_profile_scrape(settings: Settings, job: Dict[str, Any]) -> None:
                 **similarity_scoring_meta,
                 "enrich_missing": enrich_missing,
                 "enrich_errors": enrich_errors[:20],
+                "apify_usage_limit_partial_enrich": enrich_usage_limit_hit,
                 "rejected_examples": rejected_examples,
                 "similarity_enrich_items": len(all_enriched_items),
                 "carousel_posts_found": len(carousel_posts),

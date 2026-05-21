@@ -153,7 +153,7 @@ class TestProfileScrapeCompetitorGate(unittest.TestCase):
             "caption": {"text": "caption"},
             "videoUrl": "https://cdn.example/v.mp4",
         }
-        mock_enrich.return_value = ([enriched], [])
+        mock_enrich.return_value = ([enriched], [], False)
         mock_score.return_value = {
             "similarity_score": 90,
             "verdict": "match",
@@ -229,6 +229,7 @@ class TestProfileScrapeCompetitorGate(unittest.TestCase):
                 }
             ],
             [],
+            False,
         )
         mock_score.return_value = {
             "similarity_score": 40,

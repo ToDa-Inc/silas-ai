@@ -34,21 +34,110 @@ _POLL_MAX_WAIT_S = 120.0
 CAROUSEL_SLIDE_W = 1080
 CAROUSEL_SLIDE_H = 1350
 
-# Playfair Display Bold — Google Fonts CDN, ~75 KB, cached on first use
-_FONT_URL = (
-    "https://github.com/google/fonts/raw/main/ofl/playfairdisplay/"
-    "PlayfairDisplay%5Bwght%5D.ttf"
-)
-_FONT_CACHE = Path("/tmp/_playfair_display.ttf")
+# Google Fonts — raw.githubusercontent.com (github.com/.../raw/ often 404s).
+_FONT_SOURCES: Dict[str, Tuple[str, str]] = {
+    "playfair": (
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/playfairdisplay/PlayfairDisplay%5Bwght%5D.ttf",
+        "_playfair_display.ttf",
+    ),
+    "inter": (
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/inter/Inter%5Bopsz,wght%5D.ttf",
+        "_inter.ttf",
+    ),
+    "poppins": (
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/poppins/Poppins-Bold.ttf",
+        "_poppins_bold.ttf",
+    ),
+    "patrick": (
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/patrickhand/PatrickHand-Regular.ttf",
+        "_patrick_hand.ttf",
+    ),
+}
+_FONT_FALLBACK_ORDER = ("playfair", "poppins", "inter", "patrick")
+_FONT_CACHE_DIR = Path("/tmp/silas_cover_fonts")
 
 
-def _load_font(size: int) -> "ImageFont.FreeTypeFont":
-    if not _FONT_CACHE.exists():
-        with httpx.Client(timeout=30) as client:
-            r = client.get(_FONT_URL, follow_redirects=True)
-            r.raise_for_status()
-            _FONT_CACHE.write_bytes(r.content)
-    return ImageFont.truetype(str(_FONT_CACHE), size)
+def _font_file_valid(path: Path) -> bool:
+    if not path.is_file() or path.stat().st_size < 12_000:
+        return False
+    head = path.read_bytes()[:4]
+    return head in (b"OTTO", b"\x00\x01\x00\x00", b"true")
+
+
+def _ensure_font_file(font_id: str) -> Path:
+    fid = font_id if font_id in _FONT_SOURCES else "playfair"
+    url, filename = _FONT_SOURCES[fid]
+    cache_path = _FONT_CACHE_DIR / filename
+    if _font_file_valid(cache_path):
+        return cache_path
+    if cache_path.exists():
+        cache_path.unlink(missing_ok=True)
+    _FONT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    with httpx.Client(timeout=30) as client:
+        r = client.get(url, follow_redirects=True)
+        r.raise_for_status()
+        cache_path.write_bytes(r.content)
+    if not _font_file_valid(cache_path):
+        raise RuntimeError(f"Downloaded font is not a valid TTF: {fid}")
+    return cache_path
+
+
+def _load_font(size: int, font_id: Optional[str] = None) -> "ImageFont.FreeTypeFont":
+    """Load a cover font; never fall back to Pillow's tiny bitmap default."""
+    requested = str(font_id or "playfair").strip().lower()
+    if requested not in _FONT_SOURCES:
+        requested = "playfair"
+    order = (requested,) + tuple(f for f in _FONT_FALLBACK_ORDER if f != requested)
+    last_err: Optional[Exception] = None
+    for fid in order:
+        try:
+            path = _ensure_font_file(fid)
+            return ImageFont.truetype(str(path), size)
+        except Exception as e:
+            last_err = e
+    raise RuntimeError(f"Could not load any cover font at {size}px") from last_err
+
+
+def _text_line_height(draw: "ImageDraw.ImageDraw", text: str, font: Any) -> int:
+    bbox = draw.textbbox((0, 0), text, font=font)
+    return max(1, int(bbox[3] - bbox[1]))
+
+
+def _fit_cover_text(
+    draw: "ImageDraw.ImageDraw",
+    text: str,
+    *,
+    frame_w: int,
+    frame_h: int,
+    layout_scale: float,
+    side_padding: float,
+    font_id: str,
+    max_body_frac: float = 0.5,
+    max_lines: int = 7,
+    line_gap_ratio: float = 0.28,
+) -> Tuple[Any, int, List[str], int, int]:
+    """Return (font, font_size, lines, line_gap_px, total_body_h)."""
+    from services.cover_text_layout import cover_base_font_size
+
+    base_font_size = cover_base_font_size(frame_w, layout_scale)
+    text_area_w = max(1, int(frame_w * (1.0 - side_padding * 2.0)))
+    wrapped_lines: List[str] = [text]
+    font: Any = None
+    font_size = base_font_size
+    line_gap = 8
+    total_h = 1
+
+    for step in range(14):
+        font_size = max(32, int(base_font_size * (0.88**step)))
+        font = _load_font(font_size, font_id)
+        wrapped_lines = _wrap_lines_pixel_width(text, font, draw, text_area_w)
+        line_heights = [_text_line_height(draw, ln, font) for ln in wrapped_lines]
+        line_gap = max(6, int(font_size * line_gap_ratio))
+        total_h = sum(line_heights) + line_gap * max(0, len(wrapped_lines) - 1)
+        if total_h <= frame_h * max_body_frac and len(wrapped_lines) <= max_lines:
+            break
+
+    return font, font_size, wrapped_lines, line_gap, total_h
 
 
 def _wash_image(
@@ -391,94 +480,62 @@ def _overlay_text(
     carousel_slide_role: str = "body",
 ) -> "Image.Image":
     """Draw cover text using the same controls exposed by the video editor."""
+    from services.cover_text_layout import compute_cover_text_block, cover_base_font_size, resolve_cover_font_id
+
     W, H = img.size
     layout_d = _as_dict(layout)
     appearance_d = _as_dict(appearance)
 
     role = str(carousel_slide_role or "body").strip().lower()
+    tpl = str(template_id or "centered-pop")
+    pos_arg = str(text_position).lower()
     if carousel_exact_base:
         if role == "cover":
-            template_id = "bottom-card"
-            text_position = "bottom"
+            tpl = "bottom-card"
+            pos_arg = "bottom"
         else:
-            template_id = "centered-pop"
-            text_position = "center"
+            tpl = "centered-pop"
+            pos_arg = "center"
             text_treatment = None
         text_theme = "dark"
 
     legacy_size = {"small": 0.82, "medium": 1.0, "large": 1.18}.get(str(text_size).lower(), 1.0)
     scale = float(layout_d.get("scale") or legacy_size)
-    if carousel_exact_base:
-        exact_base = 0.062 if role == "cover" else 0.066
-        size_scale = exact_base * max(0.78, min(1.15, scale))
-    else:
-        size_scale = 0.082 * max(0.7, min(1.3, scale))
-    base_font_size = max(42, int(W * size_scale))
+    font_id = resolve_cover_font_id(appearance_d, str(theme_id or "bold-modern"))
 
-    default_side_padding = 0.08 if carousel_exact_base else 0.05
-    side_padding = max(0.02, min(0.14, float(layout_d.get("sidePadding") or default_side_padding)))
-    text_area_w = max(1, int(W * (1.0 - side_padding * 2.0)))
-
-    draw = ImageDraw.Draw(img)
-
+    draw_probe = ImageDraw.Draw(img)
     max_body_frac = 0.24 if role == "cover" else 0.50
     max_lines = 5 if role == "cover" else 7
+    side_padding = max(0.02, min(0.14, float(layout_d.get("sidePadding") or (0.08 if carousel_exact_base else 0.05))))
+    gap_ratio = 0.26 if carousel_exact_base else 0.28
 
-    if carousel_exact_base:
-        wrapped_lines: Optional[List[str]] = None
-        font = None
-        font_size = base_font_size
-        for step in range(12):
-            font_size = max(26, int(base_font_size * (0.88**step)))
-            try:
-                font = _load_font(font_size)
-            except Exception:
-                font = ImageFont.load_default()
-            wrapped_lines = _wrap_lines_pixel_width(text, font, draw, text_area_w)
-            line_spacing = int(font_size * 1.26)
-            total_h_try = line_spacing * len(wrapped_lines)
-            if total_h_try <= H * max_body_frac and len(wrapped_lines) <= max_lines:
-                break
-        if not wrapped_lines:
-            wrapped_lines = [text]
-        if font is None:
-            try:
-                font = _load_font(base_font_size)
-            except Exception:
-                font = ImageFont.load_default()
-    else:
-        avg_char_px = max(base_font_size * 0.48, 8.0)
-        wrap_chars = max(18, min(52, int(text_area_w / avg_char_px)))
-        wrapped_lines = textwrap.wrap(
-            text,
-            width=wrap_chars,
-            break_long_words=True,
-            break_on_hyphens=True,
-        ) or [text]
-        font_size = base_font_size
-        try:
-            font = _load_font(font_size)
-        except Exception:
-            font = ImageFont.load_default()
+    font, font_size, wrapped_lines, line_gap, body_h = _fit_cover_text(
+        draw_probe,
+        text,
+        frame_w=W,
+        frame_h=H,
+        layout_scale=scale,
+        side_padding=side_padding,
+        font_id=font_id,
+        max_body_frac=max_body_frac,
+        max_lines=max_lines,
+        line_gap_ratio=gap_ratio,
+    )
 
-    line_spacing = int(font_size * 1.28)
-    total_h = line_spacing * len(wrapped_lines)
-
-    template = str(template_id or "centered-pop")
-    vertical_anchor = str(layout_d.get("verticalAnchor") or "").lower()
-    pos = vertical_anchor if vertical_anchor in ("top", "center", "bottom") else str(text_position).lower()
-    if template == "top-banner":
-        pos = "top"
-    vertical_offset = max(-1.0, min(1.0, float(layout_d.get("verticalOffset") or 0.0)))
-    text_pan_x = max(-1.0, min(1.0, float(layout_d.get("textPanX") or 0.0)))
-    if pos == "top":
-        y = int(H * 0.16)
-    elif pos == "bottom":
-        bottom_margin = 0.10 if carousel_exact_base else 0.16
-        y = H - total_h - int(H * bottom_margin)
-    else:
-        y = (H - total_h) // 2 - int(H * 0.03)
-    y = int(y + vertical_offset * H)
+    block = compute_cover_text_block(
+        text,
+        frame_w=W,
+        frame_h=H,
+        template_id=tpl,
+        layout=layout_d,
+        text_position=pos_arg,
+        layout_scale=scale,
+        wrapped_lines=wrapped_lines,
+        font_size=font_size,
+        total_body_h=body_h,
+        carousel_exact_base=carousel_exact_base,
+        carousel_slide_role=role,
+    )
 
     light = str(text_theme).lower() == "light"
     fallback_text = (248, 248, 248, 255) if light else (20, 20, 20, 255)
@@ -488,50 +545,52 @@ def _overlay_text(
     )
     stroke_fill = None
     if text_treatment == "bold-outline" or appearance_d.get("overlayStroke"):
-        stroke_fill = _parse_color(appearance_d.get("overlayStroke"), (20, 20, 20, 255) if light else (255, 255, 255, 230))
-    card_like = template in ("bottom-card", "top-banner", "stacked-cards")
-    align = str(layout_d.get("textAlign") or "center").lower()
-    if align not in ("left", "center", "right"):
-        align = "center"
-    left = int(W * side_padding)
-    card_pad = max(10, int(font_size * 0.38))
-    if card_like:
+        stroke_fill = _parse_color(
+            appearance_d.get("overlayStroke"),
+            (20, 20, 20, 255) if light else (255, 255, 255, 230),
+        )
+
+    y = block.y_top
+    left = block.left
+    if block.card_like:
         card_fill = _parse_color(
             appearance_d.get("cardBg"),
             (20, 20, 20, 184) if light else (255, 255, 255, 224),
         )
-        card_top = max(0, y - card_pad)
-        card_bottom = min(H, y + total_h + card_pad)
+        card_top = max(0, y - block.card_pad)
+        card_bottom = min(H, y + body_h + block.card_pad)
         overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
         overlay_draw = ImageDraw.Draw(overlay)
         overlay_draw.rounded_rectangle(
-            (left - card_pad, card_top, W - left + card_pad, card_bottom),
-            radius=max(16, int(font_size * 0.28)),
+            (left - block.card_pad, card_top, W - left + block.card_pad, card_bottom),
+            radius=block.card_radius,
             fill=card_fill,
         )
         img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
-        draw = ImageDraw.Draw(img)
 
-    for line in wrapped_lines:
+    draw = ImageDraw.Draw(img)
+    stroke_w = max(2, block.font_size // 18) if stroke_fill is not None else 0
+    for i, line in enumerate(block.wrapped_lines):
         bbox = draw.textbbox((0, 0), line, font=font)
         text_w = bbox[2] - bbox[0]
-        if align == "left":
+        line_h = _text_line_height(draw, line, font)
+        if block.align == "left":
             x = left
-        elif align == "right":
+        elif block.align == "right":
             x = W - left - text_w
         else:
-            x = (W - text_w) // 2
-        x = int(x + text_pan_x * W)
+            x = left + (block.text_area_w - text_w) // 2
+        x = int(x + block.text_pan_x * W)
         x = max(left, min(W - left - text_w, x))
         draw.text(
             (x, y),
             line,
             font=font,
             fill=color,
-            stroke_width=max(2, font_size // 18) if stroke_fill is not None else 0,
+            stroke_width=stroke_w,
             stroke_fill=stroke_fill,
         )
-        y += line_spacing
+        y += line_h + (line_gap if i < len(block.wrapped_lines) - 1 else 0)
 
     return img
 

@@ -103,7 +103,7 @@ def resolve_post_media(
     Returns ``None`` if Apify returns no items.
     """
     canon = canonical_instagram_post_url(url.strip())
-    items, errors = enrich_reel_urls_direct(token, [canon])
+    items, errors, _usage_limit_hit = enrich_reel_urls_direct(token, [canon])
     if errors:
         for e in errors:
             logger.warning("resolve_post_media enrich: %s", e)

@@ -1,7 +1,7 @@
 """scraped_reels_refresh — scheduled re-fetch of views/likes/comments for active reels.
 
 Covers ALL sources (profile, keyword_similarity, etc.) for reels younger than
-``max_age_days`` (default 30). Skips rows whose ``last_updated_at`` is within
+``max_age_days`` (default 14). Skips rows whose ``last_updated_at`` is within
 ``skip_recently_updated_hours`` (default 20) so the same morning's profile
 discovery does not double-pay Apify. Updates ``scraped_reels`` and appends to
 ``reel_snapshots``.
@@ -20,7 +20,7 @@ from services.apify import enrich_reel_urls_direct
 from services.instagram_post_url import canonical_instagram_post_url
 from services.reel_thumbnail_url import reel_thumbnail_url_from_apify_item
 
-DEFAULT_MAX_AGE_DAYS = 30
+DEFAULT_MAX_AGE_DAYS = 14
 DEFAULT_BATCH_LIMIT = 500  # max reels refreshed per run (cost guard)
 DEFAULT_SKIP_RECENTLY_UPDATED_HOURS = 20
 _CANDIDATE_FETCH_MULTIPLIER = 25
@@ -173,9 +173,13 @@ def run_scraped_reels_refresh(settings: Settings, job: Dict[str, Any]) -> None:
         canonical_instagram_post_url(str(r["post_url"])): r for r in rows
     }
 
-    items, errors = enrich_reel_urls_direct(settings.apify_api_token, list(url_to_row.keys()))
+    items, errors, usage_limit_hit = enrich_reel_urls_direct(
+        settings.apify_api_token, list(url_to_row.keys())
+    )
     progress["enrich_errors"] = errors
     progress["enriched"] = len(items)
+    if usage_limit_hit:
+        progress["apify_usage_limit_partial_enrich"] = True
 
     # ── update scraped_reels + insert reel_snapshots ──────────────────────────
     progress["phase"] = "updating"

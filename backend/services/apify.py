@@ -287,16 +287,19 @@ def enrich_reel_urls_direct(
     urls: List[str],
     *,
     extra_input: Optional[dict] = None,
-) -> Tuple[List[dict], List[str]]:
+) -> Tuple[List[dict], List[str], bool]:
     """Fetch full reel data for Instagram reel/post URLs via apify~instagram-scraper.
 
-    Returns ``(items, errors)``. Failed batches append to ``errors``; partial success is preserved.
+    Returns ``(items, errors, apify_usage_limit_hit)``. Non-limit batch failures append to
+    ``errors`` and continue. On ``ApifyUsageLimitError``, returns items from successful
+    batches so callers can still score/persist partial work.
     """
     if not urls:
-        return [], []
+        return [], [], False
 
     all_items: List[dict] = []
     errors: List[str] = []
+    usage_limit_hit = False
     for i in range(0, len(urls), _ENRICH_BATCH_SIZE):
         chunk = urls[i : i + _ENRICH_BATCH_SIZE]
         actor_input: dict[str, Any] = {"directUrls": chunk, "resultsLimit": len(chunk)}
@@ -309,8 +312,15 @@ def enrich_reel_urls_direct(
                 actor_input,
             )
             all_items.extend(items or [])
-        except ApifyUsageLimitError:
-            raise
+        except ApifyUsageLimitError as e:
+            usage_limit_hit = True
+            errors.append(f"apify_usage_limit: {e!s}"[:500])
+            logger.warning(
+                "Apify usage limit during enrich batch %s; keeping %s partial item(s)",
+                i // _ENRICH_BATCH_SIZE + 1,
+                len(all_items),
+            )
+            break
         except Exception as e:
             msg = f"enrich batch {i // _ENRICH_BATCH_SIZE + 1}: {type(e).__name__}: {e}"
             logger.warning(msg, exc_info=True)
@@ -318,4 +328,4 @@ def enrich_reel_urls_direct(
         if i + _ENRICH_BATCH_SIZE < len(urls):
             time.sleep(2)
 
-    return all_items, errors
+    return all_items, errors, usage_limit_hit

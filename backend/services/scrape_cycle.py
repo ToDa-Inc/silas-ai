@@ -17,8 +17,8 @@ DAILY_DISCOVERY_RESULTS_LIMIT = 30
 # Stale competitor scrape (tiers 1–3 not scraped in 7–30d): wider window to catch up.
 STALE_DISCOVERY_ONLY_NEWER_THAN = "30 days"
 
-# Metric refresh: align with product window; avoid double-fetch right after profile scrape.
-REFRESH_MAX_AGE_DAYS = 30
+# Metric refresh: reels posted within this window; cap total Apify enrich calls per run.
+REFRESH_MAX_AGE_DAYS = 14
 REFRESH_BATCH_LIMIT = 500
 DEFAULT_SKIP_RECENTLY_UPDATED_HOURS = 20
 KEYWORD_DISCOVERY_IMPL = "posts_fallback_v1"

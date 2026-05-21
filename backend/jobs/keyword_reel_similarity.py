@@ -40,7 +40,9 @@ from services.similarity_discovery_keywords import (
     similarity_scan_keywords,
 )
 
-MAX_ITEMS_PER_KEYWORD = 80
+# Sasky ``limit`` budget: 60 per keyword × up to 10 keywords (shared in one batch run).
+MAX_ITEMS_PER_KEYWORD = 60
+MAX_KEYWORD_DISCOVERY_TOTAL = 600
 MAX_SCORE_SAFETY_CAP = 200  # hard ceiling to prevent runaway jobs — not a quality filter
 SIMILARITY_THRESHOLD = 85
 DEFAULT_DAYS = 2
@@ -758,7 +760,10 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
     progress["keyword_search_fallback_items"] = 0
     supabase.table("background_jobs").update({"result": dict(progress)}).eq("id", job_id).execute()
 
-    total_limit = min(MAX_ITEMS_PER_KEYWORD * max(len(keywords), 1), 2000)
+    total_limit = min(
+        MAX_ITEMS_PER_KEYWORD * max(len(keywords), 1),
+        MAX_KEYWORD_DISCOVERY_TOTAL,
+    )
     try:
         raw_by_sc, discovery_meta = discover_keyword_urls_with_fallback(
             settings.apify_api_token,
@@ -841,12 +846,16 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
 
     urls_to_enrich = [canonical_reel_url_from_short_code(sc) for sc in sorted(new_scs)]
     newer_than = f"{max(1, days)} days"
-    enriched_items, enrich_errors = enrich_reel_urls_direct(
+    enriched_items, enrich_errors, enrich_usage_limit_hit = enrich_reel_urls_direct(
         settings.apify_api_token,
         urls_to_enrich,
         extra_input={"onlyPostsNewerThan": newer_than},
     )
     progress["enrich_errors"] = enrich_errors
+    if enrich_usage_limit_hit:
+        progress["apify_usage_limit_partial_enrich"] = True
+        progress["enrich_urls_requested"] = len(urls_to_enrich)
+        progress["enrich_urls_returned"] = len(enriched_items)
 
     enriched_by_sc: Dict[str, dict] = {}
     for item in enriched_items:
@@ -1027,6 +1036,10 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
         f"Scored {len(scored)} reels, saved {saved} at threshold {threshold}"
         + ("." if saved else " — nothing met the bar this run.")
     )
+    if progress.get("apify_usage_limit_partial_enrich"):
+        summary_msg += (
+            " Apify usage limit hit during enrich; scored/persisted partial batch only."
+        )
     _complete_job(supabase, job_id, progress, summary_msg)
 
 

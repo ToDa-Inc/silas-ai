@@ -247,8 +247,13 @@ def main() -> None:
         if not args.dry_run:
             supabase.table("background_jobs").update({"result": {**totals, "phase": "apify", "processed_urls": start, "current_chunk": chunk_no}}).eq("id", job_id).execute()
 
-        items, errors = enrich_reel_urls_direct(settings.apify_api_token, chunk)
+        items, errors, usage_limit_hit = enrich_reel_urls_direct(
+            settings.apify_api_token, chunk
+        )
         all_errors.extend(errors)
+        if usage_limit_hit:
+            print("Apify usage limit — stopping after partial chunk", flush=True)
+            break
         totals["apify_items"] += len(items)
         print(f"chunk {chunk_no}: apify_items={len(items)} errors={len(errors)}", flush=True)
 

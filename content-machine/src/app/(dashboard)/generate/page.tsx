@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, Loader2, Sparkles, Trash2 } from "lucide-react";
 import { ReelThumbnail } from "@/components/reel-thumbnail";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast-provider";
 import { VideoCreateWorkspace } from "@/components/video-create-workspace";
 import type { ClientCarouselTemplate, ClientCoverTemplate, ClientCta, ScrapedReelRow } from "@/lib/api";
@@ -963,6 +964,8 @@ export default function GeneratePage() {
   const [session, setSession] = useState<GenerationSession | null>(null);
   const [sessions, setSessions] = useState<GenerationSession[]>([]);
   const [loading, setLoading] = useState(false);
+  const [deleteSessionId, setDeleteSessionId] = useState<string | null>(null);
+  const [deleteSessionBusy, setDeleteSessionBusy] = useState(false);
   /** Index of angle being submitted (content generation); other angle cards stay visible but dimmed. */
   const [choosingAngleIndex, setChoosingAngleIndex] = useState<number | null>(null);
   const [patternsOpen, setPatternsOpen] = useState(false);
@@ -1254,29 +1257,31 @@ export default function GeneratePage() {
     };
   }, [clientSlug, orgSlug, sessionIdFromUrl, router, show, refreshSessions]);
 
-  const onDeleteSession = useCallback(
-    async (id: string) => {
-      if (!clientSlug || !orgSlug) return;
-      if (!window.confirm("Delete this generation session? This cannot be undone.")) return;
-      setLoading(true);
-      try {
-        const res = await generationDeleteSession(clientSlug, orgSlug, id);
-        if (!res.ok) {
-          show(res.error, "error");
-          return;
-        }
-        show("Session deleted.", "success");
-        if (session?.id === id) {
-          setSession(null);
-          setStep("source");
-        }
-        await refreshSessions();
-      } finally {
-        setLoading(false);
+  const requestDeleteSession = useCallback((id: string) => {
+    setDeleteSessionId(id);
+  }, []);
+
+  const executeDeleteSession = useCallback(async () => {
+    const id = deleteSessionId;
+    if (!id || !clientSlug || !orgSlug) return;
+    setDeleteSessionBusy(true);
+    try {
+      const res = await generationDeleteSession(clientSlug, orgSlug, id);
+      if (!res.ok) {
+        show(res.error, "error");
+        return;
       }
-    },
-    [clientSlug, orgSlug, refreshSessions, session?.id, show],
-  );
+      show("Session deleted.", "success");
+      setDeleteSessionId(null);
+      if (session?.id === id) {
+        setSession(null);
+        setStep("source");
+      }
+      await refreshSessions();
+    } finally {
+      setDeleteSessionBusy(false);
+    }
+  }, [clientSlug, orgSlug, deleteSessionId, refreshSessions, session?.id, show]);
 
   /** Niche reel count per video format — annotates the format pills with social proof. */
   const nicheReelCountByFormat = useMemo(() => {
@@ -2051,7 +2056,7 @@ export default function GeneratePage() {
                     session={s}
                     loading={loading}
                     onOpen={() => void loadSessionById(s.id)}
-                    onDelete={() => void onDeleteSession(s.id)}
+                    onDelete={() => requestDeleteSession(s.id)}
                   />
                 ))}
               </ul>
@@ -2188,7 +2193,7 @@ export default function GeneratePage() {
             <button
               type="button"
               disabled={loading}
-              onClick={() => void onDeleteSession(session.id)}
+              onClick={() => requestDeleteSession(session.id)}
               className="flex shrink-0 items-center gap-1.5 rounded-xl border border-red-500/30 px-3 py-1.5 text-[11px] font-bold text-red-400 hover:bg-red-500/10 disabled:opacity-40"
             >
               <Trash2 className="h-3.5 w-3.5" />
@@ -2217,6 +2222,19 @@ export default function GeneratePage() {
           />
         </section>
       )}
+      <ConfirmDialog
+        open={deleteSessionId != null}
+        onClose={() => {
+          if (!deleteSessionBusy) setDeleteSessionId(null);
+        }}
+        title="Delete this session?"
+        description="Removes this generation session and its saved progress. This cannot be undone."
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        variant="danger"
+        busy={deleteSessionBusy}
+        onConfirm={executeDeleteSession}
+      />
     </main>
   );
 }

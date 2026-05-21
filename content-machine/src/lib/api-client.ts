@@ -706,6 +706,65 @@ export async function enqueueReelAnalyzeBulk(
   }
 }
 
+/** DELETE …/reels/{reelId} — remove one catalog row (and linked analysis). */
+export async function deleteScrapedReel(
+  clientSlug: string,
+  orgSlug: string,
+  reelId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const base = getContentApiBase();
+  const headers = await clientApiHeaders({ orgSlug });
+  try {
+    const res = await contentApiFetch(
+      `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/reels/${encodeURIComponent(reelId)}`,
+      { method: "DELETE", headers },
+    );
+    if (res.status === 204 || res.ok) {
+      return { ok: true };
+    }
+    const json = (await res.json().catch(() => ({}))) as { detail?: unknown };
+    return {
+      ok: false,
+      error: formatFastApiError(json as Record<string, unknown>, `Failed (${res.status})`),
+    };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "fetch failed" };
+  }
+}
+
+/** POST …/reels/delete-bulk — remove up to 50 catalog rows. */
+export async function deleteScrapedReelsBulk(
+  clientSlug: string,
+  orgSlug: string,
+  reelIds: string[],
+): Promise<{ ok: true; deleted: number } | { ok: false; error: string }> {
+  const base = getContentApiBase();
+  const headers = await clientApiHeaders({ orgSlug });
+  try {
+    const res = await contentApiFetch(
+      `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/reels/delete-bulk`,
+      {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ reel_ids: reelIds }),
+      },
+    );
+    const json = (await res.json().catch(() => ({}))) as {
+      deleted?: number;
+      detail?: unknown;
+    };
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: formatFastApiError(json as Record<string, unknown>, `Failed (${res.status})`),
+      };
+    }
+    return { ok: true, deleted: typeof json.deleted === "number" ? json.deleted : reelIds.length };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "fetch failed" };
+  }
+}
+
 /** PATCH …/reels/{reelId} — favourites star (body ``is_bookmarked``). */
 export async function patchScrapedReelBookmark(
   clientSlug: string,

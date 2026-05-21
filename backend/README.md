@@ -82,7 +82,7 @@ Three responsibilities, three schedules (see `.github/workflows/cron-*.yml`):
 
 **Competitor `profile_scrape` relevance:** Each candidate reel/carousel is enriched (Apify `directUrls`) and scored with the same Gemini similarity path as `keyword_reel_similarity`. Only rows with `similarity_score >=` threshold (default **80**, override with job payload `similarity_threshold`) are written to `scraped_reels`, so `scraped-reels-refresh` and downstream jobs never see rejected noise. Requires non-empty **`clients.client_dna.analysis_brief`** and **`OPENROUTER_API_KEY`**. Rejected URLs and scores are summarized on `background_jobs.result` (`rejected_examples`, counts). **Backlog:** dry-run rescoring or cleanup for existing `source=profile` rows via [`scripts/batch_rescore_scraped_reels_similarity.py`](../scripts/batch_rescore_scraped_reels_similarity.py) (`--sources profile`, then delete or keep by score after review).
 | **niche discovery** | `POST /api/v1/cron/keyword-reel-similarity` | **Keyword / similarity** pipeline only (Sasky + enrich + Gemini). |
-| **scraped-reels-refresh** | `POST /api/v1/cron/scraped-reels-refresh` | **Metrics refresh** for reels in the last **30** days; skips rows updated in the last **~20h** so profile discovery and refresh don’t double-fetch the same URLs. |
+| **scraped-reels-refresh** | `POST /api/v1/cron/scraped-reels-refresh` | **Metrics refresh** for up to **500** reels posted in the last **14** days; skips rows updated in the last **~20h** so profile discovery and refresh don’t double-fetch the same URLs. |
 
 Stale competitor catch-up (tiers 1–3) stays on **`POST /api/v1/cron/scrape-cycle`** with a wider lookback.
 

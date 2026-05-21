@@ -17,22 +17,26 @@ import {
   ChevronsUpDown,
   Clapperboard,
   Info,
+  Loader2,
   Search,
   SlidersHorizontal,
   Sparkles,
   Star,
   Target,
+  Trash2,
   TrendingUp,
   X,
 } from "lucide-react";
 import { ReelThumbnail } from "@/components/reel-thumbnail";
 import { AppSelect } from "@/components/ui/app-select";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { ReelsListSortBy, ReelsMediaType, ScrapedReelRow, SortRule } from "@/lib/api";
 import { formatViewsToComments, viewsToCommentsRatio } from "@/lib/reel-comment-view";
 import {
   clientApiHeaders,
   contentApiFetch,
+  deleteScrapedReelsBulk,
   enqueueReelAnalyzeBulk,
   fetchActiveReelAnalysisJob,
   formatFastApiError,
@@ -134,6 +138,7 @@ const SORT_KEY_LABELS: Record<AnySortKey, string> = {
 const PAGE_SIZE_OPTIONS = [20, 50, 100, 200] as const;
 const BULK_POLL_MS = 2500;
 const BULK_MAX_URLS = 20;
+const BULK_MAX_DELETE = 50;
 const SEGMENT_MS = 20_000;
 const STALE_MS = 15 * 60 * 1000;
 const MEDIA_TYPE_LABELS: Record<ReelsMediaType, string> = {
@@ -532,6 +537,8 @@ export function IntelligenceReelsTable({
   const [recreateRow, setRecreateRow] = useState<ScrapedReelRow | null>(null);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [bulkMsg, setBulkMsg] = useState<string | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   /** Optimistic is_bookmarked keyed by reel id; dropped when props match or request fails. */
   const [bookmarkOverride, setBookmarkOverride] = useState<Record<string, boolean>>({});
   const bookmarkInFlightRef = useRef<Set<string>>(new Set());
@@ -672,6 +679,8 @@ export function IntelligenceReelsTable({
     return list;
   }, [rows, selected]);
 
+  const selectedReelIds = useMemo(() => Array.from(selected), [selected]);
+
   const bulkSkipApify = useMemo(() => {
     const picked = rows.filter((r) => selected.has(r.id) && rowHasPostUrl(r));
     if (picked.length === 0) return false;
@@ -729,6 +738,10 @@ export function IntelligenceReelsTable({
     (async () => {
       const res = await fetchActiveReelAnalysisJob(clientSlug, orgSlug);
       if (cancelled || !res.ok || !res.data.active) return;
+      // Do not re-bind a zombie job on reload — user would be locked out of selection
+      // until Dismiss (checkboxes were tied to trackedJobId). Backend clears stale rows;
+      // this guards older rows or clock skew.
+      if (startedAtIsStale(res.data.started_at)) return;
       setTrackedJobId(res.data.job_id);
       setTrackedJobType(
         res.data.job_type === "reel_analyze_bulk" ? "reel_analyze_bulk" : "reel_analyze_url",
@@ -941,6 +954,44 @@ export function IntelligenceReelsTable({
     setTrackedJobId(enq.job_id);
   }
 
+  function openBulkDeleteConfirm() {
+    if (selectedReelIds.length === 0) {
+      setBulkMsg("Select at least one reel to delete.");
+      return;
+    }
+    setDeleteConfirmOpen(true);
+  }
+
+  async function executeBulkDelete() {
+    if (!clientSlug.trim() || !orgSlug.trim()) {
+      setBulkMsg("Missing client or organization context.");
+      return;
+    }
+    const ids = selectedReelIds.slice(0, BULK_MAX_DELETE);
+    if (!ids.length) return;
+    setBulkMsg(null);
+    setDeleteBusy(true);
+    try {
+      const res = await deleteScrapedReelsBulk(clientSlug, orgSlug, ids);
+      if (!res.ok) {
+        setBulkMsg(res.error);
+        return;
+      }
+      setSelected(new Set());
+      setDeleteConfirmOpen(false);
+      setBulkMsg(
+        res.deleted === 1
+          ? "Deleted 1 reel."
+          : `Deleted ${res.deleted.toLocaleString()} reels.`,
+      );
+      startTransition(() => {
+        router.refresh();
+      });
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
+
   // ─── Range filter apply/clear ───────────────────────────────────────────
   const applyRanges = useCallback(() => {
     const toNum = (s: string) => {
@@ -980,6 +1031,7 @@ export function IntelligenceReelsTable({
   };
 
   // ─── Progress bar derivations (unchanged) ───────────────────────────────
+  /** Blocks starting new analysis — not row selection or delete. */
   const disableReelAnalysis = Boolean(trackedJobId);
   const staleRunning = Boolean(
     trackedJobId &&
@@ -1337,21 +1389,50 @@ export function IntelligenceReelsTable({
             ) : null}
           </div>
 
-          <button
-            type="button"
-            disabled={disableReelAnalysis || selectedPostUrls.length === 0}
-            onClick={() => void runBulkAnalyze()}
-            className="ml-auto inline-flex h-9 items-center gap-1.5 rounded-lg border border-amber-500/50 bg-amber-500/15 px-3 text-xs font-semibold text-amber-800 transition-colors hover:bg-amber-500/25 disabled:cursor-not-allowed disabled:opacity-40 dark:text-amber-200"
-          >
-            <Sparkles className="h-3.5 w-3.5 shrink-0" aria-hidden />
-            Analyze selected
-            {selectedPostUrls.length > 0 ? ` (${selectedPostUrls.length})` : ""}
-          </button>
+          <div className="ml-auto flex items-center gap-2">
+            <Tooltip
+              content={
+                selectedReelIds.length === 0
+                  ? "Select reels to delete"
+                  : selectedReelIds.length > BULK_MAX_DELETE
+                    ? `Delete up to ${BULK_MAX_DELETE} at a time (${selectedReelIds.length} selected)`
+                    : `Delete ${selectedReelIds.length} selected reel${selectedReelIds.length === 1 ? "" : "s"}`
+              }
+            >
+              <button
+                type="button"
+                aria-label={
+                  selectedReelIds.length === 0
+                    ? "Delete selected reels"
+                    : `Delete ${selectedReelIds.length} selected reels`
+                }
+                disabled={deleteBusy || selectedReelIds.length === 0}
+                onClick={() => openBulkDeleteConfirm()}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-app-divider text-app-fg-muted transition-colors hover:border-red-500/35 hover:bg-red-500/10 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:text-red-400"
+              >
+                {deleteBusy ? (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                ) : (
+                  <Trash2 className="h-4 w-4" aria-hidden />
+                )}
+              </button>
+            </Tooltip>
+            <button
+              type="button"
+              disabled={disableReelAnalysis || deleteBusy || selectedPostUrls.length === 0}
+              onClick={() => void runBulkAnalyze()}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-amber-500/50 bg-amber-500/15 px-3 text-xs font-semibold text-amber-800 transition-colors hover:bg-amber-500/25 disabled:cursor-not-allowed disabled:opacity-40 dark:text-amber-200"
+            >
+              <Sparkles className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              Analyze selected
+              {selectedPostUrls.length > 0 ? ` (${selectedPostUrls.length})` : ""}
+            </button>
+          </div>
         </div>
 
         {selectedPostUrls.length > BULK_MAX_URLS ? (
           <span className="text-[10px] text-amber-800/90 dark:text-amber-200/80">
-            Up to {BULK_MAX_URLS} reels per batch.
+            Up to {BULK_MAX_URLS} reels per analyze batch.
           </span>
         ) : null}
         {bulkMsg ? (
@@ -1627,11 +1708,10 @@ export function IntelligenceReelsTable({
                     {hasPost ? (
                       <input
                         type="checkbox"
-                        disabled={disableReelAnalysis}
                         className="h-3.5 w-3.5 rounded border-zinc-400 accent-amber-600"
                         checked={selected.has(row.id)}
                         onChange={() => toggleRow(row.id)}
-                        aria-label={`Select reel @${row.account_username} for bulk analyze`}
+                        aria-label={`Select reel @${row.account_username}`}
                       />
                     ) : null}
                   </td>
@@ -1934,6 +2014,28 @@ export function IntelligenceReelsTable({
         orgSlug={orgSlug}
         disabled={Boolean(disableReelAnalysis)}
         disabledHint="An analysis job is running. Wait for it to finish or dismiss the stalled bar."
+      />
+      <ConfirmDialog
+        open={deleteConfirmOpen}
+        onClose={() => {
+          if (!deleteBusy) setDeleteConfirmOpen(false);
+        }}
+        title={
+          selectedReelIds.length === 1
+            ? "Delete this reel?"
+            : `Delete ${Math.min(selectedReelIds.length, BULK_MAX_DELETE)} reels?`
+        }
+        description={
+          <>
+            Removes the selected {selectedReelIds.length === 1 ? "reel" : "reels"} from this catalog and
+            deletes linked Silas analysis. This cannot be undone.
+          </>
+        }
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        variant="danger"
+        busy={deleteBusy}
+        onConfirm={executeBulkDelete}
       />
     </>
   );

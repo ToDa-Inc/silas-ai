@@ -34,6 +34,8 @@ from models.client import NicheConfigPatch
 from models.reel import (
     AnalyzeReelBulkBody,
     AnalyzeReelUrlBody,
+    DeleteReelsBulkBody,
+    DeleteReelsBulkOut,
     MetricPoint,
     ReelAnalysisDetailOut,
     ReelAnalysisOut,
@@ -2019,6 +2021,8 @@ def analyze_reel_by_url(
             detail="Full reel analysis requires APIFY_API_TOKEN (or set skip_apify for LLM-only re-run)",
         )
     fail_abandoned_queued_jobs(supabase, client_id=client_id, job_type="reel_analyze_url")
+    for jt in ("reel_analyze_url", "reel_analyze_bulk"):
+        fail_stale_running_jobs(supabase, client_id=client_id, job_type=jt, max_age_minutes=15)
     if _reel_analyze_busy(supabase, client_id):
         raise HTTPException(
             status_code=409,
@@ -2076,6 +2080,8 @@ def analyze_reels_bulk(
         raise HTTPException(status_code=400, detail="No valid URLs in request")
 
     fail_abandoned_queued_jobs(supabase, client_id=client_id, job_type="reel_analyze_bulk")
+    for jt in ("reel_analyze_url", "reel_analyze_bulk"):
+        fail_stale_running_jobs(supabase, client_id=client_id, job_type=jt, max_age_minutes=15)
     if _reel_analyze_busy(supabase, client_id):
         raise HTTPException(
             status_code=409,
@@ -2098,6 +2104,9 @@ def analyze_reels_bulk(
     return {"job_id": job_id, "status": "queued", "count": len(cleaned)}
 
 
+_REEL_ANALYZE_STALE_MINUTES = 15
+
+
 @router.get("/clients/{slug}/reels/active-analysis")
 def get_active_reel_analysis_job(
     slug: str,
@@ -2105,6 +2114,13 @@ def get_active_reel_analysis_job(
     supabase: Annotated[Client, Depends(get_supabase)],
 ) -> Dict[str, Any]:
     """Running or queued Silas reel job so the UI can resume polling after reload."""
+    for jt in ("reel_analyze_url", "reel_analyze_bulk"):
+        fail_stale_running_jobs(
+            supabase,
+            client_id=client_id,
+            job_type=jt,
+            max_age_minutes=_REEL_ANALYZE_STALE_MINUTES,
+        )
     res = (
         supabase.table("background_jobs")
         .select("id, job_type, status, started_at")
@@ -2637,6 +2653,76 @@ def reel_source_preview(
     enrich_engagement_metrics(row)
     normalize_scraped_reel_row_for_api(row)
     return ScrapedReelOut.model_validate(row)
+
+
+_DELETE_REELS_CHUNK = 100
+
+
+def _delete_scraped_reels_for_client(
+    supabase: Client,
+    *,
+    client_id: str,
+    reel_ids: List[str],
+) -> int:
+    """Delete ``reel_analyses`` (by post_url) then ``scraped_reels`` for this client."""
+    ids = list(dict.fromkeys(str(i).strip() for i in reel_ids if str(i).strip()))
+    if not ids:
+        return 0
+
+    res = (
+        supabase.table("scraped_reels")
+        .select("id, post_url")
+        .eq("client_id", client_id)
+        .in_("id", ids)
+        .execute()
+    )
+    rows = [dict(r) for r in (res.data or [])]
+    if not rows:
+        return 0
+
+    found_ids = [str(r["id"]) for r in rows]
+    urls = list(
+        dict.fromkeys(
+            str(r["post_url"]).strip() for r in rows if r.get("post_url") and str(r["post_url"]).strip()
+        )
+    )
+
+    for i in range(0, len(urls), _DELETE_REELS_CHUNK):
+        chunk = urls[i : i + _DELETE_REELS_CHUNK]
+        supabase.table("reel_analyses").delete().eq("client_id", client_id).in_("post_url", chunk).execute()
+
+    for i in range(0, len(found_ids), _DELETE_REELS_CHUNK):
+        chunk = found_ids[i : i + _DELETE_REELS_CHUNK]
+        supabase.table("scraped_reels").delete().eq("client_id", client_id).in_("id", chunk).execute()
+
+    return len(found_ids)
+
+
+@router.delete("/clients/{slug}/reels/{reel_id}", status_code=204)
+def delete_scraped_reel(
+    slug: str,
+    reel_id: str,
+    client_id: Annotated[str, Depends(resolve_client_id)],
+    supabase: Annotated[Client, Depends(get_supabase)],
+) -> None:
+    """Remove one catalog reel and its Silas analysis (``reel_snapshots`` cascade on delete)."""
+    _ = slug
+    deleted = _delete_scraped_reels_for_client(supabase, client_id=client_id, reel_ids=[reel_id])
+    if deleted == 0:
+        raise HTTPException(status_code=404, detail="Reel not found for this client")
+
+
+@router.post("/clients/{slug}/reels/delete-bulk", response_model=DeleteReelsBulkOut)
+def delete_scraped_reels_bulk(
+    slug: str,
+    body: DeleteReelsBulkBody,
+    client_id: Annotated[str, Depends(resolve_client_id)],
+    supabase: Annotated[Client, Depends(get_supabase)],
+) -> DeleteReelsBulkOut:
+    """Remove up to 50 catalog reels (and linked analyses) in one request."""
+    _ = slug
+    deleted = _delete_scraped_reels_for_client(supabase, client_id=client_id, reel_ids=body.reel_ids)
+    return DeleteReelsBulkOut(deleted=deleted)
 
 
 @router.patch("/clients/{slug}/reels/{reel_id}", response_model=ScrapedReelOut)

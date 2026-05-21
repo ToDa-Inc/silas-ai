@@ -5,7 +5,7 @@ Enqueues (in order, as independent queued jobs):
     1. profile_scrape (scrape_own=true)     → own-handle discovery (short lookback)
     2. profile_scrape × N competitors       → competitor discovery
     3. keyword_reel_similarity              → niche keyword discovery (same window as niche cron)
-    4. scraped_reels_refresh                → metrics + snapshots (30d window, skips very recent rows)
+    4. scraped_reels_refresh                → metrics + snapshots (14d window, max 500 reels, skips very recent rows)
 
 Discovery windows and refresh policy match :mod:`services.scrape_cycle` / GitHub crons.
 Each sub-job is idempotent. ``has_active_job()`` gates 1/3/4; competitors are not gated.

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import type { Operation } from "fast-json-patch";
 import JSZip from "jszip";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { loadFont as loadInter } from "@remotion/google-fonts/Inter";
 import { loadFont as loadPlayfairDisplay } from "@remotion/google-fonts/PlayfairDisplay";
 import { loadFont as loadPatrickHand } from "@remotion/google-fonts/PatrickHand";
@@ -70,6 +70,7 @@ import {
 } from "@/lib/api-client";
 import type { ClientCarouselTemplate } from "@/lib/api";
 import { DEFAULT_COVER_EDIT, coverPayload, type CoverEditState } from "@/lib/cover-edit";
+import { computeCoverTextBlockPreview } from "@/lib/cover-text-layout";
 import {
   buildPreviewSpecFromSession,
   DEFAULT_APPEARANCE,
@@ -154,6 +155,60 @@ const CAROUSEL_EXPORT_H = 1350;
 const CAROUSEL_EDIT_W = 360;
 const CAROUSEL_EDIT_H = Math.round((CAROUSEL_EDIT_W * CAROUSEL_EXPORT_H) / CAROUSEL_EXPORT_W);
 const CAROUSEL_FONT_RATIO = 0.061;
+
+/** Stable Supabase paths are reused per slide — bust cache so previews refresh after regenerate. */
+function carouselDisplayImageUrl(url: string, cacheRev?: number): string {
+  const u = (url || "").trim();
+  if (!u || cacheRev == null || cacheRev <= 0) return u;
+  const sep = u.includes("?") ? "&" : "?";
+  return `${u}${sep}v=${cacheRev}`;
+}
+
+const CAROUSEL_MIN_SLIDES = 3;
+
+function reindexCarouselSlides(slides: CarouselSlide[]): CarouselSlide[] {
+  const sorted = [...slides].sort((a, b) => a.idx - b.idx);
+  const n = sorted.length;
+  return sorted.map((s, i) => ({
+    ...s,
+    idx: i,
+    text_box: { ...mergeCarouselTextBox({ ...s, idx: i }, n), ...(s.text_box ?? {}) },
+  }));
+}
+
+function clientImageIdForSlide(slide: CarouselSlide, images: ClientImageRow[]): string {
+  const u = (slide.base_image_url || slide.image_url || "").trim().split("?")[0] ?? "";
+  if (!u) return "";
+  const match = images.find((img) => {
+    const file = (img.file_url || "").trim().split("?")[0] ?? "";
+    return file && (u === file || u.endsWith(file) || file.endsWith(u));
+  });
+  return match?.id ?? "";
+}
+
+function mergeCarouselSlidesFromServer(
+  serverSlides: CarouselSlide[],
+  localDraft: CarouselSlide[],
+  preserveLocalEdits: boolean,
+): CarouselSlide[] {
+  const sorted = [...serverSlides].sort((a, b) => a.idx - b.idx);
+  const withDefaults = sorted.map((row) => ({
+    ...row,
+    text_box: row.text_box ?? mergeCarouselTextBox(row, sorted.length),
+  }));
+  if (!preserveLocalEdits) return withDefaults;
+  return localDraft.map((local) => {
+    const server = withDefaults.find((s) => s.idx === local.idx);
+    if (!server) return local;
+    return {
+      ...local,
+      base_image_url: server.base_image_url ?? local.base_image_url,
+      image_url: server.image_url ?? local.image_url,
+      prompt: server.prompt ?? local.prompt,
+      background_style: server.background_style ?? local.background_style,
+    };
+  });
+}
 
 /** Duration slider: hook length or block end only — other layers keep their timeline positions. */
 function beatDurationToLayerTiming(
@@ -599,7 +654,7 @@ function ClientImagesPicker({
           </Link>
         </div>
       ) : compact ? (
-        <div className="-mx-0.5 flex gap-1.5 overflow-x-auto pb-1 pt-0.5 [scrollbar-width:thin]">
+        <div className="-mx-0.5 flex max-h-[11rem] flex-wrap gap-2 overflow-y-auto overflow-x-hidden pb-1 pt-0.5 [scrollbar-width:thin] sm:max-h-none sm:flex-nowrap sm:overflow-x-auto sm:overflow-y-hidden">
           {images.map((img) => {
             const isActive = selectedImageId === img.id;
             return (
@@ -608,17 +663,19 @@ function ClientImagesPicker({
                 type="button"
                 disabled={busy}
                 onClick={() => onPick(img.id)}
-                className={`w-14 shrink-0 overflow-hidden rounded-lg border p-0.5 text-left transition-colors ${
+                className={`w-[4.5rem] shrink-0 overflow-hidden rounded-lg border-2 p-0.5 text-left transition-colors sm:w-16 ${
                   isActive
-                    ? "border-amber-500/45 bg-amber-500/10 ring-1 ring-amber-500/30"
-                    : "border-app-divider hover:border-white/20"
+                    ? "border-amber-500 bg-amber-500/12 ring-1 ring-amber-500/35"
+                    : "border-app-divider hover:border-amber-500/40"
                 } disabled:opacity-50`}
-                title={img.label || "Use this image"}
               >
                 <div className="overflow-hidden rounded-md bg-black/10" style={{ aspectRatio: "9/16" }}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={img.file_url} alt="" className="h-full w-full object-cover" />
                 </div>
+                {img.label ? (
+                  <p className="mt-0.5 truncate px-0.5 text-[9px] text-app-fg-subtle">{img.label}</p>
+                ) : null}
               </button>
             );
           })}
@@ -788,16 +845,20 @@ function CarouselTextLayerEditor({
   slide,
   totalSlides,
   busy,
+  bgCacheRev,
   onTextBoxAdjust,
   onCommit,
 }: {
   slide: CarouselSlide;
   totalSlides: number;
   busy: boolean;
+  /** Bumps when this slide's background URL is reused (Supabase overwrite) or replaced. */
+  bgCacheRev?: number;
   onTextBoxAdjust?: (textBox: CarouselTextBox) => void;
   onCommit?: () => void | Promise<void>;
 }) {
-  const bgUrl = (slide.base_image_url || "").trim() || (slide.image_url || "").trim();
+  const rawBgUrl = (slide.base_image_url || "").trim() || (slide.image_url || "").trim();
+  const bgUrl = carouselDisplayImageUrl(rawBgUrl, bgCacheRev);
   const tb = mergeCarouselTextBox(slide, totalSlides);
   const bgStyle = mergeCarouselBackgroundStyle(slide);
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -888,9 +949,20 @@ function CarouselTextLayerEditor({
       className="relative overflow-hidden rounded-2xl bg-white shadow-[0_18px_60px_rgba(0,0,0,0.35)] outline-none focus:ring-2 focus:ring-amber-500/45"
       style={{ width: CAROUSEL_EDIT_W, height: CAROUSEL_EDIT_H }}
     >
+      {busy ? (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-black/40">
+          <Loader2 className="h-6 w-6 animate-spin text-white/90" aria-hidden />
+          <p className="text-[10px] font-medium text-white/80">Updating background…</p>
+        </div>
+      ) : null}
       {bgUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={bgUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
+        <img
+          key={`${slide.idx}-${bgUrl}`}
+          src={bgUrl}
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover"
+        />
       ) : (
         <div className="absolute inset-0 bg-app-soft" />
       )}
@@ -949,7 +1021,7 @@ const REEL_COVER_STAGE_H = Math.round((REEL_COVER_STAGE_W * 16) / 9);
 
 function CoverTextLayerEditor({
   layout,
-  coverFormat,
+  templateId,
   coverPin,
   previewText,
   coverTextColor,
@@ -969,7 +1041,7 @@ function CoverTextLayerEditor({
   onLayoutPatch,
 }: {
   layout: VideoSpecLayout;
-  coverFormat: UiFormat;
+  templateId: VideoSpec["templateId"];
   coverPin: "top" | "center" | "bottom";
   previewText: string;
   coverTextColor: string;
@@ -997,6 +1069,20 @@ function CoverTextLayerEditor({
   } | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [stageW, setStageW] = useState(REEL_COVER_STAGE_W);
+  const [block, setBlock] = useState<ReturnType<typeof computeCoverTextBlockPreview> | null>(null);
+  const thumbUrlRef = useRef(thumbnailUrl);
+  const [coverLivePreview, setCoverLivePreview] = useState(true);
+
+  useEffect(() => {
+    if (thumbnailUrl !== thumbUrlRef.current) {
+      thumbUrlRef.current = thumbnailUrl;
+      if (thumbnailUrl) setCoverLivePreview(false);
+    }
+  }, [thumbnailUrl]);
+
+  useEffect(() => {
+    setCoverLivePreview(true);
+  }, [previewText, layout, templateId, wash, cropY, zoom, textTreatment]);
 
   useEffect(() => {
     const el = stageRef.current;
@@ -1071,19 +1157,26 @@ function CoverTextLayerEditor({
     });
   };
 
-  const coverTextTop =
-    coverPin === "top"
-      ? `${16 + layout.verticalOffset * 100}%`
-      : coverPin === "bottom"
-        ? undefined
-        : `${50 + layout.verticalOffset * 100}%`;
-  const coverTextBottom = coverPin === "bottom" ? `${16 - layout.verticalOffset * 100}%` : undefined;
-
   const sw = stageW > 0 ? stageW : REEL_COVER_STAGE_W;
-  const txPx = (layout.textPanX ?? 0) * sw;
-  const textTransformCenter = `translate(${txPx}px, -50%)`;
+  const sh = REEL_COVER_STAGE_H;
 
-  const showText = previewText.length > 80 ? `${previewText.slice(0, 80)}…` : previewText;
+  useLayoutEffect(() => {
+    setBlock(
+      computeCoverTextBlockPreview(previewText, sw, sh, {
+        templateId,
+        layout,
+        textPosition: coverPin,
+        fontFamily: coverFontFamily,
+      }),
+    );
+  }, [previewText, sw, sh, templateId, layout, coverPin, coverFontFamily]);
+
+  /** Image mode: live overlay on client photo. AI: show baked PNG until headline/layout changes. */
+  const showLiveOverlay = mode === "image" || coverLivePreview || !thumbnailUrl;
+  const strokePx =
+    block && textTreatment === "bold-outline" ? Math.max(2, Math.round(block.fontSizePx / 18)) : 0;
+  const dragChrome =
+    dragActive ? "outline outline-2 outline-amber-400/80 outline-offset-1" : "outline-none";
 
   return (
     <div
@@ -1111,35 +1204,62 @@ function CoverTextLayerEditor({
             transform: `scale(${zoom})`,
           }}
         />
-      ) : thumbnailUrl ? (
+      ) : thumbnailUrl && !showLiveOverlay ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={thumbnailUrl} alt="Reel cover" className="absolute inset-0 block h-full w-full object-cover" />
       ) : (
         <div className="absolute inset-0 h-full w-full bg-[radial-gradient(circle_at_50%_35%,rgba(255,255,255,0.9),rgba(245,210,160,0.45),rgba(20,20,20,0.2))]" />
       )}
-      <div
-        className={`absolute font-bold leading-tight ${disabled || thumbnailBusy ? "cursor-default" : "cursor-grab active:cursor-grabbing"} outline outline-2 outline-amber-400/90 outline-offset-2`}
-        style={{
-          left: `${Math.round(layout.sidePadding * 100)}%`,
-          right: `${Math.round(layout.sidePadding * 100)}%`,
-          top: coverTextTop,
-          bottom: coverTextBottom,
-          transform: coverPin === "center" ? textTransformCenter : `translateX(${txPx}px)`,
-          textAlign: layout.textAlign,
-          fontSize: `${Math.round(38 * layout.scale * (sw / REEL_COVER_STAGE_W))}px`,
-          fontFamily: coverFontFamily,
-          color: coverTextColor,
-          background: coverFormat === "center" ? "transparent" : coverCardBg,
-          borderRadius: coverFormat === "center" ? undefined : "14px",
-          padding: coverFormat === "center" ? undefined : "16px",
-          WebkitTextStroke: textTreatment === "bold-outline" ? `1.8px ${coverStroke}` : undefined,
-          textShadow: coverContrast === "light" ? "0 2px 8px rgba(0,0,0,0.9)" : undefined,
-        }}
-        onPointerDown={startDrag}
-        title="Drag to move. Arrow keys to nudge; Shift+Arrow for bigger nudges."
-      >
-        {showText}
-      </div>
+      {block && showLiveOverlay ? (
+        <>
+          {block.cardLike ? (
+            <div
+              aria-hidden
+              className="pointer-events-none absolute"
+              style={{
+                left: block.cardLeftPx + block.textPanXPx,
+                top: block.cardTopPx,
+                width: block.cardWidthPx,
+                height: block.cardHeightPx,
+                background: coverCardBg,
+                borderRadius: block.borderRadiusPx,
+              }}
+            />
+          ) : null}
+          <div
+            className={`absolute font-bold ${disabled || thumbnailBusy ? "cursor-default" : "cursor-grab active:cursor-grabbing"} ${dragChrome}`}
+            style={{
+              left: block.leftPx,
+              top: block.topPx,
+              width: block.widthPx,
+              transform: `translateX(${block.textPanXPx}px)`,
+              textAlign: layout.textAlign,
+              fontSize: block.fontSizePx,
+              fontFamily: coverFontFamily,
+              color: coverTextColor,
+            }}
+            onPointerDown={startDrag}
+            title="Drag to move. Arrow keys to nudge; Shift+Arrow for bigger nudges."
+          >
+            {block.lines.map((line, i) => (
+              <div
+                key={`${i}-${line}`}
+                style={{
+                  marginBottom: i < block.lines.length - 1 ? block.lineGapPx : 0,
+                  lineHeight: `${Math.max(block.lineHeightsPx[i] ?? 0, Math.ceil(block.fontSizePx * 1.08))}px`,
+                  WebkitTextStroke: strokePx > 0 ? `${strokePx}px ${coverStroke}` : undefined,
+                  textShadow:
+                    textTreatment !== "bold-outline" && coverContrast === "light"
+                      ? "0 2px 8px rgba(0,0,0,0.9)"
+                      : undefined,
+                }}
+              >
+                {line}
+              </div>
+            ))}
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -1149,6 +1269,8 @@ function CarouselSection({
   slides,
   images,
   busy,
+  bgCacheRevByIdx,
+  regeneratingIdx,
   generating,
   convertingEditable,
   count,
@@ -1164,12 +1286,15 @@ function CarouselSection({
   onBackgroundStyleAdjust,
   onApplyTextStyleToAll,
   onApplyBackgroundToAll,
+  onRemoveSlide,
   onError,
 }: {
   sessionId: string;
   slides: CarouselSlide[];
   images: ClientImageRow[];
   busy: boolean;
+  bgCacheRevByIdx: Record<number, number>;
+  regeneratingIdx: number | null;
   generating: boolean;
   convertingEditable: boolean;
   count: number;
@@ -1191,9 +1316,9 @@ function CarouselSection({
   onBackgroundStyleAdjust: (idx: number, background_style: CarouselBackgroundStyle) => void;
   onApplyTextStyleToAll: (sourceIdx: number) => void | Promise<void>;
   onApplyBackgroundToAll: (sourceIdx: number) => void | Promise<void>;
+  onRemoveSlide: (idx: number) => void | Promise<void>;
   onError: (message: string) => void;
 }) {
-  const [pickerOpenForIdx, setPickerOpenForIdx] = useState<number | null>(null);
   const [exportBusy, setExportBusy] = useState(false);
   const [selectedIdx, setSelectedIdx] = useState(0);
   const slideCountLabel = `${slides.length} slide${slides.length === 1 ? "" : "s"}`;
@@ -1202,12 +1327,17 @@ function CarouselSection({
   const selectedTextBox = selectedSlide ? mergeCarouselTextBox(selectedSlide, slides.length) : null;
   const selectedBackgroundStyle = selectedSlide ? mergeCarouselBackgroundStyle(selectedSlide) : null;
   const selectedHasCleanBase = Boolean((selectedSlide?.base_image_url || "").trim());
-  const selectedPickerOpen = selectedSlide != null && pickerOpenForIdx === selectedSlide.idx;
+  const selectedBgRev = selectedSlide ? (bgCacheRevByIdx[selectedSlide.idx] ?? 0) : 0;
+  const slideBusy = busy && regeneratingIdx === selectedSlide?.idx;
+  const selectedClientImageId = selectedSlide ? clientImageIdForSlide(selectedSlide, images) : "";
+  const canRemoveSlide = slides.length > CAROUSEL_MIN_SLIDES;
 
   useEffect(() => {
     if (slides.length === 0) return;
     if (!slides.some((s) => s.idx === selectedIdx)) {
-      setSelectedIdx(slides[0]?.idx ?? 0);
+      const sorted = [...slides].sort((a, b) => a.idx - b.idx);
+      const pos = Math.min(Math.max(0, selectedIdx), sorted.length - 1);
+      setSelectedIdx(sorted[pos]?.idx ?? 0);
     }
   }, [selectedIdx, slides]);
 
@@ -1320,41 +1450,85 @@ function CarouselSection({
                 {slideCountLabel} · Select a slide, drag the text on the big canvas, then download exactly that render.
               </p>
             )}
-            <div className="grid gap-5 lg:grid-cols-[132px_minmax(0,420px)_minmax(260px,1fr)]">
-              <div className="flex gap-2 overflow-x-auto pb-2 lg:flex-col lg:overflow-visible lg:pb-0">
-                {slides.map((slide) => {
-                  const active = slide.idx === selectedSlide.idx;
-                  const thumbUrl = (slide.base_image_url || "").trim() || (slide.image_url || "").trim();
-                  return (
+            <nav
+              aria-label="Carousel slides"
+              className="mb-1 flex items-end gap-2.5 overflow-x-auto pb-2 [scrollbar-width:thin]"
+            >
+              {slides.map((slide) => {
+                const active = slide.idx === selectedSlide.idx;
+                const thumbRaw =
+                  (slide.base_image_url || "").trim() || (slide.image_url || "").trim();
+                const thumbUrl = carouselDisplayImageUrl(thumbRaw, bgCacheRevByIdx[slide.idx] ?? 0);
+                const isRegenerating = busy && regeneratingIdx === slide.idx;
+                return (
+                  <div key={slide.idx} className="relative shrink-0">
                     <button
-                      key={slide.idx}
                       type="button"
                       onClick={() => setSelectedIdx(slide.idx)}
-                      className={`w-24 shrink-0 rounded-xl border p-1 text-left transition lg:w-full ${
+                      className={`block w-[3.75rem] rounded-xl border-2 p-1 text-left transition sm:w-[4.25rem] ${
                         active
-                          ? "border-amber-500 bg-amber-500/10 shadow-[0_0_0_1px_rgba(245,158,11,0.4)]"
-                          : "border-app-divider bg-app-chip-bg/30 hover:border-amber-500/40"
+                          ? "border-amber-500 bg-amber-500/12"
+                          : "border-app-divider/80 bg-app-chip-bg/40 hover:border-amber-500/45"
                       }`}
                     >
-                      <div className="overflow-hidden rounded-lg bg-black/10" style={{ aspectRatio: "9/16" }}>
+                      <div
+                        className="relative overflow-hidden rounded-lg bg-black/15"
+                        style={{ aspectRatio: "9/16" }}
+                      >
                         {thumbUrl ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={thumbUrl} alt="" className="h-full w-full object-cover" />
+                          <img
+                            key={`thumb-${slide.idx}-${thumbUrl}`}
+                            src={thumbUrl}
+                            alt=""
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <div className="flex aspect-[9/16] min-h-[52px] items-center justify-center text-[9px] text-app-fg-subtle">
+                            —
+                          </div>
+                        )}
+                        {isRegenerating ? (
+                          <div className="absolute inset-0 flex items-center justify-center bg-black/45">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin text-white/90" aria-hidden />
+                          </div>
                         ) : null}
+                        <span
+                          className={`absolute bottom-0.5 left-0.5 rounded px-1 py-px text-[8px] font-bold leading-none ${
+                            active ? "bg-amber-500 text-zinc-950" : "bg-black/55 text-white"
+                          }`}
+                        >
+                          {slide.idx + 1}
+                        </span>
                       </div>
-                      <p className="mt-1 truncate text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">
-                        Slide {slide.idx + 1}
-                      </p>
                     </button>
-                  );
-                })}
-              </div>
+                    {canRemoveSlide ? (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        aria-label={`Remove slide ${slide.idx + 1}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void onRemoveSlide(slide.idx);
+                        }}
+                        className="absolute right-2 top-2 z-10 flex h-4 w-4 items-center justify-center rounded-full bg-black/65 text-white/90 shadow-sm hover:bg-red-600 disabled:opacity-40"
+                      >
+                        <Trash2 className="h-2.5 w-2.5" strokeWidth={2.5} aria-hidden />
+                      </button>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </nav>
 
-              <div className="flex flex-col items-center gap-3">
+            <div className="grid gap-6 lg:grid-cols-[minmax(0,400px)_minmax(280px,1fr)] lg:items-start">
+              <div className="flex flex-col items-center gap-3 lg:items-start">
                 <CarouselTextLayerEditor
+                  key={`editor-${selectedSlide.idx}-${selectedBgRev}`}
                   slide={selectedSlide}
                   totalSlides={slides.length}
-                  busy={busy}
+                  busy={slideBusy}
+                  bgCacheRev={selectedBgRev}
                   onTextBoxAdjust={(next) => onTextBoxAdjust(selectedSlide.idx, next)}
                   onCommit={() => void onLayoutCommit(selectedSlide.idx)}
                 />
@@ -1366,36 +1540,41 @@ function CarouselSection({
                 ) : null}
               </div>
 
-              <div className="space-y-4 rounded-2xl border border-app-divider bg-app-chip-bg/20 p-4">
-                <div>
+              <div className="flex min-h-0 flex-col gap-5 rounded-2xl border border-app-divider/90 bg-app-chip-bg/25 p-5 shadow-sm">
+                <div className="space-y-1 border-b border-app-divider/60 pb-4">
                   <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">
                     Slide {selectedSlide.idx + 1}
                     {selectedSlide.idx === 0 ? (
-                      <span className="ml-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-amber-700 dark:text-amber-300">
+                      <span className="ml-2 rounded-md bg-amber-500/20 px-1.5 py-0.5 text-amber-700 dark:text-amber-300">
                         Cover
                       </span>
                     ) : null}
                   </p>
-                  <p className="mt-1 text-xs text-app-fg-muted">
+                  <p className="text-xs leading-relaxed text-app-fg-muted">
                     {selectedHasCleanBase
                       ? "Drag the text on the canvas. These controls fine-tune the same layer."
                       : "Make the slide editable before moving or styling text."}
                   </p>
                 </div>
 
-                <label className="block space-y-1.5">
-                  <span className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Text</span>
-                  <textarea
-                    value={selectedSlide.text}
-                    onChange={(e) => onTextEdit(selectedSlide.idx, e.target.value)}
-                    rows={5}
-                    className="glass-inset w-full resize-y rounded-xl px-3 py-2 text-sm leading-snug text-app-fg placeholder:text-app-fg-subtle focus:outline-none focus:ring-2 focus:ring-amber-500/35"
-                  />
+                <label className="block space-y-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Slide text</span>
+                  <div className="overflow-hidden rounded-xl border border-app-divider bg-app-bg/40 ring-1 ring-black/5 focus-within:ring-2 focus-within:ring-amber-500/40">
+                    <textarea
+                      key={`carousel-text-${selectedSlide.idx}`}
+                      value={selectedSlide.text}
+                      onChange={(e) => onTextEdit(selectedSlide.idx, e.target.value)}
+                      rows={6}
+                      disabled={slideBusy}
+                      placeholder="Write the headline for this slide…"
+                      className="block min-h-[7.5rem] w-full resize-y border-0 bg-transparent px-3.5 py-3 text-sm leading-relaxed text-app-fg placeholder:text-app-fg-subtle focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                    />
+                  </div>
                 </label>
 
                 {selectedHasCleanBase ? (
-                  <>
-                    <div className="space-y-1.5">
+                  <div className="space-y-5 border-t border-app-divider/60 pt-1">
+                    <div className="space-y-2">
                       <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Position</p>
                       <div className="flex flex-wrap gap-1.5">
                         {(
@@ -1529,12 +1708,53 @@ function CarouselSection({
                       onChange={(v) => onTextBoxAdjust(selectedSlide.idx, { ...selectedTextBox, scale: v })}
                       onCommit={() => void onLayoutCommit(selectedSlide.idx)}
                     />
-                  </>
+                  </div>
                 ) : null}
 
-                <div className="flex flex-wrap gap-2 border-t border-app-divider/50 pt-4">
+                <div className="space-y-4 border-t border-app-divider/60 pt-5">
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">
+                      Background image
+                    </p>
+                    <p className="text-[10px] leading-relaxed text-app-fg-subtle">
+                      Pick any image from your Media library for this slide.
+                    </p>
+                    <ClientImagesPicker
+                      images={images}
+                      selectedImageId={selectedClientImageId}
+                      busy={busy}
+                      compact
+                      onPick={(id) => {
+                        void onRegenerateOne(selectedSlide.idx, selectedSlide.text || "", "client_image", id);
+                      }}
+                      emptyHint="Upload images in Media → Images, then pick one here."
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void onRegenerateOne(selectedSlide.idx, selectedSlide.text || "", "ai")}
+                      className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-app-divider px-3 py-2 text-xs font-bold text-app-fg-muted hover:text-app-fg disabled:opacity-40"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      {selectedHasCleanBase ? "Regenerate with AI" : "Make editable (AI)"}
+                    </button>
+                    {canRemoveSlide ? (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void onRemoveSlide(selectedSlide.idx)}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-red-500/30 px-3 py-2 text-xs font-bold text-red-600 hover:bg-red-500/10 disabled:opacity-40 dark:text-red-400"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Remove slide
+                      </button>
+                    ) : null}
+                  </div>
+
                   <div className="w-full space-y-3">
-                    <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Background</p>
                     <LayoutSlider
                       label="Background wash"
                       leftHint="Original"
@@ -1572,41 +1792,7 @@ function CarouselSection({
                       </button>
                     </div>
                   </div>
-
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void onRegenerateOne(selectedSlide.idx, selectedSlide.text || "", "ai")}
-                    className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-app-divider px-3 py-2 text-xs font-bold text-app-fg-muted hover:text-app-fg disabled:opacity-40"
-                  >
-                    <RefreshCw className="h-3.5 w-3.5" />
-                    {selectedHasCleanBase ? "Regenerate background" : "Make editable"}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={busy || images.length === 0}
-                    onClick={() => setPickerOpenForIdx(selectedPickerOpen ? null : selectedSlide.idx)}
-                    className="inline-flex items-center justify-center gap-1 rounded-xl border border-app-divider px-3 py-2 text-xs font-bold text-app-fg-muted hover:text-app-fg disabled:opacity-40"
-                    title={images.length === 0 ? "No client images uploaded" : "Use a client image"}
-                  >
-                    <ImageIcon className="h-3.5 w-3.5" />
-                  </button>
                 </div>
-
-                {selectedPickerOpen ? (
-                  <div className="rounded-xl border border-app-divider/60 bg-app-chip-bg/40 p-2">
-                    <ClientImagesPicker
-                      images={images}
-                      selectedImageId=""
-                      busy={busy}
-                      onPick={(id) => {
-                        setPickerOpenForIdx(null);
-                        void onRegenerateOne(selectedSlide.idx, selectedSlide.text || "", "client_image", id);
-                      }}
-                      emptyHint="No client images yet."
-                    />
-                  </div>
-                ) : null}
               </div>
             </div>
 
@@ -1737,7 +1923,7 @@ function ReelCoverSection({
         <div className="mx-auto flex w-full max-w-[360px] shrink-0 flex-col items-center md:sticky md:top-4 md:mx-0 md:w-[min(360px,40vw)] md:self-start">
           <CoverTextLayerEditor
             layout={coverEdit.layout}
-            coverFormat={coverFormat}
+            templateId={coverEdit.templateId}
             coverPin={coverPin}
             previewText={previewText}
             coverTextColor={coverTextColor}
@@ -2434,6 +2620,12 @@ export function VideoCreateWorkspace({
   const carouselDraftDirty = useRef(false);
   const carouselDraftRef = useRef<CarouselSlide[]>([]);
   const carouselSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Bust browser cache when Supabase overwrites the same carousel_base_* path. */
+  const [carouselBgCacheRev, setCarouselBgCacheRev] = useState<Record<number, number>>({});
+  const [carouselRegeneratingIdx, setCarouselRegeneratingIdx] = useState<number | null>(null);
+  const bumpCarouselBgCacheRev = useCallback((idx: number) => {
+    setCarouselBgCacheRev((prev) => ({ ...prev, [idx]: (prev[idx] ?? 0) + 1 }));
+  }, []);
   /** Generation carousel templates — same library GET as Generate; used to swap snapshots before slides exist. */
   const [carouselTemplateLibrary, setCarouselTemplateLibrary] = useState<ClientCarouselTemplate[]>([]);
   const [carouselTemplateBusy, setCarouselTemplateBusy] = useState(false);
@@ -2465,19 +2657,28 @@ export function VideoCreateWorkspace({
     if (s.thumbnail_url) setThumbnailUrl(s.thumbnail_url);
     if (Array.isArray(s.carousel_slides)) {
       const sorted = [...s.carousel_slides].sort((a, b) => a.idx - b.idx);
-      // Server is source of truth unless the user is mid-edit on the same slide set.
-      if (!carouselDraftDirty.current) {
-        const next = sorted.map((sl) => {
+      const prevDraft = carouselDraftRef.current;
+      const next = mergeCarouselSlidesFromServer(
+        sorted as CarouselSlide[],
+        prevDraft,
+        carouselDraftDirty.current,
+      );
+      carouselDraftRef.current = next;
+      setCarouselDraft(next);
+      if (sorted.length > 0) setCarouselCount(sorted.length);
+      setCarouselBgCacheRev((prev) => {
+        const out = { ...prev };
+        for (const sl of sorted) {
           const row = sl as CarouselSlide;
-          return {
-            ...row,
-            text_box: row.text_box ?? mergeCarouselTextBox(row, sorted.length),
-          };
-        });
-        carouselDraftRef.current = next;
-        setCarouselDraft(next);
-        if (sorted.length > 0) setCarouselCount(sorted.length);
-      }
+          const local = prevDraft.find((l) => l.idx === row.idx);
+          const serverBg = (row.base_image_url || "").trim();
+          const localBg = (local?.base_image_url || "").trim();
+          if (serverBg && serverBg !== localBg) {
+            out[row.idx] = (out[row.idx] ?? 0) + 1;
+          }
+        }
+        return out;
+      });
     } else if (!carouselDraftDirty.current) {
       carouselDraftRef.current = [];
       setCarouselDraft([]);
@@ -3711,12 +3912,14 @@ export function VideoCreateWorkspace({
         return;
       }
       carouselDraftDirty.current = false;
+      const generated = res.data.carousel_slides ?? [];
+      for (const sl of generated) bumpCarouselBgCacheRev(sl.idx);
       applySession(res.data);
       show("Slides generated.", "success");
     } finally {
       setCarouselGenBusy(false);
     }
-  }, [applySession, carouselCount, clientSlug, orgSlug, session, show]);
+  }, [applySession, bumpCarouselBgCacheRev, carouselCount, clientSlug, orgSlug, session, show]);
 
   const onPatchCarouselTemplate = useCallback(
     async (templateId: string, options?: { clearSlides?: boolean }) => {
@@ -3845,6 +4048,26 @@ export function VideoCreateWorkspace({
       const cs = clientSlug.trim();
       const os = orgSlug.trim();
       if (!session || !cs || !os) return;
+
+      if (source === "client_image" && clientImageId) {
+        const picked = images.find((img) => img.id === clientImageId);
+        if (picked?.file_url) {
+          const optimistic = carouselDraftRef.current.map((s) =>
+            s.idx === idx
+              ? {
+                  ...s,
+                  base_image_url: picked.file_url,
+                  image_url: picked.file_url,
+                }
+              : s,
+          );
+          carouselDraftRef.current = optimistic;
+          setCarouselDraft(optimistic);
+          bumpCarouselBgCacheRev(idx);
+        }
+      }
+
+      setCarouselRegeneratingIdx(idx);
       setCarouselSlideBusy(true);
       try {
         const slideRow = carouselDraftRef.current.find((s) => s.idx === idx);
@@ -3862,13 +4085,43 @@ export function VideoCreateWorkspace({
           return;
         }
         carouselDraftDirty.current = false;
+        bumpCarouselBgCacheRev(idx);
         applySession(res.data);
         show(`Slide ${idx + 1} updated.`, "success");
       } finally {
         setCarouselSlideBusy(false);
+        setCarouselRegeneratingIdx(null);
       }
     },
-    [applySession, clientSlug, orgSlug, session, show],
+    [applySession, bumpCarouselBgCacheRev, clientSlug, images, orgSlug, session, show],
+  );
+
+  const onRemoveCarouselSlide = useCallback(
+    async (idx: number) => {
+      const current = carouselDraftRef.current;
+      if (current.length <= CAROUSEL_MIN_SLIDES) {
+        show(`Carousel needs at least ${CAROUSEL_MIN_SLIDES} slides.`, "error");
+        return;
+      }
+      const filtered = current.filter((s) => s.idx !== idx);
+      const sortedBefore = [...filtered].sort((a, b) => a.idx - b.idx);
+      const next = reindexCarouselSlides(filtered);
+      carouselDraftRef.current = next;
+      setCarouselDraft(next);
+      setCarouselCount(next.length);
+      carouselDraftDirty.current = true;
+      setCarouselBgCacheRev((prev) => {
+        const out: Record<number, number> = {};
+        sortedBefore.forEach((s, newIdx) => {
+          out[newIdx] = prev[s.idx] ?? 0;
+        });
+        return out;
+      });
+      if (await commitCarouselDraft()) {
+        show(`Slide removed — ${next.length} slides left.`, "success");
+      }
+    },
+    [commitCarouselDraft, show],
   );
 
   const onConvertCarouselToEditable = useCallback(async () => {
@@ -3900,6 +4153,7 @@ export function VideoCreateWorkspace({
       }
       if (latestSession) {
         carouselDraftDirty.current = false;
+        for (const slide of flatSlides) bumpCarouselBgCacheRev(slide.idx);
         applySession(latestSession);
         show("Carousel is editable now.", "success");
       }
@@ -3907,7 +4161,7 @@ export function VideoCreateWorkspace({
       setCarouselSlideBusy(false);
       setCarouselConvertBusy(false);
     }
-  }, [applySession, clientSlug, orgSlug, session, show]);
+  }, [applySession, bumpCarouselBgCacheRev, clientSlug, orgSlug, session, show]);
 
   const onCarouselLayoutCommit = useCallback(async () => {
     await commitCarouselDraft();
@@ -4299,6 +4553,8 @@ export function VideoCreateWorkspace({
           slides={carouselDraft}
           images={images}
           busy={carouselSlideBusy || loading}
+          bgCacheRevByIdx={carouselBgCacheRev}
+          regeneratingIdx={carouselRegeneratingIdx}
           generating={carouselGenBusy}
           convertingEditable={carouselConvertBusy}
           count={carouselCount}
@@ -4320,6 +4576,7 @@ export function VideoCreateWorkspace({
           onBackgroundStyleAdjust={onCarouselBackgroundStyleAdjust}
           onApplyTextStyleToAll={onApplyCarouselTextStyleToAll}
           onApplyBackgroundToAll={onApplyCarouselBackgroundToAll}
+          onRemoveSlide={onRemoveCarouselSlide}
           onError={(message) => show(message, "error")}
         />
 
