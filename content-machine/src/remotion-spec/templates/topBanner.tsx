@@ -5,7 +5,7 @@ import { blockEntranceStyle } from '../animations';
 import { flexAlignForTextAlign } from '../alignLayout';
 import { resolveLayoutPx } from '../layout';
 import { cardBoldOutlineCaptionStyle, isBoldOutlineTreatment } from '../textTreatment';
-import { activeCaptionLayers } from '../activeLayers';
+import { activeCaptionLayers, beatFontScaleMult } from '../activeLayers';
 
 export default function TopBannerTemplate({ spec, frame, fps }: VideoSpecWithTimeline) {
   const sec = frame / fps;
@@ -43,7 +43,7 @@ export default function TopBannerTemplate({ spec, frame, fps }: VideoSpecWithTim
           const animStyle = blockEntranceStyle(frame, fps, startFrame, layer.animation);
           const baseSize = layer.kind === 'hook' ? 56 : 50;
           const ctaScaled = layer.isCTA ? Math.round(baseSize * theme.ctaScale) : baseSize;
-          const fontSize = Math.round(ctaScaled * layout.scale);
+          const fontSize = Math.round(ctaScaled * beatFontScaleMult(layer) * layout.scale);
           return (
             <div
               key={layer.key}

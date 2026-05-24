@@ -20,6 +20,34 @@ TextAlign = Literal["left", "center", "right"]
 # ``down`` = first line stays near the top band; new beats append below (no upward jump).
 StackGrowth = Literal["up", "down"]
 
+FONT_SCALE_MIN = 0.5
+FONT_SCALE_MAX = 2.0
+
+
+def _coerce_font_scale(v: Any) -> Optional[float]:
+    if v is None or v == "":
+        return None
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return None
+    return max(FONT_SCALE_MIN, min(FONT_SCALE_MAX, x))
+
+
+def effective_background_duration(bg: "VideoSpecBackground") -> Optional[float]:
+    """Playable B-roll window for timeline caps — not the raw asset length."""
+    if bg.kind != "video" or bg.durationSec is None:
+        return None
+    source = float(bg.durationSec)
+    if source <= 0:
+        return None
+    start = max(0.0, float(bg.trimStartSec or 0))
+    end = float(bg.trimEndSec) if bg.trimEndSec is not None else source
+    end = min(max(start + 0.05, end), source)
+    start = min(start, end - 0.05)
+    eff = end - start
+    return eff if eff > 0 else None
+
 
 class VideoSpecBrand(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -37,6 +65,9 @@ class VideoSpecBackground(BaseModel):
     """When ``kind`` is ``video`` (B-roll), set from ``broll_clips.duration_s`` so
     ``totalSec`` matches the clip and the timeline is fitted to that cap."""
     durationSec: Optional[float] = None
+    """In-point on the source file (seconds). Out-point is ``trimEndSec`` or full ``durationSec``."""
+    trimStartSec: float = Field(default=0.0, ge=0.0, le=600.0)
+    trimEndSec: Optional[float] = Field(default=None)
 
     @field_validator("durationSec", mode="before")
     @classmethod
@@ -51,12 +82,44 @@ class VideoSpecBackground(BaseModel):
             raise ValueError("background.durationSec must be between 0 and 600")
         return x
 
+    @field_validator("trimEndSec", mode="before")
+    @classmethod
+    def _trim_end_sec(cls, v: Any) -> Optional[float]:
+        if v is None or v == "":
+            return None
+        try:
+            x = float(v)
+        except (TypeError, ValueError):
+            return None
+        if x <= 0 or x > 600:
+            return None
+        return x
+
+    @model_validator(mode="after")
+    def _normalize_trim(self) -> "VideoSpecBackground":
+        start = max(0.0, float(self.trimStartSec or 0))
+        source = float(self.durationSec) if self.durationSec is not None else None
+        end = float(self.trimEndSec) if self.trimEndSec is not None else source
+        if source is not None and source > 0:
+            end = source if end is None else min(end, source)
+            if end is not None and end <= start:
+                end = min(source, start + 0.5)
+            start = min(start, max(0.0, (end or source) - 0.05))
+        return self.model_copy(update={"trimStartSec": start, "trimEndSec": end})
+
 
 class VideoSpecHook(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     text: str = Field("", max_length=500)
     durationSec: float = Field(default=3.0, ge=0.05, le=600.0)
+    """Per-hook size multiplier on top of global ``layout.scale``; ``None`` = 1.0."""
+    fontScale: Optional[float] = None
+
+    @field_validator("fontScale", mode="before")
+    @classmethod
+    def _hook_font_scale(cls, v: Any) -> Optional[float]:
+        return _coerce_font_scale(v)
 
 
 class VideoSpecBlock(BaseModel):
@@ -72,6 +135,13 @@ class VideoSpecBlock(BaseModel):
     appearance: Optional["VideoSpecAppearance"] = None
     """Optional lettering treatment for this beat (inherits from top-level ``textTreatment``)."""
     textTreatment: Optional[VideoTextTreatmentId] = None
+    """Per-beat size multiplier on top of global ``layout.scale``; ``None`` = 1.0."""
+    fontScale: Optional[float] = None
+
+    @field_validator("fontScale", mode="before")
+    @classmethod
+    def _block_font_scale(cls, v: Any) -> Optional[float]:
+        return _coerce_font_scale(v)
 
     @model_validator(mode="after")
     def _order(self) -> "VideoSpecBlock":
@@ -252,10 +322,10 @@ class VideoSpecV1(BaseModel):
     @model_validator(mode="after")
     def _sorted_and_total(self) -> "VideoSpecV1":
         cap: Optional[float] = None
-        if self.background.kind == "video" and self.background.durationSec is not None:
-            c = float(self.background.durationSec)
-            if c > 0:
-                cap = c
+        if self.background.kind == "video":
+            eff = effective_background_duration(self.background)
+            if eff is not None and eff > 0:
+                cap = eff
         hook = self.hook
         if cap is not None and hook.durationSec > cap:
             hook = hook.model_copy(update={"durationSec": max(0.05, cap)})

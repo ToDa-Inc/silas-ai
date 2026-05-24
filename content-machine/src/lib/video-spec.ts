@@ -57,6 +57,13 @@ export type VideoSpecAppearance = z.infer<typeof videoSpecAppearanceFields>;
 
 export const videoSpecAppearanceZ = videoSpecAppearanceFields.default({});
 
+const fontScaleZ = z
+  .number()
+  .min(0.5)
+  .max(2)
+  .nullish()
+  .transform((v) => (v == null || Math.abs(v - 1) < 1e-6 ? undefined : v));
+
 export const videoSpecBlockZ = z.object({
   id: z.string(),
   text: z.string(),
@@ -65,6 +72,7 @@ export const videoSpecBlockZ = z.object({
   endSec: z.number(),
   animation: animationZ,
   textTreatment: textTreatmentZ,
+  fontScale: fontScaleZ,
   /** Backend / JSON-Patch may set ``null`` (same as root ``appearance``); ``.optional()`` alone rejects null. */
   appearance: videoSpecAppearanceFields.partial().nullish(),
 });
@@ -104,10 +112,13 @@ export const videoSpecZ = z.object({
      * Backend serializes `Optional[float]` as JSON `null`; use `.nullish()` so the
      * round-trip parse succeeds (same gotcha that bit `brand.accent` above). */
     durationSec: z.number().positive().max(600).nullish(),
+    trimStartSec: z.number().min(0).max(600).optional().default(0),
+    trimEndSec: z.number().positive().max(600).nullish(),
   }),
   hook: z.object({
     text: z.string(),
     durationSec: z.number(),
+    fontScale: fontScaleZ,
   }),
   blocks: z.array(videoSpecBlockZ),
   // Older rows pre-date this field — Zod `.default()` backfills on parse so templates
@@ -122,6 +133,19 @@ export const videoSpecZ = z.object({
 
 export type VideoSpec = z.infer<typeof videoSpecZ>;
 export type VideoSpecBlock = z.infer<typeof videoSpecBlockZ>;
+
+/** Playable B-roll window for timeline caps — not the raw asset length. */
+export function effectiveBackgroundDuration(
+  bg: VideoSpec["background"] | null | undefined,
+): number | null {
+  if (!bg || bg.kind !== "video" || bg.durationSec == null) return null;
+  const source = Number(bg.durationSec);
+  if (!Number.isFinite(source) || source <= 0) return null;
+  const start = Math.max(0, Number(bg.trimStartSec ?? 0));
+  const end = bg.trimEndSec != null ? Math.min(Number(bg.trimEndSec), source) : source;
+  const eff = end - Math.min(start, end - 0.05);
+  return eff > 0 ? eff : null;
+}
 
 /** Legacy ``capcut-highlight`` was a whole template; it now maps to centered + bold-outline treatment. */
 export function normalizeVideoSpecForRender(spec: VideoSpec): VideoSpec {
@@ -240,7 +264,7 @@ export function buildPreviewSpecFromSession(s: {
     themeId: "bold-modern",
     appearance: DEFAULT_APPEARANCE,
     brand: { primary: "#ffffff" },
-    background: { url: bg, kind, focalPoint: "center" },
+    background: { url: bg, kind, focalPoint: "center", trimStartSec: 0 },
     hook: { text: hookText, durationSec: hookS },
     blocks,
     layout: DEFAULT_LAYOUT,

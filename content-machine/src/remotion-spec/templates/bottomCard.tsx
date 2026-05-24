@@ -6,7 +6,7 @@ import { blockEntranceStyle } from '../animations';
 import { flexAlignForTextAlign } from '../alignLayout';
 import { resolveLayoutPx } from '../layout';
 import { cardBoldOutlineCaptionStyle, isBoldOutlineLayer } from '../textTreatment';
-import { activeCaptionLayers, type ActiveCaptionLayer } from '../activeLayers';
+import { activeCaptionLayers, beatFontScaleMult, type ActiveCaptionLayer } from '../activeLayers';
 
 export default function BottomCardTemplate({ spec, frame, fps }: VideoSpecWithTimeline) {
   const sec = frame / fps;
@@ -24,7 +24,7 @@ export default function BottomCardTemplate({ spec, frame, fps }: VideoSpecWithTi
     const startFrame = Math.round(layer.startSec * fps);
     const animStyle = blockEntranceStyle(frame, fps, startFrame, layer.animation);
     const ctaScaled = layer.isCTA ? Math.round(baseSize * layerTheme.ctaScale) : baseSize;
-    const fontSize = Math.round(ctaScaled * layout.scale);
+    const fontSize = Math.round(ctaScaled * beatFontScaleMult(layer) * layout.scale);
     return (
     <div
       key={layer.key}

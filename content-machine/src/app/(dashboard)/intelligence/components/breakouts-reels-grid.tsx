@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
 import { Clapperboard } from "lucide-react";
 import { ReelThumbnail } from "@/components/reel-thumbnail";
@@ -8,7 +7,7 @@ import type { ScrapedReelRow } from "@/lib/api";
 import { formatTheirUsualMultiplier, getReelProvenance } from "@/lib/reel-provenance";
 import { ReelCardWithAnalysis } from "./reel-card-with-analysis";
 import { ReelEngagementInline } from "./reel-engagement-inline";
-import { RecreateReelModal } from "./recreate-reel-modal";
+import { RecreateButton } from "@/components/recreate-button";
 
 type Props = {
   reels: ScrapedReelRow[];
@@ -26,8 +25,6 @@ function breakoutTypeLabels(row: ScrapedReelRow): { key: string; label: string }
 }
 
 export function BreakoutsReelsGrid({ reels, clientSlug, orgSlug }: Props) {
-  const [recreateRow, setRecreateRow] = useState<ScrapedReelRow | null>(null);
-
   if (reels.length === 0) {
     return (
       <div className="glass rounded-xl px-6 py-10 text-center">
@@ -105,28 +102,29 @@ export function BreakoutsReelsGrid({ reels, clientSlug, orgSlug }: Props) {
                 </a>
               ) : null}
               {row.post_url ? (
-                <button
-                  type="button"
-                  onClick={() => setRecreateRow(row)}
-                  className="inline-flex items-center gap-1 font-semibold text-emerald-700 hover:underline dark:text-emerald-300/90"
-                  title="Make a version for your client — same idea, your voice"
-                >
-                  <Clapperboard className="h-3 w-3 shrink-0" aria-hidden />
-                  Recreate
-                </button>
+                <RecreateButton
+                  reel={row}
+                  clientSlug={clientSlug}
+                  orgSlug={orgSlug}
+                  renderTrigger={({ open, disabled }) => (
+                    <button
+                      type="button"
+                      disabled={disabled}
+                      onClick={open}
+                      className="inline-flex items-center gap-1 font-semibold text-emerald-700 hover:underline dark:text-emerald-300/90 disabled:opacity-50"
+                      title="Make a version for your client — same idea, your voice"
+                    >
+                      <Clapperboard className="h-3 w-3 shrink-0" aria-hidden />
+                      Recreate
+                    </button>
+                  )}
+                />
               ) : null}
             </div>
           </div>
         </ReelCardWithAnalysis>
       ))}
     </div>
-    <RecreateReelModal
-      open={recreateRow != null}
-      onClose={() => setRecreateRow(null)}
-      reel={recreateRow}
-      clientSlug={clientSlug}
-      orgSlug={orgSlug}
-    />
     </>
   );
 }

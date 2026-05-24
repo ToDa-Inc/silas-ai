@@ -112,6 +112,9 @@ export function LayoutSlider({
         disabled={disabled}
         onChange={(e) => onChange(parseFloat(e.target.value))}
         onPointerUp={(e) => onCommit(parseFloat((e.target as HTMLInputElement).value))}
+        onLostPointerCapture={(e) =>
+          onCommit(parseFloat((e.target as HTMLInputElement).value))
+        }
         onKeyUp={(e) => onCommit(parseFloat((e.target as HTMLInputElement).value))}
         className="h-1 w-full cursor-pointer appearance-none rounded-full bg-app-chip-bg/60 accent-amber-500 disabled:cursor-not-allowed disabled:opacity-40"
       />

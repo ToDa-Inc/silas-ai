@@ -6,7 +6,7 @@ import { blockEntranceStyle } from "../animations";
 import { flexAlignForTextAlign } from "../alignLayout";
 import { COMP_H, resolveLayoutPx } from "../layout";
 import { cardBoldOutlineCaptionStyle, isBoldOutlineLayer } from "../textTreatment";
-import type { ActiveCaptionLayer } from "../activeLayers";
+import { beatFontScaleMult, type ActiveCaptionLayer } from "../activeLayers";
 
 /** Max on-screen cards so long reels do not grow an unbounded stack. */
 const MAX_STACKED_CARDS = 8;
@@ -30,6 +30,7 @@ function stackedCumulativeRows(spec: VideoSpecWithTimeline["spec"], sec: number)
       startSec: 0,
       animation: "fade",
       kind: "hook",
+      fontScale: spec.hook.fontScale ?? undefined,
     });
   }
 
@@ -47,6 +48,7 @@ function stackedCumulativeRows(spec: VideoSpecWithTimeline["spec"], sec: number)
       kind: "block",
       appearance: b.appearance ?? undefined,
       textTreatment: b.textTreatment ?? undefined,
+      fontScale: b.fontScale ?? undefined,
     });
   }
 
@@ -80,7 +82,9 @@ export default function StackedCardsTemplate({ spec, frame, fps }: VideoSpecWith
     const layerTheme = mergeLayerAppearance(spec, row.kind === "block" ? row.appearance : null);
     const startFrame = Math.round(row.startSec * fps);
     const animStyle = blockEntranceStyle(frame, fps, startFrame, row.animation);
-    const fontSize = Math.round((row.isCTA ? baseSize * layerTheme.ctaScale : baseSize) * layout.scale);
+    const fontSize = Math.round(
+      (row.isCTA ? baseSize * layerTheme.ctaScale : baseSize) * beatFontScaleMult(row) * layout.scale,
+    );
     return (
       <div
         key={row.key}

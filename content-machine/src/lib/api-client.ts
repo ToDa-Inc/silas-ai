@@ -836,6 +836,8 @@ export type GenerationSession = {
   background_url?: string | null;
   rendered_video_url?: string | null;
   thumbnail_url?: string | null;
+  cover_spec?: Record<string, unknown> | null;
+  alternates?: GenerationAlternates | null;
   render_status?: string | null;
   render_error?: string | null;
   render_progress_pct?: number | null;
@@ -851,6 +853,30 @@ export type GenerationSession = {
   prompt_version?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+};
+
+export type VariantOption = {
+  id: string;
+  text: string;
+  source?: "auto" | "variants" | "refine";
+  created_at?: string;
+};
+
+export type GenerationAlternates = Partial<
+  Record<"hook" | "block" | "cover" | "caption", VariantOption[]>
+>;
+
+export type GenerateVariantsBody = {
+  kind: "hook" | "block" | "cover" | "caption";
+  element_id?: string;
+  n?: number;
+  feedback?: string;
+};
+
+export type GenerateVariantsResponse = {
+  kind: "hook" | "block" | "cover" | "caption";
+  element_id?: string | null;
+  variants: VariantOption[];
 };
 
 /** Normalized text frame for carousel composition (mirrors backend ``CarouselTextBox``). */
@@ -1545,6 +1571,71 @@ export async function generationPatchSession(
       };
     }
     return { ok: true, data: json as GenerationSession };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "fetch failed" };
+  }
+}
+
+/** PATCH …/generate/sessions/{sessionId}/cover-spec — autosave cover editor state. */
+export async function patchCoverSpec(
+  clientSlug: string,
+  orgSlug: string,
+  sessionId: string,
+  coverSpec: import("./cover-edit").CoverSpecPayload,
+): Promise<{ ok: true; data: GenerationSession } | { ok: false; error: string }> {
+  const base = getContentApiBase();
+  const headers = await clientApiHeaders({ orgSlug });
+  try {
+    const res = await contentApiFetch(
+      `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/generate/sessions/${encodeURIComponent(sessionId)}/cover-spec`,
+      {
+        method: "PATCH",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ cover_spec: coverSpec }),
+      },
+    );
+    const json = (await res.json().catch(() => ({}))) as GenerationSession & { detail?: unknown };
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: formatFastApiError(json as Record<string, unknown>, `Failed (${res.status})`),
+      };
+    }
+    return { ok: true, data: json as GenerationSession };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "fetch failed" };
+  }
+}
+
+/** POST …/generate/sessions/{sessionId}/variants — generate N alternates for the Studio inspector. */
+export async function generationGenerateVariants(
+  clientSlug: string,
+  orgSlug: string,
+  sessionId: string,
+  body: GenerateVariantsBody,
+): Promise<{ ok: true; data: GenerateVariantsResponse } | { ok: false; error: string }> {
+  const base = getContentApiBase();
+  const headers = await clientApiHeaders({ orgSlug });
+  try {
+    const res = await contentApiFetch(
+      `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/generate/sessions/${encodeURIComponent(sessionId)}/variants`,
+      {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    );
+    const json = (await res.json().catch(() => ({}))) as GenerateVariantsResponse & { detail?: unknown };
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: formatFastApiError(json as Record<string, unknown>, `Failed (${res.status})`),
+      };
+    }
+    if (!json || typeof json !== "object" || !Array.isArray(json.variants)) {
+      return { ok: false, error: "Invalid response from server after variants generation." };
+    }
+    return { ok: true, data: json as GenerateVariantsResponse };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "fetch failed" };
   }

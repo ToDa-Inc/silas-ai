@@ -108,6 +108,8 @@ def _ops_preserve_explicit_layer_timing(ops: List[Dict[str, Any]]) -> bool:
         "/gapBetweenBlocksSec",
         "/totalSec",
         "/background/durationSec",
+        "/background/trimStartSec",
+        "/background/trimEndSec",
         "/hook/durationSec",
     )
     if any(p in timeline_drivers for p in paths):

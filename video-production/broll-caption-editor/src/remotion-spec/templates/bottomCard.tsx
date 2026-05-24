@@ -6,7 +6,7 @@ import { blockEntranceStyle } from '../animations';
 import { flexAlignForTextAlign } from '../alignLayout';
 import { resolveLayoutPx } from '../layout';
 import { cardBoldOutlineCaptionStyle, isBoldOutlineLayer } from '../textTreatment';
-import { activeCaptionLayers, type ActiveCaptionLayer } from '../activeLayers';
+import { activeCaptionLayers, beatFontScaleMult, type ActiveCaptionLayer } from '../activeLayers';
 
 export default function BottomCardTemplate({ spec, frame, fps }: VideoSpecWithTimeline) {
   const sec = frame / fps;
@@ -24,97 +24,93 @@ export default function BottomCardTemplate({ spec, frame, fps }: VideoSpecWithTi
     const startFrame = Math.round(layer.startSec * fps);
     const animStyle = blockEntranceStyle(frame, fps, startFrame, layer.animation);
     const ctaScaled = layer.isCTA ? Math.round(baseSize * layerTheme.ctaScale) : baseSize;
-    const fontSize = Math.round(ctaScaled * layout.scale);
+    const fontSize = Math.round(ctaScaled * beatFontScaleMult(layer) * layout.scale);
     return (
-      <div
-        key={layer.key}
+    <div
+      key={layer.key}
+      style={{
+        display: 'inline-block',
+        backgroundColor: layerTheme.cardBg === 'transparent' ? '#ffffff' : layerTheme.cardBg,
+        borderRadius: '12px',
+        padding: '24px 32px',
+        maxWidth: layout.innerWidth,
+        opacity: animStyle.opacity,
+        transform: animStyle.transform,
+      }}
+    >
+      <p
         style={{
-          display: 'inline-block',
-          backgroundColor: layerTheme.cardBg === 'transparent' ? '#ffffff' : layerTheme.cardBg,
-          borderRadius: '12px',
-          padding: '24px 32px',
-          maxWidth: layout.innerWidth,
-          opacity: animStyle.opacity,
-          transform: animStyle.transform,
+          fontSize,
+          fontWeight: 800,
+          fontFamily: layerTheme.bodyFontStack,
+          color: layerTheme.cardText,
+          margin: 0,
+          lineHeight: 1.25,
+          letterSpacing: '-0.01em',
+          ...(isBoldOutlineLayer(spec, layer) ? cardBoldOutlineCaptionStyle() : {}),
+          WebkitFontSmoothing: 'antialiased',
+          textRendering: 'optimizeLegibility',
+          wordWrap: 'break-word',
+          overflowWrap: 'break-word',
+          textAlign: ta,
         }}
       >
-        <p
-          style={{
-            fontSize,
-            fontWeight: 800,
-            fontFamily: layerTheme.bodyFontStack,
-            color: layerTheme.cardText,
-            margin: 0,
-            lineHeight: 1.25,
-            letterSpacing: '-0.01em',
-            ...(isBoldOutlineLayer(spec, layer) ? cardBoldOutlineCaptionStyle() : {}),
-            WebkitFontSmoothing: 'antialiased',
-            textRendering: 'optimizeLegibility',
-            wordWrap: 'break-word',
-            overflowWrap: 'break-word',
-            textAlign: ta,
-          }}
-        >
-          {layer.text}
-        </p>
-      </div>
+        {layer.text}
+      </p>
+    </div>
     );
   };
 
-  const textRow =
-    layers.length > 0 ? (
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: rowAlign,
-          gap: layout.stackGapPx,
-          width: '100%',
-        }}
-      >
-        {layers.map((layer) => textShell(layer))}
-      </div>
-    ) : null;
+  const textRow = layers.length > 0 ? (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: rowAlign,
+        gap: layout.stackGapPx,
+        width: '100%',
+      }}
+    >
+      {layers.map((layer) => textShell(layer))}
+    </div>
+  ) : null;
 
-  const bottomGradient =
-    layers.length > 0 ? (
-      <div
-        style={{
-          position: 'absolute',
-          left: 0,
-          right: 0,
-          bottom: 0,
-          height: '48%',
-          background: 'linear-gradient(to top, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0) 100%)',
-          pointerEvents: 'none',
-        }}
-      />
-    ) : null;
+  const bottomGradient = layers.length > 0 ? (
+    <div
+      style={{
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: 0,
+        height: '48%',
+        background: 'linear-gradient(to top, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0) 100%)',
+        pointerEvents: 'none',
+      }}
+    />
+  ) : null;
 
-  const centerVignette =
-    layers.length > 0 ? (
-      <AbsoluteFill
-        style={{
-          background: 'radial-gradient(ellipse at center, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.45) 100%)',
-          pointerEvents: 'none',
-        }}
-      />
-    ) : null;
+  const centerVignette = layers.length > 0 ? (
+    <AbsoluteFill
+      style={{
+        background: 'radial-gradient(ellipse at center, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.45) 100%)',
+        pointerEvents: 'none',
+      }}
+    />
+  ) : null;
 
-  const topGradient =
-    layers.length > 0 ? (
-      <div
-        style={{
-          position: 'absolute',
-          left: 0,
-          right: 0,
-          top: 0,
-          height: '48%',
-          background: 'linear-gradient(to bottom, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0) 100%)',
-          pointerEvents: 'none',
-        }}
-      />
-    ) : null;
+  const topGradient = layers.length > 0 ? (
+    <div
+      style={{
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        top: 0,
+        height: '48%',
+        background: 'linear-gradient(to bottom, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0) 100%)',
+        pointerEvents: 'none',
+      }}
+    />
+  ) : null;
 
   let overlay: React.ReactNode = null;
   let textWrap: React.ReactNode = null;

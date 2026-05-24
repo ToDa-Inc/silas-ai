@@ -31,17 +31,32 @@ export function LoginClient() {
       });
       if (signErr) {
         setError(signErr.message);
+        setBusy(false);
         return;
       }
       router.replace(nextPath);
       router.refresh();
-    } finally {
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not sign in.");
       setBusy(false);
     }
   }
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center bg-surface-container-lowest px-4">
+      {busy ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/55 px-4 backdrop-blur-sm"
+          aria-live="polite"
+          aria-busy="true"
+        >
+          <div className="flex flex-col items-center gap-3 rounded-2xl border border-white/10 bg-zinc-950/90 px-6 py-5 text-center shadow-2xl">
+            <Loader2 className="h-6 w-6 animate-spin text-amber-400" aria-hidden />
+            <p className="text-sm font-semibold text-zinc-100">Signing you in…</p>
+            <p className="text-xs text-zinc-400">Opening your workspace.</p>
+          </div>
+        </div>
+      ) : null}
       <div className="w-full max-w-sm rounded-2xl border border-outline-variant/10 bg-surface-container p-8 shadow-xl">
         <div className="mb-6 flex justify-center">
           <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-primary-container text-on-primary-container">

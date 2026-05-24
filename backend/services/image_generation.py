@@ -785,17 +785,24 @@ def generate_slide_image(
 ) -> bytes:
     """Render one carousel slide as a 4:5 PNG (1080×1350 by default).
 
-    Two modes (mutually exclusive):
-    - ``client_image_bytes`` provided → uses :func:`compose_thumbnail_from_image` (same editorial
-      wash as a client-image cover) and overlays ``text``.
-    - Otherwise → calls :func:`generate_thumbnail_freepik_pillow` to generate a fresh background
-      and overlays ``text``. Requires ``freepik_key``.
+    Canonical path (since the editor UX overhaul): callers pass a ``text_box``
+    dict and we delegate to :func:`compose_carousel_final_png`. This is the
+    single source of truth that matches the Fabric live preview byte-for-byte:
+    same geometry, same fonts, same wash. Use this path for everything new.
+
+    Legacy fallback paths (no ``text_box``):
+    - ``client_image_bytes`` provided → :func:`compose_thumbnail_from_image`
+      (same editorial wash as a client-image cover).
+    - Otherwise → :func:`generate_thumbnail_freepik_pillow` (requires
+      ``freepik_key``).
+
+    These fallbacks only exist for backwards compatibility with pre-``text_box``
+    slides — see :func:`routers.creation._use_legacy_carousel_render`. New
+    callers should always pass ``text_box``.
 
     When ``client_image_bytes`` is a saved carousel template reference, pass
-    ``wash_template_base=False`` to preserve layout/colours (exact-base rendering).
-
-    ``idx`` / ``total`` are reserved for future per-slide styling (e.g. cover vs body vs CTA);
-    today they are forwarded as a hint into ``angle_context``.
+    ``wash_template_base=False`` to preserve layout/colours (exact-base
+    rendering).
     """
     tb_dict: Dict[str, Any] = _as_dict(text_box) if text_box is not None else {}
 

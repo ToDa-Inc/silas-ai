@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
 import { Flame, Sparkles } from "lucide-react";
 import { ReelThumbnail } from "@/components/reel-thumbnail";
 import type { ScrapedReelRow } from "@/lib/api";
-import { RecreateReelModal } from "@/app/(dashboard)/intelligence/components/recreate-reel-modal";
+import { RecreateButton } from "@/components/recreate-button";
+import { PendingLink } from "@/components/ui/pending-link";
 
 type Props = {
   reels: ScrapedReelRow[];
@@ -29,7 +29,6 @@ function ratioBadge(reel: ScrapedReelRow): string | null {
 }
 
 export function DashboardHotReels({ reels, clientSlug, orgSlug, disabled, disabledHint }: Props) {
-  const [recreateRow, setRecreateRow] = useState<ScrapedReelRow | null>(null);
   const list = reels.slice(0, 6);
 
   return (
@@ -86,15 +85,13 @@ export function DashboardHotReels({ reels, clientSlug, orgSlug, disabled, disabl
                         </p>
                       ) : null}
                     </div>
-                    <button
-                      type="button"
+                    <RecreateButton
+                      reel={reel}
+                      clientSlug={clientSlug}
+                      orgSlug={orgSlug}
                       disabled={disabled}
-                      title={disabledHint ?? undefined}
-                      onClick={() => setRecreateRow(reel)}
-                      className="shrink-0 rounded-md bg-amber-500/15 px-2.5 py-1.5 text-[10px] font-bold text-app-on-amber-title hover:bg-amber-500/25 disabled:opacity-50"
-                    >
-                      Recreate
-                    </button>
+                      disabledHint={disabledHint}
+                    />
                   </li>
                 );
               })}
@@ -103,24 +100,16 @@ export function DashboardHotReels({ reels, clientSlug, orgSlug, disabled, disabl
         </div>
 
         <div className="border-t border-app-divider px-4 py-2.5">
-          <Link
+          <PendingLink
             href="/intelligence"
             className="text-[11px] font-semibold text-app-accent hover:underline"
+            pendingLabel="Opening Intelligence"
           >
             Intelligence — full feed
-          </Link>
+          </PendingLink>
         </div>
       </div>
 
-      <RecreateReelModal
-        open={Boolean(recreateRow)}
-        onClose={() => setRecreateRow(null)}
-        reel={recreateRow}
-        clientSlug={clientSlug}
-        orgSlug={orgSlug}
-        disabled={disabled}
-        disabledHint={disabledHint}
-      />
     </>
   );
 }

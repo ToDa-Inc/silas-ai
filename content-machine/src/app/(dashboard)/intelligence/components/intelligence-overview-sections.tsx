@@ -19,9 +19,10 @@ import {
 } from "@/lib/reel-provenance";
 import { Tooltip } from "@/components/ui/tooltip";
 import { AppSelect } from "@/components/ui/app-select";
+import { PendingLink } from "@/components/ui/pending-link";
 import { ReplicateSection } from "./replicate-section";
 import { ReelCardWithAnalysis } from "./reel-card-with-analysis";
-import { RecreateReelModal } from "./recreate-reel-modal";
+import { RecreateButton } from "@/components/recreate-button";
 import {
   ActivityLaneBlock,
   formatWindowHint,
@@ -127,7 +128,6 @@ export function IntelligenceOverviewSections({
   const [loadingOwn, setLoadingOwn] = useState(true);
   const [loadingSaved, setLoadingSaved] = useState(true);
   const [errNiche, setErrNiche] = useState<string | null>(null);
-  const [modalReel, setModalReel] = useState<ScrapedReelRow | null>(null);
   const [creatorInstagram, setCreatorInstagram] = useState<string | null>(null);
 
   const canFetch = Boolean(!disabled && clientSlug.trim() && orgSlug.trim());
@@ -282,12 +282,13 @@ export function IntelligenceOverviewSections({
         </div>
       )}
       <div className="mt-2 text-right">
-        <Link
+        <PendingLink
           href="/intelligence/reels?source=keyword_similarity"
           className="text-[11px] font-semibold text-amber-700 hover:underline dark:text-amber-400"
+          pendingLabel="Opening niche reels"
         >
           All niche finds →
-        </Link>
+        </PendingLink>
       </div>
     </>
   );
@@ -359,15 +360,23 @@ export function IntelligenceOverviewSections({
                     ) : (
                       <span className="text-[9px] text-app-fg-muted">From your Instagram</span>
                     )}
-                    <button
-                      type="button"
+                    <RecreateButton
+                      reel={reel}
+                      clientSlug={clientSlug}
+                      orgSlug={orgSlug}
                       disabled={disabled}
-                      onClick={() => setModalReel(reel)}
-                      className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[9px] font-semibold text-amber-700 hover:bg-amber-500/10 disabled:opacity-50 dark:text-amber-400"
-                    >
-                      <Sparkles className="h-2.5 w-2.5" aria-hidden />
-                      Analyze what worked
-                    </button>
+                      renderTrigger={({ open, disabled: dis }) => (
+                        <button
+                          type="button"
+                          disabled={dis}
+                          onClick={open}
+                          className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[9px] font-semibold text-amber-700 hover:bg-amber-500/10 disabled:opacity-50 dark:text-amber-400"
+                        >
+                          <Sparkles className="h-2.5 w-2.5" aria-hidden />
+                          Analyze what worked
+                        </button>
+                      )}
+                    />
                   </div>
                 </div>
               </ReelCardWithAnalysis>
@@ -376,12 +385,13 @@ export function IntelligenceOverviewSections({
         </div>
       )}
       <div className="mt-2 text-right">
-        <Link
+        <PendingLink
           href="/intelligence/reels?own=1"
           className="text-[11px] font-semibold text-amber-700 hover:underline dark:text-amber-400"
+          pendingLabel="Opening your reels"
         >
           All your reels →
-        </Link>
+        </PendingLink>
       </div>
     </>
   );
@@ -396,7 +406,7 @@ export function IntelligenceOverviewSections({
         <p className="rounded-xl border border-dashed border-zinc-300/60 px-4 py-6 text-center text-xs text-app-fg-muted dark:border-white/10">
           Nothing saved yet. Paste a reel URL from{" "}
           <Link href="/generate" className="font-semibold text-amber-700 hover:underline dark:text-amber-400">
-            Generate
+            Create
           </Link>{" "}
           or run <strong>Analyze a reel</strong> below.
         </p>
@@ -419,15 +429,23 @@ export function IntelligenceOverviewSections({
                   {reel.hook_text || reel.caption || "—"}
                 </p>
                 <div className="mt-1.5">
-                  <button
-                    type="button"
+                  <RecreateButton
+                    reel={reel}
+                    clientSlug={clientSlug}
+                    orgSlug={orgSlug}
                     disabled={disabled}
-                    onClick={() => setModalReel(reel)}
-                    className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[9px] font-semibold text-amber-700 hover:bg-amber-500/10 disabled:opacity-50 dark:text-amber-400"
-                  >
-                    <Sparkles className="h-2.5 w-2.5" aria-hidden />
-                    Open / recreate
-                  </button>
+                    renderTrigger={({ open, disabled: dis }) => (
+                      <button
+                        type="button"
+                        disabled={dis}
+                        onClick={open}
+                        className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[9px] font-semibold text-amber-700 hover:bg-amber-500/10 disabled:opacity-50 dark:text-amber-400"
+                      >
+                        <Sparkles className="h-2.5 w-2.5" aria-hidden />
+                        Open / recreate
+                      </button>
+                    )}
+                  />
                 </div>
               </div>
             </ReelCardWithAnalysis>
@@ -435,12 +453,13 @@ export function IntelligenceOverviewSections({
         </div>
       )}
       <div className="mt-2 text-right">
-        <Link
+        <PendingLink
           href="/intelligence/reels?source=url_paste"
           className="text-[11px] font-semibold text-amber-700 hover:underline dark:text-amber-400"
+          pendingLabel="Opening saved analyses"
         >
           All saved analyses →
-        </Link>
+        </PendingLink>
       </div>
     </>
   );
@@ -602,16 +621,6 @@ export function IntelligenceOverviewSections({
       </header>
 
       <div className="min-h-[120px]">{body}</div>
-
-      <RecreateReelModal
-        open={modalReel != null}
-        onClose={() => setModalReel(null)}
-        reel={modalReel}
-        clientSlug={clientSlug}
-        orgSlug={orgSlug}
-        disabled={disabled}
-        disabledHint={disabledHint}
-      />
     </div>
   );
 }

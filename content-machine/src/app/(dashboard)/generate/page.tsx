@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, Loader2, Sparkles, Trash2 } from "lucide-react";
 import { ReelThumbnail } from "@/components/reel-thumbnail";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -10,6 +10,7 @@ import { useToast } from "@/components/ui/toast-provider";
 import { VideoCreateWorkspace } from "@/components/video-create-workspace";
 import type { ClientCarouselTemplate, ClientCoverTemplate, ClientCta, ScrapedReelRow } from "@/lib/api";
 import { formatCommentViewPct } from "@/lib/reel-comment-view";
+import { generateSessionHref } from "@/lib/generate-session-url";
 import {
   clientApiContext,
   CONTENT_DEFAULTS_UPDATED_AT_KEY,
@@ -739,11 +740,13 @@ function ScriptAdaptReferenceCard({
 function SessionCard({
   session,
   loading,
+  opening,
   onOpen,
   onDelete,
 }: {
   session: GenerationSession;
   loading: boolean;
+  opening: boolean;
   onOpen: () => void;
   onDelete: () => void;
 }) {
@@ -756,9 +759,17 @@ function SessionCard({
       <div className="flex gap-2">
         <button
           type="button"
+          disabled={opening}
+          aria-busy={opening}
           onClick={onOpen}
-          className="glass min-w-0 flex-1 rounded-xl border border-app-divider text-left transition-colors hover:bg-white/5"
+          className="glass relative min-w-0 flex-1 overflow-hidden rounded-xl border border-app-divider text-left transition-colors hover:bg-white/5 disabled:cursor-wait"
         >
+          {opening ? (
+            <span className="absolute inset-0 z-10 flex items-center justify-center gap-2 rounded-xl bg-zinc-950/65 text-xs font-semibold text-white backdrop-blur-[1px]">
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+              Opening session…
+            </span>
+          ) : null}
           {isDone ? (
             <div className="flex items-stretch gap-3 p-2.5">
               {/* 9:16 cover thumbnail — the actual reel cover, at the actual aspect ratio. */}
@@ -826,7 +837,7 @@ function SessionCard({
         <button
           type="button"
           title="Delete session"
-          disabled={loading}
+          disabled={loading || opening}
           onClick={(e) => {
             e.stopPropagation();
             onDelete();
@@ -904,14 +915,17 @@ function BlueprintBadge() {
 export default function GeneratePage() {
   const { show } = useToast();
   const router = useRouter();
+  const params = useParams<{ sessionId?: string | string[] }>();
   const searchParams = useSearchParams();
-  const sessionIdFromUrl = searchParams.get("session");
+  const sessionIdFromPath = Array.isArray(params?.sessionId) ? params.sessionId[0] : params?.sessionId;
+  const sessionIdFromQuery = searchParams.get("session");
+  const sessionIdFromUrl = sessionIdFromPath ?? sessionIdFromQuery;
   const urlFromUrl = searchParams.get("url");
   const [step, setStep] = useState<Step>("source");
   /**
    * Suppresses the source/angles/create UI on the very first render when the page
-   * was opened via `/generate?session=…` (e.g. from /media or the Recent sessions
-   * panel). Without this we render the composer for one frame before the session
+   * was opened via `/generate/{sessionId}` (or legacy `/generate?session=…`).
+   * Without this we render the composer for one frame before the session
    * fetch resolves, which reads as a broken navigation. Cleared as soon as the
    * loading effect either succeeds or fails.
    */
@@ -962,8 +976,10 @@ export default function GeneratePage() {
   const [recreateSourcePreviewApi, setRecreateSourcePreviewApi] = useState<ScrapedReelRow | null>(null);
   const [recreateSourcePreviewLoading, setRecreateSourcePreviewLoading] = useState(false);
   const [session, setSession] = useState<GenerationSession | null>(null);
+  const currentSessionIdRef = useRef<string | null>(null);
   const [sessions, setSessions] = useState<GenerationSession[]>([]);
   const [loading, setLoading] = useState(false);
+  const [openingSessionId, setOpeningSessionId] = useState<string | null>(null);
   const [deleteSessionId, setDeleteSessionId] = useState<string | null>(null);
   const [deleteSessionBusy, setDeleteSessionBusy] = useState(false);
   /** Index of angle being submitted (content generation); other angle cards stay visible but dimmed. */
@@ -1013,6 +1029,14 @@ export default function GeneratePage() {
     }
     applyGenerationLibraries(libsRes.data);
   }, [applyGenerationLibraries, show]);
+
+  useEffect(() => {
+    currentSessionIdRef.current = session?.id ?? null;
+  }, [session?.id]);
+
+  useEffect(() => {
+    if (!loadingFromUrl) setOpeningSessionId(null);
+  }, [loadingFromUrl]);
 
   /** Persist mode + clear composer so a stale URL doesn't leak into idea mode (or vice versa). */
   const onChangeMode = useCallback((next: Mode) => {
@@ -1222,12 +1246,23 @@ export default function GeneratePage() {
   );
 
   /** Open session from Intelligence "Recreate" flow, /media cards, or the Recent
-   *  sessions panel (`/generate?session=…`). While this effect is in flight we
+   *  sessions panel (`/generate/{sessionId}`). While this effect is in flight we
    *  hide the composer/angles UI behind a `loadingFromUrl` gate so the user
    *  doesn't see a flash of the wrong step. */
   useEffect(() => {
     const raw = sessionIdFromUrl?.trim();
-    if (!raw) return;
+    if (!raw) {
+      setLoadingFromUrl(false);
+      return;
+    }
+    setLoadingFromUrl(true);
+    if (currentSessionIdRef.current === raw) {
+      setLoadingFromUrl(false);
+      if (!sessionIdFromPath) {
+        router.replace(generateSessionHref(raw), { scroll: false });
+      }
+      return;
+    }
     if (!clientSlug.trim() || !orgSlug.trim()) {
       // Wait for client/org bootstrap to finish — keep the loading gate up.
       return;
@@ -1236,12 +1271,12 @@ export default function GeneratePage() {
     void (async () => {
       const res = await generationGetSession(clientSlug, orgSlug, raw);
       if (cancelled) return;
-      router.replace("/generate", { scroll: false });
       if (!res.ok) {
         setLoadingFromUrl(false);
         show(res.error, "error");
         return;
       }
+      currentSessionIdRef.current = res.data.id;
       setSession(res.data);
       if (sessionHasPackage(res.data)) {
         setStep("create");
@@ -1250,12 +1285,23 @@ export default function GeneratePage() {
       }
       await refreshSessions();
       setLoadingFromUrl(false);
+      if (!sessionIdFromPath) {
+        router.replace(generateSessionHref(raw), { scroll: false });
+      }
       show("Session loaded.", "success");
     })();
     return () => {
       cancelled = true;
     };
-  }, [clientSlug, orgSlug, sessionIdFromUrl, router, show, refreshSessions]);
+  }, [
+    clientSlug,
+    orgSlug,
+    sessionIdFromPath,
+    sessionIdFromUrl,
+    router,
+    show,
+    refreshSessions,
+  ]);
 
   const requestDeleteSession = useCallback((id: string) => {
     setDeleteSessionId(id);
@@ -1274,14 +1320,16 @@ export default function GeneratePage() {
       show("Session deleted.", "success");
       setDeleteSessionId(null);
       if (session?.id === id) {
+        currentSessionIdRef.current = null;
         setSession(null);
         setStep("source");
+        router.push("/generate", { scroll: false });
       }
       await refreshSessions();
     } finally {
       setDeleteSessionBusy(false);
     }
-  }, [clientSlug, orgSlug, deleteSessionId, refreshSessions, session?.id, show]);
+  }, [clientSlug, orgSlug, deleteSessionId, refreshSessions, router, session?.id, show]);
 
   /** Niche reel count per video format — annotates the format pills with social proof. */
   const nicheReelCountByFormat = useMemo(() => {
@@ -1467,8 +1515,10 @@ export default function GeneratePage() {
         show(res.error, "error");
         return;
       }
+      currentSessionIdRef.current = res.data.id;
       setSession(res.data);
       setStep("angles");
+      router.replace(generateSessionHref(res.data.id), { scroll: false });
       show("Angles ready — pick one.", "success");
       const lr = await generationListSessions(ctx.clientSlug, ctx.orgSlug, 15);
       if (lr.ok) setSessions(lr.data);
@@ -1485,6 +1535,7 @@ export default function GeneratePage() {
     mode,
     recreateFormat,
     refreshContext,
+    router,
     selectedCtaId,
     selectedCarouselTemplateId,
     selectedCoverTemplateId,
@@ -1521,28 +1572,15 @@ export default function GeneratePage() {
   // rendering a video implicitly approves it; rejection became "Delete session".
   // Cover generation also lives entirely inside VideoCreateWorkspace now.
 
-  const loadSessionById = useCallback(
-    async (id: string) => {
-      if (!clientSlug || !orgSlug) return;
-      setLoading(true);
-      try {
-        const res = await generationGetSession(clientSlug, orgSlug, id);
-        if (!res.ok) {
-          show(res.error, "error");
-          return;
-        }
-        const s = res.data;
-        setSession(s);
-        if (sessionHasPackage(s)) {
-          setStep("create");
-        } else {
-          setStep("angles");
-        }
-      } finally {
-        setLoading(false);
-      }
+  const openSessionById = useCallback(
+    (id: string) => {
+      const raw = id.trim();
+      if (!raw) return;
+      setOpeningSessionId(raw);
+      setLoadingFromUrl(true);
+      router.push(generateSessionHref(raw), { scroll: false });
     },
-    [clientSlug, orgSlug, show],
+    [router],
   );
 
   const angles = Array.isArray(session?.angles) ? session!.angles! : [];
@@ -1558,9 +1596,9 @@ export default function GeneratePage() {
     <main className="mx-auto max-w-[1400px] p-4 pb-16 pt-6 md:p-8 md:pt-10 lg:p-12">
       <header className="mb-8 md:mb-10">
         <span className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-app-fg-subtle">
-          Generate
+          Create
         </span>
-        <h1 className="mb-2 max-w-2xl text-lg font-semibold text-app-fg">Outlier-driven copy</h1>
+        <h1 className="mb-2 max-w-2xl text-lg font-semibold text-app-fg">New reel, cover or carousel</h1>
         <p className="max-w-2xl text-xs leading-relaxed text-app-fg-muted">
           Start from an idea or recreate a winning reel — we&apos;ll propose five angles in your client&apos;s
           voice (Client DNA), then hooks, script, and caption.
@@ -2055,7 +2093,8 @@ export default function GeneratePage() {
                     key={s.id}
                     session={s}
                     loading={loading}
-                    onOpen={() => void loadSessionById(s.id)}
+                    opening={openingSessionId === s.id}
+                    onOpen={() => openSessionById(s.id)}
                     onDelete={() => requestDeleteSession(s.id)}
                   />
                 ))}
@@ -2076,8 +2115,10 @@ export default function GeneratePage() {
             <button
               type="button"
               onClick={() => {
+                currentSessionIdRef.current = null;
                 setStep("source");
                 setSession(null);
+                router.push("/generate", { scroll: false });
               }}
               className="text-xs font-semibold text-app-fg-muted hover:text-app-fg"
             >
@@ -2170,8 +2211,10 @@ export default function GeneratePage() {
             <button
               type="button"
               onClick={() => {
+                currentSessionIdRef.current = null;
                 setSession(null);
                 setStep("source");
+                router.push("/generate", { scroll: false });
               }}
               className="text-xs font-semibold text-app-fg-muted hover:text-app-fg"
             >
@@ -2218,7 +2261,10 @@ export default function GeneratePage() {
             clientSlug={clientSlug}
             orgSlug={orgSlug}
             sessionId={session.id}
-            onSessionUpdated={(s) => setSession(s)}
+            onSessionUpdated={(s) => {
+              currentSessionIdRef.current = s.id;
+              setSession(s);
+            }}
           />
         </section>
       )}

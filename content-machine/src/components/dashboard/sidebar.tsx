@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useTransition, useState } from "react";
 import { Loader2, Sparkles } from "lucide-react";
-import { useToast } from "@/components/ui/toast-provider";
 import { cn } from "@/lib/cn";
 import { mainNav } from "./nav";
 import { SignOutButton } from "./sign-out-button";
@@ -30,7 +29,6 @@ export function Sidebar({
 }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const { show } = useToast();
   const [isPending, startTransition] = useTransition();
   const [pendingHref, setPendingHref] = useState<string | null>(null);
 
@@ -68,7 +66,7 @@ export function Sidebar({
         className="min-h-0 flex-1 space-y-0.5 overflow-y-auto overflow-x-hidden py-1"
         aria-label="Main navigation"
       >
-        {mainNav.map(({ href, label, icon: Icon }) => {
+        {mainNav.map(({ href, label, icon: Icon, comingSoon }) => {
           const active = navActive(href);
           const navigatingHere = isPending && pendingHref === href;
           return (
@@ -108,22 +106,23 @@ export function Sidebar({
               ) : (
                 <Icon className="h-[18px] w-[18px] shrink-0" aria-hidden />
               )}
-              {label}
+              <span className="flex flex-1 items-center justify-between gap-2">
+                {label}
+                {comingSoon ? (
+                  <span className="rounded-sm bg-app-divider/60 px-1 py-px text-[8px] font-bold uppercase tracking-wider text-app-fg-subtle">
+                    Soon
+                  </span>
+                ) : null}
+              </span>
             </Link>
           );
         })}
       </nav>
 
       <div className="mt-auto shrink-0 space-y-1 border-t border-zinc-200 pt-4 dark:border-white/[0.06]">
-        <button
-          type="button"
-          onClick={() =>
-            show("Projects aren’t multi-tenant yet — everything uses your current workspace.", "success")
-          }
-          className="mb-1 w-full rounded-xl bg-amber-500 py-2.5 text-[13px] font-semibold text-zinc-950 shadow-lg shadow-amber-500/15 transition-opacity hover:opacity-90 active:scale-[0.98]"
-        >
-          New project
-        </button>
+        {/* The previous "New project" button was a toast-only stub
+            ("Projects aren't multi-tenant yet"). Removed — every workspace
+            already maps to a client, so the action had no real meaning. */}
         <SidebarClientPanel clients={clients} activeSlug={activeSlug} orgSlug={orgSlug} />
         <SignOutButton className="w-full justify-start" />
       </div>

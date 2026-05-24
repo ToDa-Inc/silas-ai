@@ -22,8 +22,9 @@ from jobs.reel_analyze_url import (
 )
 from models.generation import (
     AutoVideoIdeaOut,
+    GenerateVariantsBody,
+    GenerateVariantsResponse,
     GenerationChooseAngleBody,
-    GenerationFeedbackBody,
     GenerationRecommendFormatBody,
     GenerationRegenerateBody,
     GenerationSessionOut,
@@ -31,6 +32,8 @@ from models.generation import (
     GenerateThumbnailBody,
     ComposeThumbnailBody,
     PatchGenerationSessionBody,
+    PatchCoverSpecBody,
+    VariantOption,
 )
 from services.content_generation import (
     GENERATION_PROMPT_VERSION,
@@ -963,51 +966,16 @@ def generation_regenerate(
     return _row_to_out(_load_session(supabase, client_id, session_id))
 
 
-@router.post(
-    "/clients/{slug}/generate/sessions/{session_id}/approve",
-    response_model=GenerationSessionOut,
-)
-def generation_approve(
-    slug: str,
-    session_id: str,
-    body: GenerationFeedbackBody,
-    client_id: Annotated[str, Depends(resolve_client_id)],
-    supabase: Annotated[Client, Depends(get_supabase)],
-) -> dict:
-    """DEPRECATED: the unified create screen no longer needs an explicit approve gate
-    (rendering a video implicitly approves it). Endpoint kept for backwards-compat with
-    legacy sessions / API consumers."""
-    _ = slug
-    _ = _load_session(supabase, client_id, session_id)
-    now = _now_iso()
-    patch: Dict[str, Any] = {"status": "approved", "updated_at": now}
-    if body.feedback and body.feedback.strip():
-        patch["feedback"] = body.feedback.strip()
-    supabase.table("generation_sessions").update(patch).eq("id", session_id).execute()
-    return _row_to_out(_load_session(supabase, client_id, session_id))
-
-
-@router.post(
-    "/clients/{slug}/generate/sessions/{session_id}/reject",
-    response_model=GenerationSessionOut,
-)
-def generation_reject(
-    slug: str,
-    session_id: str,
-    body: GenerationFeedbackBody,
-    client_id: Annotated[str, Depends(resolve_client_id)],
-    supabase: Annotated[Client, Depends(get_supabase)],
-) -> dict:
-    """DEPRECATED: the unified create screen replaces "reject" with "delete session".
-    Endpoint kept for backwards-compat with legacy sessions / API consumers."""
-    _ = slug
-    _ = _load_session(supabase, client_id, session_id)
-    now = _now_iso()
-    patch: Dict[str, Any] = {"status": "rejected", "updated_at": now}
-    if body.feedback and body.feedback.strip():
-        patch["feedback"] = body.feedback.strip()
-    supabase.table("generation_sessions").update(patch).eq("id", session_id).execute()
-    return _row_to_out(_load_session(supabase, client_id, session_id))
+## /approve and /reject endpoints were removed in the editor UX overhaul.
+##
+## They mirrored an old draft-vs-published workflow that the unified Create
+## screen no longer uses — render = ship; delete-session replaces reject.
+## The frontend had no callers; the endpoints were already documented as
+## DEPRECATED and only existed as a no-op surface for legacy API consumers.
+##
+## Sessions in the wild may still carry status="approved"/"rejected" from
+## before; the listing endpoint accepts any string so reads keep working.
+## No backfill is required.
 
 
 @router.get("/clients/{slug}/generate/sessions", response_model=list[GenerationSessionOut])
@@ -1089,6 +1057,283 @@ def patch_generation_session(
 
     supabase.table("generation_sessions").update(patch).eq("id", session_id).eq("client_id", client_id).execute()
     return _row_to_out(_load_session(supabase, client_id, session_id))
+
+
+@router.patch(
+    "/clients/{slug}/generate/sessions/{session_id}/cover-spec",
+    response_model=GenerationSessionOut,
+)
+def patch_cover_spec(
+    slug: str,
+    session_id: str,
+    body: PatchCoverSpecBody,
+    client_id: Annotated[str, Depends(resolve_client_id)],
+    supabase: Annotated[Client, Depends(get_supabase)],
+) -> dict:
+    """Autosave the cover editor state.
+
+    Full-replace of ``cover_spec`` (JSONB). Cheap because the payload is small.
+    Editor calls this on slider release / chip click; render endpoints fall
+    back to this column when their body omits styling overrides.
+    """
+    _ = slug
+    _ = _load_session(supabase, client_id, session_id)
+    payload = body.cover_spec.model_dump(mode="json", exclude_none=False)
+    supabase.table("generation_sessions").update(
+        {"cover_spec": payload, "updated_at": _now_iso()}
+    ).eq("id", session_id).eq("client_id", client_id).execute()
+    return _row_to_out(_load_session(supabase, client_id, session_id))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase F — variants endpoint
+#
+# Generates N AI alternates for an element (hook / block / cover / caption)
+# and persists them on `generation_sessions.alternates` (JSONB column added
+# by phase29_alternates.sql).
+#
+# Implementation note: this is the minimum viable backend for the Studio
+# inspector's `VariantsRail`. It calls the existing `run_regenerate`
+# pipeline up to `n` times and appends each distinct result to the alternates
+# pool. A future optimization can teach `services/content_generation.py` to
+# return N variants in one LLM call; this endpoint contract does not need to
+# change when that happens.
+#
+# The pool is capped at 12 entries per kind (FIFO eviction) so memory stays
+# bounded for long-lived sessions.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+_ALTERNATES_KIND_CAP = 12
+
+
+def _read_alternates(row: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+    raw = row.get("alternates")
+    if not isinstance(raw, dict):
+        return {"hook": [], "block": [], "cover": [], "caption": []}
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for k in ("hook", "block", "cover", "caption"):
+        bucket = raw.get(k)
+        out[k] = [x for x in bucket if isinstance(x, dict)] if isinstance(bucket, list) else []
+    return out
+
+
+def _append_alternate(
+    pool: Dict[str, List[Dict[str, Any]]],
+    kind: str,
+    text: str,
+) -> Optional[Dict[str, Any]]:
+    text = (text or "").strip()
+    if not text:
+        return None
+    bucket = pool.setdefault(kind, [])
+    # De-dupe by text — re-generating an option that already exists shouldn't bloat the pool.
+    if any(str(x.get("text", "")).strip() == text for x in bucket):
+        return None
+    entry = {
+        "id": generate_generation_session_id(),
+        "text": text,
+        "source": "variants",
+        "created_at": _now_iso(),
+    }
+    bucket.append(entry)
+    # FIFO cap.
+    if len(bucket) > _ALTERNATES_KIND_CAP:
+        del bucket[: len(bucket) - _ALTERNATES_KIND_CAP]
+    return entry
+
+
+def _pick_text_for_kind(package: Dict[str, Any], kind: str) -> Optional[str]:
+    """Extract the appropriate text from a ``run_regenerate`` result."""
+    if kind == "hook":
+        hooks = package.get("hooks")
+        if isinstance(hooks, list) and hooks:
+            first = hooks[0]
+            if isinstance(first, dict):
+                t = first.get("text")
+                if isinstance(t, str) and t.strip():
+                    return t
+    elif kind == "caption":
+        cap = package.get("caption_body")
+        if isinstance(cap, str) and cap.strip():
+            return cap
+    elif kind == "block":
+        # Text blocks come back as a list; we keep just the first body block
+        # so a single variant entry corresponds to a single LLM call.
+        blocks = package.get("text_blocks")
+        if isinstance(blocks, list):
+            for b in blocks:
+                if isinstance(b, dict):
+                    t = b.get("text")
+                    if isinstance(t, str) and t.strip():
+                        return t
+    elif kind == "cover":
+        # Cover headlines live on a separate field (cover_text_options); we
+        # also reuse the first hook as a fallback because the same regen
+        # produces both.
+        cto = package.get("cover_text_options")
+        if isinstance(cto, list) and cto:
+            t = cto[0]
+            if isinstance(t, str) and t.strip():
+                return t
+        hooks = package.get("hooks")
+        if isinstance(hooks, list) and hooks:
+            first = hooks[0]
+            if isinstance(first, dict):
+                t = first.get("text")
+                if isinstance(t, str) and t.strip():
+                    return t
+    return None
+
+
+@router.post(
+    "/clients/{slug}/generate/sessions/{session_id}/variants",
+    response_model=GenerateVariantsResponse,
+)
+def generation_variants(
+    slug: str,
+    session_id: str,
+    body: GenerateVariantsBody,
+    client_id: Annotated[str, Depends(resolve_client_id)],
+    supabase: Annotated[Client, Depends(get_supabase)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> Dict[str, Any]:
+    """Generate AI variants and append them to the session's alternates pool.
+
+    Returns the full pool for that kind so the inspector can refresh the rail
+    in a single round-trip.
+    """
+    _ = slug
+    if not settings.openrouter_api_key:
+        raise HTTPException(status_code=503, detail="OPENROUTER_API_KEY not configured")
+    if body.n < 1:
+        raise HTTPException(status_code=400, detail="n must be >= 1")
+
+    row = _load_session(supabase, client_id, session_id)
+    if not _row_has_regenerated_content(row):
+        raise HTTPException(
+            status_code=400,
+            detail="Choose an angle first — session has no generated content yet.",
+        )
+    chosen = get_chosen_angle(row)
+    if not chosen:
+        raise HTTPException(status_code=400, detail="No chosen angle on session")
+
+    patterns = row.get("synthesized_patterns") if isinstance(row.get("synthesized_patterns"), dict) else {}
+    client_row = _load_client_for_generation(supabase, client_id)
+
+    hooks = [h for h in (row.get("hooks") or []) if isinstance(h, dict)]
+    script = str(row.get("script") or "")
+    cap = str(row.get("caption_body") or "")
+    tags = [str(t) for t in (row.get("hashtags") or []) if isinstance(t, (str, int, float))]
+    stories = [str(s) for s in (row.get("story_variants") or [])]
+    raw_tb = row.get("text_blocks")
+    cur_tb = [x for x in raw_tb if isinstance(x, dict)] if isinstance(raw_tb, list) else None
+    raw_vs = row.get("visual_style")
+    cur_vs = raw_vs if isinstance(raw_vs, dict) else None
+
+    # Map our variant `kind` onto the existing regenerate `scope` vocabulary.
+    # `cover` reuses `hooks` because the hook+cover share a generator today.
+    scope_for_kind = {
+        "hook": "hooks",
+        "block": "text_blocks",
+        "cover": "hooks",
+        "caption": "caption",
+    }[body.kind]
+
+    raw_fk = str(row.get("source_format_key") or "").strip()
+    fk = canonicalize_stored_format_key(raw_fk) or raw_fk or None
+    selected_cta = row.get("selected_cta") if isinstance(row.get("selected_cta"), dict) else None
+
+    pool = _read_alternates(row)
+    requested_n = max(1, min(8, int(body.n)))
+
+    if body.kind == "cover":
+        try:
+            options = run_cover_text_options(
+                settings,
+                client_row=client_row,
+                chosen_angle=chosen,
+                hooks=hooks,
+                script=script,
+                feedback=body.feedback,
+                previous=[
+                    str(x)
+                    for x in (row.get("cover_text_options") or [])
+                    if isinstance(x, (str, int, float))
+                ],
+                text_blocks=cur_tb,
+            )
+        except Exception as e:
+            logger.exception("generation cover variants failed")
+            raise HTTPException(status_code=502, detail=str(e)) from e
+
+        for text in options[:requested_n]:
+            _append_alternate(pool, body.kind, text)
+        supabase.table("generation_sessions").update(
+            {"alternates": pool, "updated_at": _now_iso()}
+        ).eq("id", session_id).eq("client_id", client_id).execute()
+        variants = [
+            VariantOption.model_validate(x)
+            for x in pool.get(body.kind, [])
+            if isinstance(x, dict)
+        ]
+        return {
+            "kind": body.kind,
+            "element_id": body.element_id,
+            "variants": variants,
+        }
+
+    for i in range(requested_n):
+        feedback = (body.feedback or "").strip()
+        # Slightly vary the instruction per call so the existing single-option
+        # regenerate prompt is less likely to return the same text repeatedly.
+        variant_feedback = (
+            f"{feedback}; give me option {i + 1} of {requested_n}, materially different from the others"
+            if feedback
+            else f"give me option {i + 1} of {requested_n}, a materially different angle"
+        )
+        try:
+            package = run_regenerate(
+                settings,
+                client_row=client_row,
+                synthesized_patterns=patterns,
+                chosen_angle=chosen,
+                scope=scope_for_kind,
+                feedback=variant_feedback,
+                current_hooks=hooks,
+                current_script=script,
+                current_caption=cap,
+                current_hashtags=tags,
+                current_stories=stories,
+                source_format_key=fk,
+                current_text_blocks=cur_tb,
+                current_visual_style=cur_vs,
+                adapt_single_reference_reel=_session_adapts_single_reference_reel(row),
+                selected_cta=selected_cta,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception as e:
+            logger.exception("generation variants failed")
+            raise HTTPException(status_code=502, detail=str(e)) from e
+
+        text = _pick_text_for_kind(package, body.kind)
+        if text:
+            _append_alternate(pool, body.kind, text)
+
+    supabase.table("generation_sessions").update(
+        {"alternates": pool, "updated_at": _now_iso()}
+    ).eq("id", session_id).eq("client_id", client_id).execute()
+
+    variants = [
+        VariantOption.model_validate(x) for x in pool.get(body.kind, []) if isinstance(x, dict)
+    ]
+    return {
+        "kind": body.kind,
+        "element_id": body.element_id,
+        "variants": variants,
+    }
 
 
 @router.get(

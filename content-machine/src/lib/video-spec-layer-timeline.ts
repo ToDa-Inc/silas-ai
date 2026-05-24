@@ -1,5 +1,5 @@
 import type { Operation } from "fast-json-patch";
-import type { VideoSpec } from "./video-spec";
+import { effectiveBackgroundDuration, type VideoSpec } from "./video-spec";
 
 const MIN_LAYER_SEC = 0.05;
 const DEFAULT_LAYER_GAP_SEC = 0.1;
@@ -32,11 +32,8 @@ function clamp(n: number, min: number, max: number): number {
 }
 
 function timelineCapSec(spec: VideoSpec): number {
-  const videoDuration =
-    spec.background.kind === "video" && spec.background.durationSec != null
-      ? Number(spec.background.durationSec)
-      : null;
-  if (videoDuration && Number.isFinite(videoDuration) && videoDuration > 0) {
+  const videoDuration = effectiveBackgroundDuration(spec.background);
+  if (videoDuration != null && Number.isFinite(videoDuration) && videoDuration > 0) {
     return videoDuration;
   }
   return Math.max(MIN_LAYER_SEC, Number(spec.totalSec) || MIN_LAYER_SEC);
@@ -50,10 +47,7 @@ function blockDurationSec(text: string): number {
 
 function recomputeTotalSec(spec: VideoSpec, blocks: VideoSpec["blocks"], hookDurationSec = spec.hook.durationSec): number {
   const maxEnd = blocks.reduce((m, b) => Math.max(m, b.endSec), 0);
-  const videoCap =
-    spec.background.kind === "video" && spec.background.durationSec != null
-      ? Number(spec.background.durationSec)
-      : null;
+  const videoCap = effectiveBackgroundDuration(spec.background);
   const desired = roundCs(Math.max(maxEnd, hookDurationSec + 0.5, 2));
   return videoCap && Number.isFinite(videoCap) && videoCap > 0 ? Math.min(desired, videoCap) : desired;
 }

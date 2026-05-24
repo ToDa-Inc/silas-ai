@@ -8,7 +8,7 @@ import type { ScrapedReelRow } from "@/lib/api";
 import { fetchReplicateSuggestions } from "@/lib/api-client";
 import { formatTheirUsualMultiplier, theirUsualMultiplierTooltip } from "@/lib/reel-provenance";
 import { ReelCardWithAnalysis } from "./reel-card-with-analysis";
-import { RecreateReelModal } from "./recreate-reel-modal";
+import { RecreateButton } from "@/components/recreate-button";
 
 type Props = {
   clientSlug: string;
@@ -32,9 +32,6 @@ export function ReplicateSection({
   const [reels, setReels] = useState<ScrapedReelRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  const [modalReel, setModalReel] = useState<ScrapedReelRow | null>(null);
-  const [modalOpen, setModalOpen] = useState(false);
 
   const canFetch = Boolean(!disabled && clientSlug.trim() && orgSlug.trim());
   const showLoading = canFetch && loading;
@@ -107,7 +104,7 @@ export function ReplicateSection({
             <p className="mt-1 text-[11px] leading-relaxed text-app-fg-subtle">
               Run a sync to refresh competitor data, or use{" "}
               <Link href="/generate" className="font-semibold text-amber-700 hover:underline dark:text-amber-400">
-                Generate
+                Create
               </Link>{" "}
               to paste a reel URL and adapt it.
             </p>
@@ -172,18 +169,24 @@ export function ReplicateSection({
                         {formatTheirUsualMultiplier(reel.outbreaker_ratio) ?? `${reel.outbreaker_ratio.toFixed(1)}×`}
                       </span>
                     ) : null}
-                    <button
-                      type="button"
+                    <RecreateButton
+                      reel={reel}
+                      clientSlug={clientSlug}
+                      orgSlug={orgSlug}
                       disabled={disabled}
-                      onClick={() => {
-                        setModalReel(reel);
-                        setModalOpen(true);
-                      }}
-                      className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[9px] font-semibold text-amber-700 hover:bg-amber-500/10 disabled:opacity-50 dark:text-amber-400"
-                    >
-                      <Sparkles className="h-2.5 w-2.5" aria-hidden />
-                      Adapt
-                    </button>
+                      disabledHint={disabledHint}
+                      renderTrigger={({ open, disabled: dis }) => (
+                        <button
+                          type="button"
+                          disabled={dis}
+                          onClick={open}
+                          className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[9px] font-semibold text-amber-700 hover:bg-amber-500/10 disabled:opacity-50 dark:text-amber-400"
+                        >
+                          <Sparkles className="h-2.5 w-2.5" aria-hidden />
+                          Adapt
+                        </button>
+                      )}
+                    />
                   </div>
                 </div>
               </ReelCardWithAnalysis>
@@ -192,18 +195,6 @@ export function ReplicateSection({
         )}
       </div>
 
-      <RecreateReelModal
-        open={modalOpen}
-        onClose={() => {
-          setModalOpen(false);
-          setModalReel(null);
-        }}
-        reel={modalReel}
-        clientSlug={clientSlug}
-        orgSlug={orgSlug}
-        disabled={disabled}
-        disabledHint={disabledHint}
-      />
     </>
   );
 }

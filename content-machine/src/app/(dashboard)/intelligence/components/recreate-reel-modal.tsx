@@ -12,6 +12,7 @@ import {
   readClientGenerationLibrariesSnapshot,
   type ClientGenerationLibraryBundle,
 } from "@/lib/api-client";
+import { generateSessionHref } from "@/lib/generate-session-url";
 
 type Props = {
   open: boolean;
@@ -725,7 +726,7 @@ export function RecreateReelModal({
               </p>
             ) : null}
             <Link
-              href={`/generate?session=${encodeURIComponent(sessionId)}`}
+              href={generateSessionHref(sessionId)}
               className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-amber-500 py-2.5 text-sm font-bold text-zinc-950"
               onClick={onClose}
             >

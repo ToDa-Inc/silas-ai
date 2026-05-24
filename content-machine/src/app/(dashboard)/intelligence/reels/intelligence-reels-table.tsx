@@ -51,7 +51,7 @@ import {
   NICHE_SIMILARITY_SCORE_TOOLTIP,
 } from "@/lib/reel-provenance";
 import { AnalyzeReelModal } from "../components/analyze-reel-modal";
-import { RecreateReelModal } from "../components/recreate-reel-modal";
+import { RecreateButton } from "@/components/recreate-button";
 import { IntelligenceProgressBar } from "../components/intelligence-progress-bar";
 import { ReelAnalysisDetailModal } from "../components/reel-analysis-detail-modal";
 
@@ -534,7 +534,6 @@ export function IntelligenceReelsTable({
   const [analyzeOpen, setAnalyzeOpen] = useState(false);
   const [analyzeInitialUrl, setAnalyzeInitialUrl] = useState<string | null>(null);
   const [analyzeSkipApify, setAnalyzeSkipApify] = useState(false);
-  const [recreateRow, setRecreateRow] = useState<ScrapedReelRow | null>(null);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [bulkMsg, setBulkMsg] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -1440,6 +1439,16 @@ export function IntelligenceReelsTable({
             {bulkMsg}
           </p>
         ) : null}
+        {isPending ? (
+          <p
+            className="inline-flex items-center gap-2 text-xs font-medium text-amber-700 dark:text-amber-300"
+            role="status"
+            aria-live="polite"
+          >
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            Updating reels…
+          </p>
+        ) : null}
 
         {/* Result count + active-filter chip strip */}
         <div className="flex flex-wrap items-center gap-2 text-[11px]">
@@ -1916,15 +1925,24 @@ export function IntelligenceReelsTable({
                           ↗
                         </a>
                         <Tooltip content="Make a version for your client in Generate — same idea, your voice.">
-                          <button
-                            type="button"
-                            disabled={disableReelAnalysis}
-                            onClick={() => setRecreateRow(row)}
-                            className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 hover:underline disabled:cursor-not-allowed disabled:opacity-40 dark:text-emerald-300/90"
-                          >
-                            <Clapperboard className="h-3 w-3 shrink-0" aria-hidden />
-                            Recreate
-                          </button>
+                          <RecreateButton
+                            reel={row}
+                            clientSlug={clientSlug}
+                            orgSlug={orgSlug}
+                            disabled={Boolean(disableReelAnalysis)}
+                            disabledHint="An analysis job is running. Wait for it to finish or dismiss the stalled bar."
+                            renderTrigger={({ open, disabled }) => (
+                              <button
+                                type="button"
+                                disabled={disabled}
+                                onClick={open}
+                                className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 hover:underline disabled:cursor-not-allowed disabled:opacity-40 dark:text-emerald-300/90"
+                              >
+                                <Clapperboard className="h-3 w-3 shrink-0" aria-hidden />
+                                Recreate
+                              </button>
+                            )}
+                          />
                         </Tooltip>
                       </div>
                     ) : (
@@ -2005,15 +2023,6 @@ export function IntelligenceReelsTable({
           setTrackedJobId(jobId);
           setBulkExpectedTotal(null);
         }}
-      />
-      <RecreateReelModal
-        open={recreateRow != null}
-        onClose={() => setRecreateRow(null)}
-        reel={recreateRow}
-        clientSlug={clientSlug}
-        orgSlug={orgSlug}
-        disabled={Boolean(disableReelAnalysis)}
-        disabledHint="An analysis job is running. Wait for it to finish or dismiss the stalled bar."
       />
       <ConfirmDialog
         open={deleteConfirmOpen}

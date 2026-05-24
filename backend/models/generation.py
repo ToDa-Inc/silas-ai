@@ -193,8 +193,10 @@ class GenerationRegenerateBody(BaseModel):
     feedback: Optional[str] = Field(None, max_length=4000)
 
 
-class GenerationFeedbackBody(BaseModel):
-    feedback: Optional[str] = Field(None, max_length=4000)
+# GenerationFeedbackBody was removed alongside the deprecated /approve and
+# /reject endpoints in the editor UX overhaul. If a future workflow needs a
+# typed "feedback string" body, reintroduce it next to the specific endpoint
+# that consumes it rather than reviving this orphan.
 
 
 class PatchGenerationSessionBody(BaseModel):
@@ -214,6 +216,88 @@ class PatchGenerationSessionBody(BaseModel):
         None,
         description="When true with existing slides, clear carousel_slides and script outline so a new template applies.",
     )
+
+
+class CoverSpec(BaseModel):
+    """Persisted cover/thumbnail editor state.
+
+    Mirrors the frontend ``CoverEditState`` so cover styling survives a refresh.
+    Stored on ``generation_sessions.cover_spec`` (JSONB). The render endpoints
+    read this as the source of truth when the request body omits overrides; the
+    rendered ``thumbnail_url`` is a derived artifact.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    crop_y: float = Field(0.5, ge=0.0, le=1.0)
+    zoom: float = Field(1.0, ge=1.0, le=3.0)
+    wash: bool = False
+    template_id: VideoTemplateId = "centered-pop"
+    theme_id: VideoThemeId = "bold-modern"
+    text_treatment: Optional[Literal["bold-outline"]] = None
+    layout: Optional[VideoSpecLayout] = None
+    appearance: Optional[VideoSpecAppearance] = None
+    hook_text: Optional[str] = Field(None, max_length=500)
+    cover_mode: Optional[Literal["ai", "image"]] = None
+    client_image_id: Optional[str] = Field(None, max_length=64)
+
+
+class PatchCoverSpecBody(BaseModel):
+    """PATCH …/generate/sessions/{id}/cover-spec — autosave the cover editor.
+
+    Full replace (not RFC 6902 patch). Smaller and simpler than video_spec
+    because the cover state is a flat ~10 fields rather than a deep tree.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    cover_spec: CoverSpec
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase F — variants endpoint (variant viewer in the Studio inspector)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class GenerateVariantsBody(BaseModel):
+    """POST …/generate/sessions/{id}/variants — request N AI alternates.
+
+    The Studio inspector's `VariantsRail` calls this when the user wants
+    side-by-side options (e.g. "give me 5 hooks", "5 caption rewrites"). The
+    server runs the existing per-section regeneration with a multi-option
+    prompt and persists the result on `generation_sessions.alternates` so
+    they survive a refresh.
+
+    `element_id` is only meaningful when `kind == "block"` (specific text
+    block). For `hook` / `cover` / `caption` it's ignored.
+
+    `n` is clamped server-side to [1, 8]. `feedback` is forwarded to the LLM
+    as an optional steering hint (same shape as the existing /regenerate call).
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    kind: Literal["hook", "block", "cover", "caption"]
+    element_id: Optional[str] = Field(None, max_length=128)
+    n: int = Field(default=5, ge=1, le=8)
+    feedback: Optional[str] = Field(None, max_length=500)
+
+
+class VariantOption(BaseModel):
+    """One alternate returned by /variants and stored on the session."""
+
+    id: str
+    text: str
+    source: Literal["auto", "variants", "refine"] = "variants"
+    created_at: str
+
+
+class GenerateVariantsResponse(BaseModel):
+    """Result envelope for POST /variants."""
+
+    kind: Literal["hook", "block", "cover", "caption"]
+    element_id: Optional[str] = None
+    variants: List[VariantOption]
 
 
 class GenerateThumbnailBody(BaseModel):
@@ -339,6 +423,8 @@ class GenerationSessionOut(BaseModel):
     render_error: Optional[str] = None
     render_progress_pct: Optional[int] = None
     thumbnail_url: Optional[str] = None
+    cover_spec: Optional[Dict[str, Any]] = None
+    alternates: Optional[Dict[str, Any]] = None
     carousel_slides: Optional[List[CarouselSlide]] = None
     selected_cta: Optional[Dict[str, Any]] = None
     selected_carousel_template: Optional[Dict[str, Any]] = None

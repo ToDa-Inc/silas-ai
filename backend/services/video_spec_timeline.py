@@ -14,6 +14,7 @@ from models.video_spec import (
     VideoSpecBlock,
     VideoSpecHook,
     VideoSpecV1,
+    effective_background_duration,
 )
 
 GAP_MIN = 0.0
@@ -262,10 +263,9 @@ def relayout_spec(spec: VideoSpecV1) -> VideoSpecV1:
     pauses = effective_pauses_sec(spec, n)
 
     cap: Optional[float] = None
-    if spec.background.kind == "video" and spec.background.durationSec is not None:
-        c = float(spec.background.durationSec)
-        if math.isfinite(c) and c > 0:
-            cap = c
+    eff = effective_background_duration(spec.background)
+    if eff is not None and math.isfinite(eff) and eff > 0:
+        cap = eff
 
     if cap is not None and n > 0:
         pause_sum = float(sum(pauses)) if pauses else 0.0
@@ -297,7 +297,7 @@ def relayout_spec(spec: VideoSpecV1) -> VideoSpecV1:
     else:
         total = _round_cs(max(min_total, float(spec.totalSec)))
 
-    new_hook = VideoSpecHook(text=spec.hook.text, durationSec=_round_cs(h))
+    new_hook = spec.hook.model_copy(update={"durationSec": _round_cs(h)})
     pauses_out: Optional[List[float]] = [_round_cs(p) for p in pauses] if n else None
     return spec.model_copy(
         update={

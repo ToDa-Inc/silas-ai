@@ -2,13 +2,10 @@
 
 import Link from "next/link";
 import type { Operation } from "fast-json-patch";
-import JSZip from "jszip";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { loadFont as loadInter } from "@remotion/google-fonts/Inter";
-import { loadFont as loadPlayfairDisplay } from "@remotion/google-fonts/PlayfairDisplay";
-import { loadFont as loadPatrickHand } from "@remotion/google-fonts/PatrickHand";
-import { loadFont as loadPoppins } from "@remotion/google-fonts/Poppins";
-import { FabricImage, Rect, StaticCanvas, Textbox } from "fabric";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+// Font loaders moved to ./editors/carousel/carousel-helpers.ts and
+// ./editors/shared/style-helpers.tsx (their module-load side effect registers
+// @font-face for the Remotion player).
 import {
   AlignCenter,
   AlignLeft,
@@ -26,12 +23,72 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
+  Search,
   Shield,
+  MoreHorizontal,
   SlidersHorizontal,
   Sparkles,
   Trash2,
   Video,
 } from "lucide-react";
+import {
+  AlignmentPad,
+  CarouselEditableEmptyState,
+  ControlGroupHeader,
+  EditorShell,
+  HelpHint,
+  SaveStatusPill,
+  ScopeLockedHint,
+  ScopeToggle,
+  SegmentedTabs,
+  type CarouselTab,
+  type ScopeMode,
+  InheritanceHint,
+  resolvedContrastLabel,
+  resolvedThemeFontLabel,
+  resolvedThemeLookLabel,
+  type CoverTab,
+  type VideoEditorTab,
+} from "@/components/editor-ui";
+import { StepHeader } from "@/components/editors/shared/StepHeader";
+import { CaptionSection } from "@/components/editors/shared/CaptionSection";
+import { CoverTextLayerEditor } from "@/components/editors/cover/CoverTextLayerEditor";
+import { BackgroundPicker } from "@/components/editors/video/BackgroundPicker";
+import { CarouselTextLayerEditor } from "@/components/editors/carousel/CarouselTextLayerEditor";
+import {
+  CAROUSEL_FONT_LABELS,
+  CAROUSEL_FONT_STACKS,
+  CAROUSEL_MIN_SLIDES,
+  type CarouselFontId,
+  carouselDisplayImageUrl,
+  carouselFontId,
+  mergeCarouselBackgroundStyle,
+  mergeCarouselTextBox,
+} from "@/components/editors/carousel/carousel-helpers";
+import { RegenInline, type RegenScope } from "@/components/editors/shared/RegenInline";
+import { AiContextSection } from "@/components/editors/shared/AiContextSection";
+import { ClientImagesPicker } from "@/components/editors/shared/ClientImagesPicker";
+import { BrollLibrarySection } from "@/components/editors/shared/BrollLibrarySection";
+import {
+  FormatGlyph,
+  LOOK_VISUAL,
+  OutlineGlyph,
+  STYLE_CHIP_OFF,
+  STYLE_CHIP_ON,
+  type UiFormat,
+  appearanceHasSavedOverrides,
+  coverPreviewFontFamily,
+  layoutFormatFromTemplateId,
+} from "@/components/editors/shared/style-helpers";
+import { CoverEditor, type CoverMode } from "@/components/editors/cover/CoverEditor";
+import { TalkingHeadEditor } from "@/components/editors/talking-head/TalkingHeadEditor";
+import { CarouselEditor } from "@/components/editors/carousel/CarouselEditor";
+import { EditorCommandPalette } from "@/components/editors/shared/EditorCommandPalette";
+import { StudioFormatTabs } from "@/components/editors/shared/StudioShell";
+import { useEditorSelection } from "@/components/editors/shared/useEditorSelection";
+import { buildVideoActions } from "@/components/editors/video/videoActions";
+import { UndoPill } from "@/components/undo-pill";
+import { useUndoKeybindings, useUndoStack } from "@/lib/use-undo-stack";
 import { useToast } from "@/components/ui/toast-provider";
 import { PostPreviewModal } from "@/components/post-preview-modal";
 import { VideoSpecPreview } from "@/components/video-spec-preview";
@@ -43,6 +100,9 @@ import {
   carouselSlideRegenerate,
   carouselSlidesGenerate,
   carouselSlidesPatch,
+  carouselSlidesZipUrl,
+  clientApiHeaders,
+  contentApiFetch,
   clientImagesList,
   creationGenerateBackground,
   creationRenderVideo,
@@ -54,6 +114,7 @@ import {
   generationGenerateThumbnail,
   generationGetSession,
   generationPatchSession,
+  patchCoverSpec,
   generationRegenerate,
   generationRegenerateCovers,
   patchCreateSession,
@@ -69,12 +130,20 @@ import {
   type TextBlock,
 } from "@/lib/api-client";
 import type { ClientCarouselTemplate } from "@/lib/api";
-import { DEFAULT_COVER_EDIT, coverPayload, type CoverEditState } from "@/lib/cover-edit";
+import {
+  DEFAULT_COVER_EDIT,
+  coverPayload,
+  coverSpecFromPayload,
+  coverSpecToPayload,
+  coverHookTextFromPayload,
+  type CoverEditState,
+} from "@/lib/cover-edit";
 import { computeCoverTextBlockPreview } from "@/lib/cover-text-layout";
 import {
   buildPreviewSpecFromSession,
   DEFAULT_APPEARANCE,
   DEFAULT_LAYOUT,
+  effectiveBackgroundDuration,
   LAYOUT_VERTICAL_OFFSET_MAX,
   LAYOUT_VERTICAL_OFFSET_MIN,
   parseVideoSpec,
@@ -117,54 +186,13 @@ import {
 const VIDEO_RENDER_POLL_INTERVAL_MS = 2500;
 const VIDEO_RENDER_MAX_POLLS = 240;
 
-const STYLE_CHIP_ON =
-  "border-amber-500 bg-amber-500/15 text-amber-200 shadow-[0_0_0_1px_rgba(245,158,11,0.4)]";
-const STYLE_CHIP_OFF = "border-app-divider text-app-fg-muted hover:border-amber-500/40 hover:text-app-fg";
+// STYLE_CHIP_ON / STYLE_CHIP_OFF extracted to ./editors/shared/style-helpers.tsx.
 
-const { fontFamily: CAROUSEL_PLAYFAIR_FONT } = loadPlayfairDisplay("normal", {
-  weights: ["700", "800"],
-  subsets: ["latin", "latin-ext"],
-});
-const { fontFamily: CAROUSEL_INTER_FONT } = loadInter("normal", {
-  weights: ["600", "700", "800"],
-  subsets: ["latin", "latin-ext"],
-});
-const { fontFamily: CAROUSEL_POPPINS_FONT } = loadPoppins("normal", {
-  weights: ["600", "700", "800"],
-  subsets: ["latin", "latin-ext"],
-});
-const { fontFamily: COVER_PATRICK_FONT } = loadPatrickHand("normal", {
-  weights: ["400"],
-  subsets: ["latin", "latin-ext"],
-});
-const CAROUSEL_FONT_STACKS = {
-  playfair: `"${CAROUSEL_PLAYFAIR_FONT}", Georgia, "Times New Roman", serif`,
-  inter: `"${CAROUSEL_INTER_FONT}", Inter, Arial, sans-serif`,
-  poppins: `"${CAROUSEL_POPPINS_FONT}", Poppins, Arial, sans-serif`,
-  georgia: `Georgia, "Times New Roman", serif`,
-} as const;
-const CAROUSEL_FONT_LABELS: Record<keyof typeof CAROUSEL_FONT_STACKS, string> = {
-  playfair: "Playfair",
-  inter: "Inter",
-  poppins: "Poppins",
-  georgia: "Georgia",
-};
-const CAROUSEL_TEXT_COLOR = "#17110d";
-const CAROUSEL_EXPORT_W = 1080;
-const CAROUSEL_EXPORT_H = 1350;
-const CAROUSEL_EDIT_W = 360;
-const CAROUSEL_EDIT_H = Math.round((CAROUSEL_EDIT_W * CAROUSEL_EXPORT_H) / CAROUSEL_EXPORT_W);
-const CAROUSEL_FONT_RATIO = 0.061;
-
-/** Stable Supabase paths are reused per slide — bust cache so previews refresh after regenerate. */
-function carouselDisplayImageUrl(url: string, cacheRev?: number): string {
-  const u = (url || "").trim();
-  if (!u || cacheRev == null || cacheRev <= 0) return u;
-  const sep = u.includes("?") ? "&" : "?";
-  return `${u}${sep}v=${cacheRev}`;
-}
-
-const CAROUSEL_MIN_SLIDES = 3;
+// Carousel font loading + constants + pure helpers extracted to
+// ./editors/carousel/carousel-helpers.ts.
+// COVER_PATRICK_FONT (PatrickHand font loader) extracted to
+// ./editors/shared/style-helpers.tsx — no longer referenced from this file
+// since the cover preview rendering moved to CoverEditor.tsx.
 
 function reindexCarouselSlides(slides: CarouselSlide[]): CarouselSlide[] {
   const sorted = [...slides].sort((a, b) => a.idx - b.idx);
@@ -176,15 +204,7 @@ function reindexCarouselSlides(slides: CarouselSlide[]): CarouselSlide[] {
   }));
 }
 
-function clientImageIdForSlide(slide: CarouselSlide, images: ClientImageRow[]): string {
-  const u = (slide.base_image_url || slide.image_url || "").trim().split("?")[0] ?? "";
-  if (!u) return "";
-  const match = images.find((img) => {
-    const file = (img.file_url || "").trim().split("?")[0] ?? "";
-    return file && (u === file || u.endsWith(file) || file.endsWith(u));
-  });
-  return match?.id ?? "";
-}
+// clientImageIdForSlide extracted to ./editors/carousel/carousel-helpers.ts.
 
 function mergeCarouselSlidesFromServer(
   serverSlides: CarouselSlide[],
@@ -228,132 +248,12 @@ function beatDurationToLayerTiming(
   return { endSec: Math.round((b.startSec + dur) * 100) / 100 };
 }
 
-/** Layout format only — bold outline (“CapCut style”) is a separate Style control. */
-type UiFormat = "center" | "card" | "stack";
+// UiFormat, FormatGlyph, OutlineGlyph, LOOK_VISUAL, coverPreviewFontFamily,
+// appearanceHasSavedOverrides, layoutFormatFromTemplateId, STYLE_CHIP_*
+// extracted to ./editors/shared/style-helpers.tsx and imported at the top.
 
-type CarouselFontId = keyof typeof CAROUSEL_FONT_STACKS;
-
-function carouselFontId(tb: CarouselTextBox): CarouselFontId {
-  const f = tb.font;
-  return f && f in CAROUSEL_FONT_STACKS ? f : "playfair";
-}
-
-function layoutFormatFromTemplateId(id: VideoSpec["templateId"] | undefined | null): UiFormat {
-  switch (id) {
-    case "bottom-card":
-    case "top-banner":
-      return "card";
-    case "stacked-cards":
-      return "stack";
-    case "centered-pop":
-    case "capcut-highlight":
-    default:
-      return "center";
-  }
-}
-
-function FormatGlyph({ format }: { format: UiFormat }) {
-  const shell =
-    "relative flex h-6 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md border border-white/10 bg-zinc-950/80";
-  switch (format) {
-    case "center":
-      return (
-        <span className={shell} aria-hidden>
-          <span className="h-2.5 w-3 rounded-sm bg-app-fg-muted/40" />
-        </span>
-      );
-    case "card":
-      return (
-        <span className={shell} aria-hidden>
-          <span className="absolute bottom-0.5 left-0.5 right-0.5 h-1 rounded-sm bg-app-fg-muted/45" />
-        </span>
-      );
-    case "stack":
-      return (
-        <span className={shell} aria-hidden>
-          <span className="flex flex-col gap-0.5">
-            <span className="mx-auto h-0.5 w-4 rounded-full bg-app-fg-muted/35" />
-            <span className="mx-auto h-0.5 w-4 rounded-full bg-app-fg-muted/35" />
-            <span className="mx-auto h-0.5 w-4 rounded-full bg-app-fg-muted/35" />
-          </span>
-        </span>
-      );
-    default:
-      return <span className={shell} aria-hidden />;
-  }
-}
-
-function OutlineGlyph() {
-  const shell =
-    "relative flex h-6 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md border border-white/10 bg-zinc-950/80";
-  return (
-    <span className={shell} aria-hidden>
-      <span
-        className="text-[8px] font-black leading-none text-app-fg-muted/80"
-        style={{ WebkitTextStroke: "0.6px currentColor" }}
-      >
-        Aa
-      </span>
-    </span>
-  );
-}
-
-const LOOK_VISUAL: {
-  id: VideoSpec["themeId"];
-  label: string;
-  title: string;
-  fontFamily: string;
-  swatches: string[];
-}[] = [
-  {
-    id: "bold-modern",
-    label: "Bold",
-    title: "Heavy sans, high contrast — good for promos",
-    fontFamily: "ui-sans-serif, system-ui",
-    swatches: ["#ffffff", "#0a0a0a", "#f59e0b"],
-  },
-  {
-    id: "editorial",
-    label: "Editorial",
-    title: "Magazine-style serif, refined spacing",
-    fontFamily: "Georgia, 'Times New Roman', serif",
-    swatches: ["#faf8f5", "#1a1a1a", "#c4a574"],
-  },
-  {
-    id: "casual-hand",
-    label: "Hand",
-    title: "Friendly handwritten feel",
-    fontFamily: "'Segoe Print', 'Bradley Hand', cursive",
-    swatches: ["#1f2937", "#ffffff", "#fbbf24"],
-  },
-  {
-    id: "clean-minimal",
-    label: "Minimal",
-    title: "Thin weights, understated glass",
-    fontFamily: "ui-sans-serif, system-ui",
-    swatches: ["rgba(20,20,20,0.55)", "#ffffff", "#94a3b8"],
-  },
-];
-
-function coverPreviewFontFamily(themeId: VideoSpec["themeId"], a: VideoSpecAppearance): string {
-  const fid = a.fontId;
-  if (fid === "poppins") return CAROUSEL_FONT_STACKS.poppins;
-  if (fid === "inter") return CAROUSEL_FONT_STACKS.inter;
-  if (fid === "playfair") return CAROUSEL_FONT_STACKS.playfair;
-  if (fid === "patrick") return `"${COVER_PATRICK_FONT}", "Segoe Print", "Bradley Hand", cursive`;
-  const look = LOOK_VISUAL.find((t) => t.id === themeId);
-  return look?.fontFamily ?? CAROUSEL_FONT_STACKS.playfair;
-}
-
-function appearanceHasSavedOverrides(a: VideoSpecAppearance): boolean {
-  return Boolean(
-    a.fontId ||
-      (a.cardTextColor && String(a.cardTextColor).trim()) ||
-      (a.overlayTextColor && String(a.overlayTextColor).trim()) ||
-      (a.cardBg && String(a.cardBg).trim()) ||
-      (a.overlayStroke && String(a.overlayStroke).trim()),
-  );
-}
+// `CarouselFontId` and `carouselFontId` extracted to
+// ./editors/carousel/carousel-helpers.ts (imported above).
 
 function blockHasSavedStyleOverrides(b: VideoSpec["blocks"][number] | undefined): boolean {
   if (!b) return false;
@@ -385,1451 +285,31 @@ function carouselTemplateSummary(template: ClientCarouselTemplate | null | undef
   return `${template.slides.length} slide${template.slides.length === 1 ? "" : "s"} · ${roles}`;
 }
 
-type RegenScope = "hooks" | "script" | "caption" | "text_blocks";
+// RegenInline + RegenScope were extracted to ./editors/shared/RegenInline.tsx.
 
-/**
- * Inline regenerate control (replaces the old global "Refine" panel).
- * Lives next to the section it regenerates and posts back to the same `/regenerate` endpoint
- * with a per-section `scope`. Optional one-line feedback is forwarded to the LLM.
- */
-function RegenInline({
-  scope,
-  busy,
-  onRegen,
-  placeholder = "How should this change? (optional)",
-}: {
-  scope: RegenScope;
-  busy: boolean;
-  onRegen: (scope: RegenScope, feedback: string) => Promise<boolean>;
-  placeholder?: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const [feedback, setFeedback] = useState("");
+// BrollLibrarySection extracted to ./editors/shared/BrollLibrarySection.tsx.
 
-  if (!open) {
-    return (
-      <button
-        type="button"
-        disabled={busy}
-        onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-1 rounded-lg border border-app-divider px-2 py-1 text-[11px] font-semibold text-app-fg-muted hover:text-app-fg disabled:opacity-40"
-      >
-        <RefreshCw className="h-3 w-3" /> Regenerate
-      </button>
-    );
-  }
+// ClientImagesPicker extracted to ./editors/shared/ClientImagesPicker.tsx.
 
-  return (
-    <div className="flex flex-1 items-center gap-1.5 sm:max-w-md">
-      <input
-        type="text"
-        autoFocus
-        value={feedback}
-        onChange={(e) => setFeedback(e.target.value)}
-        placeholder={placeholder}
-        className="glass-inset min-w-0 flex-1 rounded-lg px-2.5 py-1.5 text-[11px] text-app-fg placeholder:text-app-fg-subtle focus:outline-none focus:ring-1 focus:ring-amber-500/35"
-      />
-      <button
-        type="button"
-        disabled={busy}
-        onClick={async () => {
-          const ok = await onRegen(scope, feedback.trim());
-          if (ok) {
-            setFeedback("");
-            setOpen(false);
-          }
-        }}
-        className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-amber-500/15 px-2.5 py-1.5 text-[11px] font-bold text-app-on-amber-title hover:bg-amber-500/25 disabled:opacity-40"
-      >
-        {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-        Run
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          setOpen(false);
-          setFeedback("");
-        }}
-        className="rounded-lg p-1 text-app-fg-subtle hover:text-app-fg"
-        aria-label="Cancel"
-      >
-        ✕
-      </button>
-    </div>
-  );
-}
+// `mergeCarouselTextBox`, `mergeCarouselBackgroundStyle`, `clamp01`, and
+// `clampRange` were extracted to ./editors/carousel/carousel-helpers.ts and
+// are imported at the top of this file.
 
-function BrollLibrarySection({
-  clips,
-  loading,
-  deletingClipId,
-  selectedClipId,
-  sessionBrollClipId,
-  showClipBanner,
-  clipBannerUrl,
-  variant = "panel",
-  onPick,
-  onDelete,
-}: {
-  clips: BrollClipRow[];
-  loading: boolean;
-  deletingClipId: string | null;
-  selectedClipId: string;
-  sessionBrollClipId?: string | null;
-  showClipBanner: boolean;
-  clipBannerUrl?: string | null;
-  /** `strip`: horizontal row under the preview timeline — saves vertical space in the edit column. */
-  variant?: "panel" | "strip";
-  onPick: (id: string) => void;
-  onDelete: (id: string) => void;
-}) {
-  const isStrip = variant === "strip";
+// downloadBlob inlined into CarouselEditor (only carousel ZIP export used it).
 
-  const clipCards = clips.map((c) => {
-    const isActive = selectedClipId === c.id || sessionBrollClipId === c.id;
-    return (
-      <div
-        key={c.id}
-        className={`group relative flex flex-col gap-1.5 rounded-xl border transition-colors ${
-          isStrip ? "min-w-[104px] max-w-[118px] shrink-0 p-2" : "p-3"
-        } ${
-          isActive
-            ? "border-amber-500/45 bg-amber-500/10"
-            : "border-app-divider hover:border-white/20"
-        }`}
-      >
-        <div className="flex aspect-video items-center justify-center overflow-hidden rounded-lg bg-black/30">
-          {c.thumbnail_url ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={c.thumbnail_url} alt="" className="h-full w-full object-cover" />
-          ) : (
-            <Film className={`text-app-fg-subtle opacity-40 ${isStrip ? "h-4 w-4" : "h-5 w-5"}`} />
-          )}
-        </div>
-        <p className={`line-clamp-1 font-medium text-app-fg ${isStrip ? "text-[10px]" : "text-[11px]"}`}>
-          {c.label || `Clip ${c.id.slice(0, 6)}`}
-        </p>
-        <div className="flex gap-1">
-          <button
-            type="button"
-            disabled={loading || isActive}
-            onClick={() => void onPick(c.id)}
-            className={`flex-1 rounded-lg bg-amber-500/15 font-bold text-app-on-amber-title hover:bg-amber-500/25 disabled:opacity-40 ${
-              isStrip ? "py-0.5 text-[9px]" : "py-1 text-[10px]"
-            }`}
-          >
-            {isActive ? "Active" : "Use"}
-          </button>
-          <button
-            type="button"
-            disabled={deletingClipId === c.id}
-            onClick={() => void onDelete(c.id)}
-            className="rounded-lg p-1 text-app-fg-subtle hover:bg-red-500/10 hover:text-red-400"
-            aria-label="Delete clip"
-          >
-            {deletingClipId === c.id ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Trash2 className="h-3.5 w-3.5" />
-            )}
-          </button>
-        </div>
-      </div>
-    );
-  });
+// CarouselTextLayerEditor was extracted to
+// ./editors/carousel/CarouselTextLayerEditor.tsx — pure leaf, drag/resize stage
+// for the carousel text overlay. The canonical render path remains server-side
+// Pillow (``compose_carousel_final_png``); this canvas is for live preview only.
 
-  return (
-    <div>
-      {showClipBanner && clipBannerUrl ? (
-        <div
-          className={`flex items-center gap-3 rounded-xl border border-emerald-500/25 bg-emerald-500/[0.07] ${
-            isStrip ? "mb-2 px-3 py-2" : "mb-4 px-4 py-3"
-          }`}
-        >
-          <Film className={`shrink-0 text-emerald-500 ${isStrip ? "h-3.5 w-3.5" : "h-4 w-4"}`} />
-          <div className="min-w-0">
-            <p
-              className={`font-semibold text-emerald-700 dark:text-emerald-300 ${
-                isStrip ? "text-[10px]" : "text-xs"
-              }`}
-            >
-              B-roll set
-            </p>
-            {!isStrip ? <p className="truncate text-[11px] text-app-fg-muted">{clipBannerUrl}</p> : null}
-          </div>
-        </div>
-      ) : null}
+// CoverTextLayerEditor was extracted to ./editors/cover/CoverTextLayerEditor.tsx
+// (REEL_COVER_STAGE_W / REEL_COVER_STAGE_H moved alongside it as stage constants).
 
-      <div className={`flex items-center justify-between ${isStrip ? "mb-1.5" : "mb-3"}`}>
-        <p className={`font-semibold text-app-fg ${isStrip ? "text-[10px]" : "text-xs"}`}>
-          {isStrip ? "Pick clip" : "B-roll library"}{" "}
-          <span className="font-normal text-app-fg-muted">
-            ({clips.length})
-          </span>
-        </p>
-        <Link
-          href="/media?tab=broll"
-          className={`shrink-0 font-semibold text-sky-500 hover:underline dark:text-sky-400 ${
-            isStrip ? "text-[10px]" : "text-[11px]"
-          }`}
-        >
-          Media →
-        </Link>
-      </div>
+// CarouselSection extracted to ./editors/carousel/CarouselEditor.tsx (renamed CarouselEditor).
 
-      {clips.length === 0 ? (
-        <div
-          className={`rounded-xl border border-dashed border-app-divider/60 text-center ${
-            isStrip ? "py-4" : "py-8"
-          }`}
-        >
-          <Film className={`mx-auto text-app-fg-subtle opacity-30 ${isStrip ? "mb-1 h-5 w-5" : "mb-2 h-6 w-6"}`} />
-          <p className={`text-app-fg-subtle ${isStrip ? "mb-2 text-[10px]" : "mb-3 text-xs"}`}>No clips yet.</p>
-          <Link
-            href="/media?tab=broll"
-            className={`inline-flex items-center gap-1.5 rounded-lg bg-amber-500/15 font-bold text-app-on-amber-title hover:bg-amber-500/25 ${
-              isStrip ? "px-2 py-1 text-[10px]" : "px-3 py-1.5 text-xs"
-            }`}
-          >
-            <Plus className="h-3 w-3" />
-            Upload
-          </Link>
-        </div>
-      ) : isStrip ? (
-        <div className="-mx-0.5 flex gap-2 overflow-x-auto px-0.5 pb-0.5 pt-0.5 [scrollbar-width:thin]">
-          {clipCards}
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{clipCards}</div>
-      )}
-    </div>
-  );
-}
+// StepHeader was extracted to ./editors/shared/StepHeader.tsx.
 
-function ClientImagesPicker({
-  images,
-  selectedImageId,
-  busy,
-  onPick,
-  emptyHint = "No client images yet.",
-  compact = false,
-}: {
-  images: ClientImageRow[];
-  selectedImageId: string;
-  busy: boolean;
-  onPick: (id: string) => void;
-  emptyHint?: string;
-  /** Horizontal strip — less vertical scroll in dense editors (e.g. reel cover). */
-  compact?: boolean;
-}) {
-  return (
-    <div>
-      <div className={`flex items-center justify-between ${compact ? "mb-1.5" : "mb-3"}`}>
-        <p className={`font-semibold text-app-fg ${compact ? "text-[10px]" : "text-xs"}`}>
-          Client images{" "}
-          <span className="font-normal text-app-fg-muted">
-            ({images.length})
-          </span>
-        </p>
-        <Link
-          href="/media?tab=images"
-          className={`font-semibold text-sky-500 hover:underline dark:text-sky-400 ${compact ? "text-[10px]" : "text-[11px]"}`}
-        >
-          Media →
-        </Link>
-      </div>
-
-      {images.length === 0 ? (
-        <div
-          className={`rounded-xl border border-dashed border-app-divider/60 text-center ${compact ? "py-4" : "py-8"}`}
-        >
-          <ImageIcon className={`mx-auto text-app-fg-subtle opacity-30 ${compact ? "mb-1 h-5 w-5" : "mb-2 h-6 w-6"}`} />
-          <p className={`text-app-fg-subtle ${compact ? "mb-2 text-[10px]" : "mb-3 text-xs"}`}>{emptyHint}</p>
-          <Link
-            href="/media?tab=images"
-            className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500/15 px-3 py-1.5 text-xs font-bold text-app-on-amber-title hover:bg-amber-500/25"
-          >
-            <Plus className="h-3 w-3" />
-            Upload
-          </Link>
-        </div>
-      ) : compact ? (
-        <div className="-mx-0.5 flex max-h-[11rem] flex-wrap gap-2 overflow-y-auto overflow-x-hidden pb-1 pt-0.5 [scrollbar-width:thin] sm:max-h-none sm:flex-nowrap sm:overflow-x-auto sm:overflow-y-hidden">
-          {images.map((img) => {
-            const isActive = selectedImageId === img.id;
-            return (
-              <button
-                key={img.id}
-                type="button"
-                disabled={busy}
-                onClick={() => onPick(img.id)}
-                className={`w-[4.5rem] shrink-0 overflow-hidden rounded-lg border-2 p-0.5 text-left transition-colors sm:w-16 ${
-                  isActive
-                    ? "border-amber-500 bg-amber-500/12 ring-1 ring-amber-500/35"
-                    : "border-app-divider hover:border-amber-500/40"
-                } disabled:opacity-50`}
-              >
-                <div className="overflow-hidden rounded-md bg-black/10" style={{ aspectRatio: "9/16" }}>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={img.file_url} alt="" className="h-full w-full object-cover" />
-                </div>
-                {img.label ? (
-                  <p className="mt-0.5 truncate px-0.5 text-[9px] text-app-fg-subtle">{img.label}</p>
-                ) : null}
-              </button>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5">
-          {images.map((img) => {
-            const isActive = selectedImageId === img.id;
-            return (
-              <button
-                key={img.id}
-                type="button"
-                disabled={busy}
-                onClick={() => onPick(img.id)}
-                className={`group flex flex-col gap-1 overflow-hidden rounded-xl border p-1.5 text-left transition-colors ${
-                  isActive
-                    ? "border-amber-500/45 bg-amber-500/10"
-                    : "border-app-divider hover:border-white/20"
-                } disabled:opacity-50`}
-                title={img.label || "Use this image"}
-              >
-                <div className="overflow-hidden rounded-lg bg-black/10" style={{ aspectRatio: "9/16" }}>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={img.file_url} alt="" className="h-full w-full object-cover" />
-                </div>
-                <span className="line-clamp-1 px-1 text-[10px] text-app-fg-muted">
-                  {isActive ? "Active" : img.label || "Use"}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function mergeCarouselTextBox(slide: CarouselSlide, totalSlides: number): CarouselTextBox {
-  const defaults: CarouselTextBox =
-    slide.idx === 0
-      ? { x: 0.5, y: 0.42, width: 0.88, align: "center", scale: 1.05, card: false, font: "playfair" }
-      : slide.idx === totalSlides - 1
-        ? { x: 0.5, y: 0.85, width: 0.8, align: "center", scale: 1.0, card: true, font: "playfair" }
-        : { x: 0.5, y: 0.82, width: 0.84, align: "center", scale: 1.0, card: false, font: "playfair" };
-  return { ...defaults, ...(slide.text_box ?? {}) };
-}
-
-function mergeCarouselBackgroundStyle(slide: CarouselSlide): CarouselBackgroundStyle {
-  return {
-    overlay_color: "#ffffff",
-    overlay_opacity: 0,
-    ...(slide.background_style ?? {}),
-  };
-}
-
-function clamp01(n: number): number {
-  return Math.min(1, Math.max(0, n));
-}
-
-function clampRange(n: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, n));
-}
-
-function downloadBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
-async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
-  const res = await fetch(dataUrl);
-  return await res.blob();
-}
-
-async function addFabricBackground(canvas: StaticCanvas, url: string, width: number, height: number) {
-  const img = await FabricImage.fromURL(url, { crossOrigin: "anonymous" });
-  const scale = Math.max(width / Math.max(1, img.width || width), height / Math.max(1, img.height || height));
-  img.set({
-    left: width / 2,
-    top: height / 2,
-    originX: "center",
-    originY: "center",
-    scaleX: scale,
-    scaleY: scale,
-    selectable: false,
-    evented: false,
-  });
-  canvas.add(img);
-  canvas.sendObjectToBack(img);
-}
-
-function addFabricText(
-  canvas: StaticCanvas,
-  slide: CarouselSlide,
-  tb: CarouselTextBox,
-  width: number,
-  height: number,
-) {
-  const fontSize = Math.round(width * CAROUSEL_FONT_RATIO * tb.scale);
-  const bgStyle = mergeCarouselBackgroundStyle(slide);
-  const textbox = new Textbox(slide.text || "", {
-    left: tb.x * width,
-    top: tb.y * height,
-    originX: "center",
-    originY: "center",
-    width: width * tb.width,
-    fontFamily: CAROUSEL_FONT_STACKS[carouselFontId(tb)],
-    fontSize,
-    fontWeight: "700",
-    fill: CAROUSEL_TEXT_COLOR,
-    textAlign: tb.align,
-    lineHeight: 1.18,
-    backgroundColor: tb.card ? "rgba(255,255,255,0.88)" : "",
-    padding: tb.card ? Math.round(fontSize * 0.35) : 0,
-    selectable: false,
-    evented: false,
-    lockRotation: true,
-    borderColor: "#f59e0b",
-    cornerColor: "#f59e0b",
-    cornerStrokeColor: "#111827",
-    cornerStyle: "circle",
-    transparentCorners: false,
-  });
-  if (bgStyle.overlay_opacity > 0) {
-    const overlay = new Rect({
-      left: 0,
-      top: 0,
-      width,
-      height,
-      fill: bgStyle.overlay_color,
-      opacity: bgStyle.overlay_opacity,
-      selectable: false,
-      evented: false,
-    });
-    canvas.add(overlay);
-  }
-  canvas.add(textbox);
-  return textbox;
-}
-
-async function renderFabricSlideDataUrl(slide: CarouselSlide, totalSlides: number): Promise<string> {
-  const bgUrl = (slide.base_image_url || "").trim();
-  if (!bgUrl) throw new Error("Slide must be made editable before export.");
-  const el = document.createElement("canvas");
-  el.width = CAROUSEL_EXPORT_W;
-  el.height = CAROUSEL_EXPORT_H;
-  const canvas = new StaticCanvas(el, {
-    width: CAROUSEL_EXPORT_W,
-    height: CAROUSEL_EXPORT_H,
-    backgroundColor: "#ffffff",
-    enableRetinaScaling: false,
-  });
-  await addFabricBackground(canvas, bgUrl, CAROUSEL_EXPORT_W, CAROUSEL_EXPORT_H);
-  addFabricText(canvas, slide, mergeCarouselTextBox(slide, totalSlides), CAROUSEL_EXPORT_W, CAROUSEL_EXPORT_H);
-  canvas.renderAll();
-  const dataUrl = canvas.toDataURL({ format: "png", multiplier: 1 });
-  canvas.dispose();
-  return dataUrl;
-}
-
-function CarouselTextLayerEditor({
-  slide,
-  totalSlides,
-  busy,
-  bgCacheRev,
-  onTextBoxAdjust,
-  onCommit,
-}: {
-  slide: CarouselSlide;
-  totalSlides: number;
-  busy: boolean;
-  /** Bumps when this slide's background URL is reused (Supabase overwrite) or replaced. */
-  bgCacheRev?: number;
-  onTextBoxAdjust?: (textBox: CarouselTextBox) => void;
-  onCommit?: () => void | Promise<void>;
-}) {
-  const rawBgUrl = (slide.base_image_url || "").trim() || (slide.image_url || "").trim();
-  const bgUrl = carouselDisplayImageUrl(rawBgUrl, bgCacheRev);
-  const tb = mergeCarouselTextBox(slide, totalSlides);
-  const bgStyle = mergeCarouselBackgroundStyle(slide);
-  const stageRef = useRef<HTMLDivElement | null>(null);
-  const dragRef = useRef<{ startX: number; startY: number; tb0: CarouselTextBox } | null>(null);
-  const resizeRef = useRef<{ startX: number; startY: number; tb0: CarouselTextBox; sx: -1 | 1; sy: -1 | 1 } | null>(null);
-  const [active, setActive] = useState(false);
-
-  useEffect(() => {
-    if (!active) return;
-    const onMove = (e: PointerEvent) => {
-      const stage = stageRef.current;
-      if (!stage) return;
-      const r = stage.getBoundingClientRect();
-      const drag = dragRef.current;
-      if (drag) {
-        onTextBoxAdjust?.({
-          ...drag.tb0,
-          x: clamp01(drag.tb0.x + (e.clientX - drag.startX) / Math.max(1, r.width)),
-          y: clamp01(drag.tb0.y + (e.clientY - drag.startY) / Math.max(1, r.height)),
-        });
-        return;
-      }
-      const resize = resizeRef.current;
-      if (resize) {
-        onTextBoxAdjust?.({
-          ...resize.tb0,
-          width: clampRange(resize.tb0.width + resize.sx * ((e.clientX - resize.startX) / Math.max(1, r.width)) * 2, 0.25, 1),
-          scale: clampRange(resize.tb0.scale + resize.sy * ((e.clientY - resize.startY) / Math.max(1, r.height)) * 1.6, 0.4, 2),
-        });
-      }
-    };
-    const onUp = () => {
-      dragRef.current = null;
-      resizeRef.current = null;
-      setActive(false);
-      void onCommit?.();
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onUp);
-    return () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onUp);
-    };
-  }, [active, onCommit, onTextBoxAdjust]);
-
-  const startDrag = (e: React.PointerEvent) => {
-    if (busy || !slide.base_image_url) return;
-    e.preventDefault();
-    dragRef.current = { startX: e.clientX, startY: e.clientY, tb0: { ...tb } };
-    setActive(true);
-  };
-  const startResize = (sx: -1 | 1, sy: -1 | 1) => (e: React.PointerEvent) => {
-    if (busy || !slide.base_image_url) return;
-    e.preventDefault();
-    e.stopPropagation();
-    resizeRef.current = { startX: e.clientX, startY: e.clientY, tb0: { ...tb }, sx, sy };
-    setActive(true);
-  };
-
-  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (busy || !slide.base_image_url) return;
-    const step = e.shiftKey ? 0.025 : 0.0075;
-    const deltas: Partial<Record<string, { dx: number; dy: number }>> = {
-      ArrowLeft: { dx: -step, dy: 0 },
-      ArrowRight: { dx: step, dy: 0 },
-      ArrowUp: { dx: 0, dy: -step },
-      ArrowDown: { dx: 0, dy: step },
-    };
-    const delta = deltas[e.key];
-    if (!delta) return;
-    e.preventDefault();
-    onTextBoxAdjust?.({
-      ...tb,
-      x: clamp01(tb.x + delta.dx),
-      y: clamp01(tb.y + delta.dy),
-    });
-  };
-
-  return (
-    <div
-      ref={stageRef}
-      tabIndex={slide.base_image_url && !busy ? 0 : -1}
-      onKeyDown={onKeyDown}
-      onBlur={() => void onCommit?.()}
-      aria-label="Carousel text editor. Use arrow keys to nudge the selected text."
-      className="relative overflow-hidden rounded-2xl bg-white shadow-[0_18px_60px_rgba(0,0,0,0.35)] outline-none focus:ring-2 focus:ring-amber-500/45"
-      style={{ width: CAROUSEL_EDIT_W, height: CAROUSEL_EDIT_H }}
-    >
-      {busy ? (
-        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-black/40">
-          <Loader2 className="h-6 w-6 animate-spin text-white/90" aria-hidden />
-          <p className="text-[10px] font-medium text-white/80">Updating background…</p>
-        </div>
-      ) : null}
-      {bgUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          key={`${slide.idx}-${bgUrl}`}
-          src={bgUrl}
-          alt=""
-          className="absolute inset-0 h-full w-full object-cover"
-        />
-      ) : (
-        <div className="absolute inset-0 bg-app-soft" />
-      )}
-      {bgStyle.overlay_opacity > 0 ? (
-        <div
-          className="pointer-events-none absolute inset-0"
-          style={{
-            backgroundColor: bgStyle.overlay_color,
-            opacity: bgStyle.overlay_opacity,
-          }}
-        />
-      ) : null}
-      {slide.base_image_url ? (
-        <div
-          className="absolute cursor-grab outline outline-2 outline-amber-400/90 outline-offset-2 active:cursor-grabbing"
-          style={{
-            left: `${tb.x * 100}%`,
-            top: `${tb.y * 100}%`,
-            width: `${tb.width * 100}%`,
-            transform: "translate(-50%, -50%)",
-            color: CAROUSEL_TEXT_COLOR,
-            fontFamily: CAROUSEL_FONT_STACKS[carouselFontId(tb)],
-            fontSize: `${Math.round(CAROUSEL_EDIT_W * CAROUSEL_FONT_RATIO * tb.scale)}px`,
-            fontWeight: 700,
-            lineHeight: 1.18,
-            textAlign: tb.align,
-            background: tb.card ? "rgba(255,255,255,0.88)" : "transparent",
-            borderRadius: tb.card ? "0.45rem" : undefined,
-            padding: tb.card ? "0.35em 0.45em" : undefined,
-          }}
-          onPointerDown={startDrag}
-          title="Drag to move. Use arrow keys to nudge, Shift+Arrow for bigger nudges."
-        >
-          {slide.text || "Text"}
-          {([
-            ["left-0 top-0 -translate-x-1/2 -translate-y-1/2 cursor-nwse-resize", -1, -1],
-            ["right-0 top-0 translate-x-1/2 -translate-y-1/2 cursor-nesw-resize", 1, -1],
-            ["left-0 bottom-0 -translate-x-1/2 translate-y-1/2 cursor-nesw-resize", -1, 1],
-            ["right-0 bottom-0 translate-x-1/2 translate-y-1/2 cursor-nwse-resize", 1, 1],
-          ] as const).map(([klass, sx, sy]) => (
-            <span
-              key={klass}
-              aria-hidden
-              onPointerDown={startResize(sx, sy)}
-              className={`absolute h-3.5 w-3.5 rounded-full border border-zinc-950/60 bg-amber-400 shadow ${klass}`}
-            />
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-const REEL_COVER_STAGE_W = 360;
-const REEL_COVER_STAGE_H = Math.round((REEL_COVER_STAGE_W * 16) / 9);
-
-function CoverTextLayerEditor({
-  layout,
-  templateId,
-  coverPin,
-  previewText,
-  coverTextColor,
-  coverStroke,
-  coverCardBg,
-  coverFontFamily,
-  coverContrast,
-  textTreatment,
-  mode,
-  selectedImage,
-  thumbnailUrl,
-  thumbnailBusy,
-  wash,
-  cropY,
-  zoom,
-  disabled,
-  onLayoutPatch,
-}: {
-  layout: VideoSpecLayout;
-  templateId: VideoSpec["templateId"];
-  coverPin: "top" | "center" | "bottom";
-  previewText: string;
-  coverTextColor: string;
-  coverStroke: string;
-  coverCardBg: string;
-  coverFontFamily: string;
-  coverContrast: ContrastId;
-  textTreatment?: "bold-outline";
-  mode: "ai" | "image";
-  selectedImage: ClientImageRow | null;
-  thumbnailUrl: string | null;
-  thumbnailBusy: boolean;
-  wash: boolean;
-  cropY: number;
-  zoom: number;
-  disabled?: boolean;
-  onLayoutPatch: (patch: Partial<VideoSpecLayout>) => void;
-}) {
-  const stageRef = useRef<HTMLDivElement | null>(null);
-  const dragRef = useRef<{
-    startX: number;
-    startY: number;
-    textPanX0: number;
-    verticalOffset0: number;
-  } | null>(null);
-  const [dragActive, setDragActive] = useState(false);
-  const [stageW, setStageW] = useState(REEL_COVER_STAGE_W);
-  const [block, setBlock] = useState<ReturnType<typeof computeCoverTextBlockPreview> | null>(null);
-  const thumbUrlRef = useRef(thumbnailUrl);
-  const [coverLivePreview, setCoverLivePreview] = useState(true);
-
-  useEffect(() => {
-    if (thumbnailUrl !== thumbUrlRef.current) {
-      thumbUrlRef.current = thumbnailUrl;
-      if (thumbnailUrl) setCoverLivePreview(false);
-    }
-  }, [thumbnailUrl]);
-
-  useEffect(() => {
-    setCoverLivePreview(true);
-  }, [previewText, layout, templateId, wash, cropY, zoom, textTreatment]);
-
-  useEffect(() => {
-    const el = stageRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => {
-      const w = el.getBoundingClientRect().width;
-      if (w > 0) setStageW(w);
-    });
-    ro.observe(el);
-    const w0 = el.getBoundingClientRect().width;
-    if (w0 > 0) setStageW(w0);
-    return () => ro.disconnect();
-  }, []);
-
-  useEffect(() => {
-    if (!dragActive) return;
-    const onMove = (e: PointerEvent) => {
-      const drag = dragRef.current;
-      const stage = stageRef.current;
-      if (!drag || !stage) return;
-      const r = stage.getBoundingClientRect();
-      const dx = e.clientX - drag.startX;
-      const dy = e.clientY - drag.startY;
-      const w = Math.max(1, r.width);
-      const h = Math.max(1, r.height);
-      onLayoutPatch({
-        textPanX: clampRange(drag.textPanX0 + dx / w, -1, 1),
-        verticalOffset: clampRange(drag.verticalOffset0 + dy / h, LAYOUT_VERTICAL_OFFSET_MIN, LAYOUT_VERTICAL_OFFSET_MAX),
-      });
-    };
-    const onUp = () => {
-      dragRef.current = null;
-      setDragActive(false);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onUp);
-    return () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onUp);
-    };
-  }, [dragActive, onLayoutPatch]);
-
-  const startDrag = (e: React.PointerEvent) => {
-    if (disabled || thumbnailBusy) return;
-    e.preventDefault();
-    dragRef.current = {
-      startX: e.clientX,
-      startY: e.clientY,
-      textPanX0: layout.textPanX ?? 0,
-      verticalOffset0: layout.verticalOffset,
-    };
-    setDragActive(true);
-  };
-
-  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (disabled || thumbnailBusy) return;
-    const step = e.shiftKey ? 0.04 : 0.015;
-    const deltas: Partial<Record<string, { dpx: number; dpy: number }>> = {
-      ArrowLeft: { dpx: -step, dpy: 0 },
-      ArrowRight: { dpx: step, dpy: 0 },
-      ArrowUp: { dpx: 0, dpy: -step },
-      ArrowDown: { dpx: 0, dpy: step },
-    };
-    const d = deltas[e.key];
-    if (!d) return;
-    e.preventDefault();
-    onLayoutPatch({
-      textPanX: clampRange((layout.textPanX ?? 0) + d.dpx, -1, 1),
-      verticalOffset: clampRange(layout.verticalOffset + d.dpy, LAYOUT_VERTICAL_OFFSET_MIN, LAYOUT_VERTICAL_OFFSET_MAX),
-    });
-  };
-
-  const sw = stageW > 0 ? stageW : REEL_COVER_STAGE_W;
-  const sh = REEL_COVER_STAGE_H;
-
-  useLayoutEffect(() => {
-    setBlock(
-      computeCoverTextBlockPreview(previewText, sw, sh, {
-        templateId,
-        layout,
-        textPosition: coverPin,
-        fontFamily: coverFontFamily,
-      }),
-    );
-  }, [previewText, sw, sh, templateId, layout, coverPin, coverFontFamily]);
-
-  /** Image mode: live overlay on client photo. AI: show baked PNG until headline/layout changes. */
-  const showLiveOverlay = mode === "image" || coverLivePreview || !thumbnailUrl;
-  const strokePx =
-    block && textTreatment === "bold-outline" ? Math.max(2, Math.round(block.fontSizePx / 18)) : 0;
-  const dragChrome =
-    dragActive ? "outline outline-2 outline-amber-400/80 outline-offset-1" : "outline-none";
-
-  return (
-    <div
-      ref={stageRef}
-      tabIndex={disabled || thumbnailBusy ? -1 : 0}
-      onKeyDown={onKeyDown}
-      aria-label="Cover text editor. Drag the headline to move it. Arrow keys nudge; Shift+Arrow for larger steps."
-      className="relative shrink-0 overflow-hidden rounded-2xl bg-zinc-950 shadow-[0_18px_60px_rgba(0,0,0,0.35)] outline-none ring-1 ring-white/5 focus:ring-2 focus:ring-amber-500/45"
-      style={{ width: REEL_COVER_STAGE_W, height: REEL_COVER_STAGE_H }}
-    >
-      {thumbnailBusy ? (
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-black/45">
-          <Loader2 className="h-6 w-6 animate-spin text-app-fg-subtle" />
-          <p className="text-[10px] text-app-fg-muted">{mode === "ai" ? "~30–60s" : "few seconds"}</p>
-        </div>
-      ) : null}
-      {mode === "image" && selectedImage ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={selectedImage.file_url}
-          alt=""
-          className={`absolute inset-0 h-full w-full object-cover ${wash ? "grayscale opacity-70" : ""}`}
-          style={{
-            objectPosition: `50% ${Math.round(cropY * 100)}%`,
-            transform: `scale(${zoom})`,
-          }}
-        />
-      ) : thumbnailUrl && !showLiveOverlay ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={thumbnailUrl} alt="Reel cover" className="absolute inset-0 block h-full w-full object-cover" />
-      ) : (
-        <div className="absolute inset-0 h-full w-full bg-[radial-gradient(circle_at_50%_35%,rgba(255,255,255,0.9),rgba(245,210,160,0.45),rgba(20,20,20,0.2))]" />
-      )}
-      {block && showLiveOverlay ? (
-        <>
-          {block.cardLike ? (
-            <div
-              aria-hidden
-              className="pointer-events-none absolute"
-              style={{
-                left: block.cardLeftPx + block.textPanXPx,
-                top: block.cardTopPx,
-                width: block.cardWidthPx,
-                height: block.cardHeightPx,
-                background: coverCardBg,
-                borderRadius: block.borderRadiusPx,
-              }}
-            />
-          ) : null}
-          <div
-            className={`absolute font-bold ${disabled || thumbnailBusy ? "cursor-default" : "cursor-grab active:cursor-grabbing"} ${dragChrome}`}
-            style={{
-              left: block.leftPx,
-              top: block.topPx,
-              width: block.widthPx,
-              transform: `translateX(${block.textPanXPx}px)`,
-              textAlign: layout.textAlign,
-              fontSize: block.fontSizePx,
-              fontFamily: coverFontFamily,
-              color: coverTextColor,
-            }}
-            onPointerDown={startDrag}
-            title="Drag to move. Arrow keys to nudge; Shift+Arrow for bigger nudges."
-          >
-            {block.lines.map((line, i) => (
-              <div
-                key={`${i}-${line}`}
-                style={{
-                  marginBottom: i < block.lines.length - 1 ? block.lineGapPx : 0,
-                  lineHeight: `${Math.max(block.lineHeightsPx[i] ?? 0, Math.ceil(block.fontSizePx * 1.08))}px`,
-                  WebkitTextStroke: strokePx > 0 ? `${strokePx}px ${coverStroke}` : undefined,
-                  textShadow:
-                    textTreatment !== "bold-outline" && coverContrast === "light"
-                      ? "0 2px 8px rgba(0,0,0,0.9)"
-                      : undefined,
-                }}
-              >
-                {line}
-              </div>
-            ))}
-          </div>
-        </>
-      ) : null}
-    </div>
-  );
-}
-
-function CarouselSection({
-  sessionId,
-  slides,
-  images,
-  busy,
-  bgCacheRevByIdx,
-  regeneratingIdx,
-  generating,
-  convertingEditable,
-  count,
-  countLocked,
-  countHint,
-  onCountChange,
-  onGenerateAll,
-  onConvertToEditable,
-  onRegenerateOne,
-  onTextEdit,
-  onLayoutCommit,
-  onTextBoxAdjust,
-  onBackgroundStyleAdjust,
-  onApplyTextStyleToAll,
-  onApplyBackgroundToAll,
-  onRemoveSlide,
-  onError,
-}: {
-  sessionId: string;
-  slides: CarouselSlide[];
-  images: ClientImageRow[];
-  busy: boolean;
-  bgCacheRevByIdx: Record<number, number>;
-  regeneratingIdx: number | null;
-  generating: boolean;
-  convertingEditable: boolean;
-  count: number;
-  /** When true, slide count comes from the saved carousel recipe (backend matches template). */
-  countLocked?: boolean;
-  countHint?: string;
-  onCountChange: (n: number) => void;
-  onGenerateAll: () => void | Promise<void>;
-  onConvertToEditable: () => void | Promise<void>;
-  onRegenerateOne: (
-    idx: number,
-    text: string,
-    source: "ai" | "client_image",
-    clientImageId?: string,
-  ) => void | Promise<void>;
-  onTextEdit: (idx: number, text: string) => void;
-  onLayoutCommit: (idx: number) => void | Promise<void>;
-  onTextBoxAdjust: (idx: number, text_box: CarouselTextBox) => void;
-  onBackgroundStyleAdjust: (idx: number, background_style: CarouselBackgroundStyle) => void;
-  onApplyTextStyleToAll: (sourceIdx: number) => void | Promise<void>;
-  onApplyBackgroundToAll: (sourceIdx: number) => void | Promise<void>;
-  onRemoveSlide: (idx: number) => void | Promise<void>;
-  onError: (message: string) => void;
-}) {
-  const [exportBusy, setExportBusy] = useState(false);
-  const [selectedIdx, setSelectedIdx] = useState(0);
-  const slideCountLabel = `${slides.length} slide${slides.length === 1 ? "" : "s"}`;
-  const needsEditableConversion = slides.some((s) => !(s.base_image_url || "").trim());
-  const selectedSlide = slides.find((s) => s.idx === selectedIdx) ?? slides[0] ?? null;
-  const selectedTextBox = selectedSlide ? mergeCarouselTextBox(selectedSlide, slides.length) : null;
-  const selectedBackgroundStyle = selectedSlide ? mergeCarouselBackgroundStyle(selectedSlide) : null;
-  const selectedHasCleanBase = Boolean((selectedSlide?.base_image_url || "").trim());
-  const selectedBgRev = selectedSlide ? (bgCacheRevByIdx[selectedSlide.idx] ?? 0) : 0;
-  const slideBusy = busy && regeneratingIdx === selectedSlide?.idx;
-  const selectedClientImageId = selectedSlide ? clientImageIdForSlide(selectedSlide, images) : "";
-  const canRemoveSlide = slides.length > CAROUSEL_MIN_SLIDES;
-
-  useEffect(() => {
-    if (slides.length === 0) return;
-    if (!slides.some((s) => s.idx === selectedIdx)) {
-      const sorted = [...slides].sort((a, b) => a.idx - b.idx);
-      const pos = Math.min(Math.max(0, selectedIdx), sorted.length - 1);
-      setSelectedIdx(sorted[pos]?.idx ?? 0);
-    }
-  }, [selectedIdx, slides]);
-
-  const onDownloadZip = useCallback(async () => {
-    if (slides.length === 0 || needsEditableConversion) return;
-    setExportBusy(true);
-    try {
-      await document.fonts?.ready;
-      const zip = new JSZip();
-      for (const slide of slides) {
-        const dataUrl = await renderFabricSlideDataUrl(slide, slides.length);
-        const blob = await dataUrlToBlob(dataUrl);
-        zip.file(`slide_${slide.idx + 1}.png`, blob);
-      }
-      const out = await zip.generateAsync({ type: "blob" });
-      downloadBlob(out, `carousel_${sessionId}.zip`);
-    } catch (e) {
-      onError(e instanceof Error ? e.message : "Could not export carousel.");
-    } finally {
-      setExportBusy(false);
-    }
-  }, [needsEditableConversion, onError, sessionId, slides]);
-
-  return (
-    <div className="space-y-4">
-      <div className="glass rounded-2xl border border-app-divider/80 p-5 md:p-6">
-        <StepHeader n={1} label="Carousel slides" done={slides.length > 0} />
-
-        <div className="mb-4 flex flex-wrap items-end gap-4">
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[11px] font-semibold text-app-fg-muted">
-              Slide count
-              <span className="ml-1 font-normal">(3–10)</span>
-              {countLocked ? (
-                <span className="ml-1 block font-normal text-app-fg-subtle">
-                  — fixed by your carousel recipe
-                </span>
-              ) : null}
-            </label>
-            <div className="flex items-center gap-3">
-              <input
-                type="range"
-                min={3}
-                max={10}
-                step={1}
-                value={count}
-                onChange={(e) => onCountChange(Number(e.target.value))}
-                className="w-44 accent-amber-500 disabled:opacity-50"
-                disabled={generating || busy || countLocked}
-              />
-              <span className="min-w-[2ch] text-sm font-bold text-app-fg">{count}</span>
-            </div>
-          </div>
-
-          {countHint ? (
-            <p className="w-full text-[11px] leading-relaxed text-app-fg-subtle">{countHint}</p>
-          ) : null}
-
-          <button
-            type="button"
-            disabled={generating || busy}
-            onClick={() => void onGenerateAll()}
-            className="inline-flex items-center gap-2 rounded-xl bg-amber-500/15 px-4 py-2 text-xs font-bold text-app-on-amber-title hover:bg-amber-500/25 disabled:opacity-50"
-          >
-            {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-            {generating ? "Generating…" : slides.length > 0 ? "Regenerate all slides" : "Generate slides"}
-          </button>
-
-          {slides.length > 0 && (
-            <button
-              type="button"
-              disabled={busy || exportBusy || needsEditableConversion}
-              onClick={() => void onDownloadZip()}
-              className="ml-auto inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 text-xs font-bold text-zinc-950 shadow-md shadow-emerald-900/25 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-              title={needsEditableConversion ? "Make slides editable before downloading" : "Download exactly what you see"}
-            >
-              {exportBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-              {exportBusy ? "Exporting..." : "Download all (.zip)"}
-            </button>
-          )}
-        </div>
-
-        {slides.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-app-divider/60 py-8 text-center text-xs text-app-fg-subtle">
-            No slides yet — pick a count and hit Generate slides. Slide&nbsp;1 becomes your Instagram cover automatically.
-          </p>
-        ) : selectedSlide && selectedTextBox && selectedBackgroundStyle ? (
-          <>
-            {needsEditableConversion ? (
-              <div className="mb-3 flex flex-wrap items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2">
-                <p className="min-w-0 flex-1 text-[11px] leading-relaxed text-app-fg-muted">
-                  This carousel is a flat PNG. Make it editable once, then the center canvas becomes the source of truth.
-                </p>
-                <button
-                  type="button"
-                  disabled={busy || convertingEditable}
-                  onClick={() => void onConvertToEditable()}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-1.5 text-[11px] font-bold text-zinc-950 hover:opacity-90 disabled:opacity-50"
-                >
-                  {convertingEditable ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Sparkles className="h-3.5 w-3.5" />
-                  )}
-                  {convertingEditable ? "Converting..." : "Make editable"}
-                </button>
-              </div>
-            ) : (
-              <p className="mb-3 text-[11px] text-app-fg-muted">
-                {slideCountLabel} · Select a slide, drag the text on the big canvas, then download exactly that render.
-              </p>
-            )}
-            <nav
-              aria-label="Carousel slides"
-              className="mb-1 flex items-end gap-2.5 overflow-x-auto pb-2 [scrollbar-width:thin]"
-            >
-              {slides.map((slide) => {
-                const active = slide.idx === selectedSlide.idx;
-                const thumbRaw =
-                  (slide.base_image_url || "").trim() || (slide.image_url || "").trim();
-                const thumbUrl = carouselDisplayImageUrl(thumbRaw, bgCacheRevByIdx[slide.idx] ?? 0);
-                const isRegenerating = busy && regeneratingIdx === slide.idx;
-                return (
-                  <div key={slide.idx} className="relative shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedIdx(slide.idx)}
-                      className={`block w-[3.75rem] rounded-xl border-2 p-1 text-left transition sm:w-[4.25rem] ${
-                        active
-                          ? "border-amber-500 bg-amber-500/12"
-                          : "border-app-divider/80 bg-app-chip-bg/40 hover:border-amber-500/45"
-                      }`}
-                    >
-                      <div
-                        className="relative overflow-hidden rounded-lg bg-black/15"
-                        style={{ aspectRatio: "9/16" }}
-                      >
-                        {thumbUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            key={`thumb-${slide.idx}-${thumbUrl}`}
-                            src={thumbUrl}
-                            alt=""
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          <div className="flex aspect-[9/16] min-h-[52px] items-center justify-center text-[9px] text-app-fg-subtle">
-                            —
-                          </div>
-                        )}
-                        {isRegenerating ? (
-                          <div className="absolute inset-0 flex items-center justify-center bg-black/45">
-                            <Loader2 className="h-3.5 w-3.5 animate-spin text-white/90" aria-hidden />
-                          </div>
-                        ) : null}
-                        <span
-                          className={`absolute bottom-0.5 left-0.5 rounded px-1 py-px text-[8px] font-bold leading-none ${
-                            active ? "bg-amber-500 text-zinc-950" : "bg-black/55 text-white"
-                          }`}
-                        >
-                          {slide.idx + 1}
-                        </span>
-                      </div>
-                    </button>
-                    {canRemoveSlide ? (
-                      <button
-                        type="button"
-                        disabled={busy}
-                        aria-label={`Remove slide ${slide.idx + 1}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void onRemoveSlide(slide.idx);
-                        }}
-                        className="absolute right-2 top-2 z-10 flex h-4 w-4 items-center justify-center rounded-full bg-black/65 text-white/90 shadow-sm hover:bg-red-600 disabled:opacity-40"
-                      >
-                        <Trash2 className="h-2.5 w-2.5" strokeWidth={2.5} aria-hidden />
-                      </button>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </nav>
-
-            <div className="grid gap-6 lg:grid-cols-[minmax(0,400px)_minmax(280px,1fr)] lg:items-start">
-              <div className="flex flex-col items-center gap-3 lg:items-start">
-                <CarouselTextLayerEditor
-                  key={`editor-${selectedSlide.idx}-${selectedBgRev}`}
-                  slide={selectedSlide}
-                  totalSlides={slides.length}
-                  busy={slideBusy}
-                  bgCacheRev={selectedBgRev}
-                  onTextBoxAdjust={(next) => onTextBoxAdjust(selectedSlide.idx, next)}
-                  onCommit={() => void onLayoutCommit(selectedSlide.idx)}
-                />
-                {!selectedHasCleanBase ? (
-                  <p className="max-w-[360px] rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-center text-[11px] leading-relaxed text-app-fg-muted">
-                    This slide is still a flat image. Use <span className="font-semibold">Make editable</span> to split
-                    background and text.
-                  </p>
-                ) : null}
-              </div>
-
-              <div className="flex min-h-0 flex-col gap-5 rounded-2xl border border-app-divider/90 bg-app-chip-bg/25 p-5 shadow-sm">
-                <div className="space-y-1 border-b border-app-divider/60 pb-4">
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">
-                    Slide {selectedSlide.idx + 1}
-                    {selectedSlide.idx === 0 ? (
-                      <span className="ml-2 rounded-md bg-amber-500/20 px-1.5 py-0.5 text-amber-700 dark:text-amber-300">
-                        Cover
-                      </span>
-                    ) : null}
-                  </p>
-                  <p className="text-xs leading-relaxed text-app-fg-muted">
-                    {selectedHasCleanBase
-                      ? "Drag the text on the canvas. These controls fine-tune the same layer."
-                      : "Make the slide editable before moving or styling text."}
-                  </p>
-                </div>
-
-                <label className="block space-y-2">
-                  <span className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Slide text</span>
-                  <div className="overflow-hidden rounded-xl border border-app-divider bg-app-bg/40 ring-1 ring-black/5 focus-within:ring-2 focus-within:ring-amber-500/40">
-                    <textarea
-                      key={`carousel-text-${selectedSlide.idx}`}
-                      value={selectedSlide.text}
-                      onChange={(e) => onTextEdit(selectedSlide.idx, e.target.value)}
-                      rows={6}
-                      disabled={slideBusy}
-                      placeholder="Write the headline for this slide…"
-                      className="block min-h-[7.5rem] w-full resize-y border-0 bg-transparent px-3.5 py-3 text-sm leading-relaxed text-app-fg placeholder:text-app-fg-subtle focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
-                    />
-                  </div>
-                </label>
-
-                {selectedHasCleanBase ? (
-                  <div className="space-y-5 border-t border-app-divider/60 pt-1">
-                    <div className="space-y-2">
-                      <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Position</p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {(
-                          [
-                            { label: "Top", patch: { x: 0.5, y: 0.22 } },
-                            { label: "Middle", patch: { x: 0.5, y: 0.5 } },
-                            { label: "Bottom", patch: { x: 0.5, y: 0.82 } },
-                          ] as const
-                        ).map((opt) => (
-                          <button
-                            key={opt.label}
-                            type="button"
-                            disabled={busy}
-                            onClick={() => {
-                              onTextBoxAdjust(selectedSlide.idx, { ...selectedTextBox, ...opt.patch });
-                              void onLayoutCommit(selectedSlide.idx);
-                            }}
-                            className="rounded-lg border border-app-divider px-3 py-1.5 text-xs font-semibold text-app-fg-muted hover:text-app-fg disabled:opacity-40"
-                          >
-                            {opt.label}
-                          </button>
-                        ))}
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() => {
-                            onTextBoxAdjust(selectedSlide.idx, { ...selectedTextBox, x: 0.5 });
-                            void onLayoutCommit(selectedSlide.idx);
-                          }}
-                          className="rounded-lg border border-app-divider px-3 py-1.5 text-xs font-semibold text-app-fg-muted hover:text-app-fg disabled:opacity-40"
-                        >
-                          Center horizontally
-                        </button>
-                      </div>
-                      <p className="text-[10px] leading-relaxed text-app-fg-subtle">
-                        Drag freely on the canvas. Use presets when you want a clean starting point.
-                      </p>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Font</p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {(Object.keys(CAROUSEL_FONT_STACKS) as CarouselFontId[]).map((font) => {
-                          const active = carouselFontId(selectedTextBox) === font;
-                          return (
-                            <button
-                              key={font}
-                              type="button"
-                              aria-pressed={active}
-                              onClick={() => {
-                                onTextBoxAdjust(selectedSlide.idx, { ...selectedTextBox, font });
-                                void onLayoutCommit(selectedSlide.idx);
-                              }}
-                              className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
-                                active ? STYLE_CHIP_ON : STYLE_CHIP_OFF
-                              }`}
-                              style={{ fontFamily: CAROUSEL_FONT_STACKS[font] }}
-                            >
-                              {CAROUSEL_FONT_LABELS[font]}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Alignment</p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {(["left", "center", "right"] as const).map((align) => {
-                          const active = selectedTextBox.align === align;
-                          return (
-                            <button
-                              key={align}
-                              type="button"
-                              aria-pressed={active}
-                              onClick={() => {
-                                onTextBoxAdjust(selectedSlide.idx, { ...selectedTextBox, align });
-                                void onLayoutCommit(selectedSlide.idx);
-                              }}
-                              className={`rounded-lg border px-3 py-1.5 text-xs font-semibold capitalize transition ${
-                                active ? STYLE_CHIP_ON : STYLE_CHIP_OFF
-                              }`}
-                            >
-                              {align}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    <label className="flex cursor-pointer items-center gap-2 text-xs text-app-fg-muted">
-                      <input
-                        type="checkbox"
-                        checked={selectedTextBox.card}
-                        disabled={busy}
-                        onChange={(e) => {
-                          onTextBoxAdjust(selectedSlide.idx, { ...selectedTextBox, card: e.target.checked });
-                          void onLayoutCommit(selectedSlide.idx);
-                        }}
-                        className="rounded border-app-divider"
-                      />
-                      Card behind text
-                    </label>
-
-                    <LayoutSlider
-                      label="Text box width"
-                      leftHint="Narrow"
-                      rightHint="Wide"
-                      min={0.25}
-                      max={1}
-                      step={0.01}
-                      value={selectedTextBox.width}
-                      disabled={busy}
-                      formatValue={(v) => `${Math.round(v * 100)}%`}
-                      onChange={(v) => onTextBoxAdjust(selectedSlide.idx, { ...selectedTextBox, width: v })}
-                      onCommit={() => void onLayoutCommit(selectedSlide.idx)}
-                    />
-                    <p className="text-[10px] leading-relaxed text-app-fg-subtle">
-                      Width changes wrapping. Size changes the letter scale.
-                    </p>
-                    <LayoutSlider
-                      label="Text size"
-                      leftHint="Smaller"
-                      rightHint="Larger"
-                      min={0.4}
-                      max={2}
-                      step={0.05}
-                      value={selectedTextBox.scale}
-                      disabled={busy}
-                      formatValue={(v) => `${Math.round(v * 100)}%`}
-                      onChange={(v) => onTextBoxAdjust(selectedSlide.idx, { ...selectedTextBox, scale: v })}
-                      onCommit={() => void onLayoutCommit(selectedSlide.idx)}
-                    />
-                  </div>
-                ) : null}
-
-                <div className="space-y-4 border-t border-app-divider/60 pt-5">
-                  <div className="space-y-2">
-                    <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">
-                      Background image
-                    </p>
-                    <p className="text-[10px] leading-relaxed text-app-fg-subtle">
-                      Pick any image from your Media library for this slide.
-                    </p>
-                    <ClientImagesPicker
-                      images={images}
-                      selectedImageId={selectedClientImageId}
-                      busy={busy}
-                      compact
-                      onPick={(id) => {
-                        void onRegenerateOne(selectedSlide.idx, selectedSlide.text || "", "client_image", id);
-                      }}
-                      emptyHint="Upload images in Media → Images, then pick one here."
-                    />
-                  </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void onRegenerateOne(selectedSlide.idx, selectedSlide.text || "", "ai")}
-                      className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-app-divider px-3 py-2 text-xs font-bold text-app-fg-muted hover:text-app-fg disabled:opacity-40"
-                    >
-                      <RefreshCw className="h-3.5 w-3.5" />
-                      {selectedHasCleanBase ? "Regenerate with AI" : "Make editable (AI)"}
-                    </button>
-                    {canRemoveSlide ? (
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => void onRemoveSlide(selectedSlide.idx)}
-                        className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-red-500/30 px-3 py-2 text-xs font-bold text-red-600 hover:bg-red-500/10 disabled:opacity-40 dark:text-red-400"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        Remove slide
-                      </button>
-                    ) : null}
-                  </div>
-
-                  <div className="w-full space-y-3">
-                    <LayoutSlider
-                      label="Background wash"
-                      leftHint="Original"
-                      rightHint="Washed"
-                      min={0}
-                      max={1}
-                      step={0.025}
-                      value={selectedBackgroundStyle.overlay_opacity}
-                      disabled={busy}
-                      formatValue={(v) => `${Math.round(v * 100)}%`}
-                      onChange={(v) =>
-                        onBackgroundStyleAdjust(selectedSlide.idx, {
-                          ...selectedBackgroundStyle,
-                          overlay_opacity: v,
-                        })
-                      }
-                      onCommit={() => void onLayoutCommit(selectedSlide.idx)}
-                    />
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => void onApplyBackgroundToAll(selectedSlide.idx)}
-                        className="rounded-lg border border-app-divider px-3 py-1.5 text-xs font-semibold text-app-fg-muted hover:text-app-fg disabled:opacity-40"
-                      >
-                        Apply background fade to all
-                      </button>
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => void onApplyTextStyleToAll(selectedSlide.idx)}
-                        className="rounded-lg border border-app-divider px-3 py-1.5 text-xs font-semibold text-app-fg-muted hover:text-app-fg disabled:opacity-40"
-                      >
-                        Apply text style to all
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-          </>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function StepHeader({
-  n,
-  label,
-  done,
-  children,
-}: {
-  n: number;
-  label: string;
-  done: boolean;
-  children?: React.ReactNode;
-}) {
-  return (
-    <div className="mb-4 flex items-center gap-3">
-      <div
-        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-          done ? "bg-emerald-500/20 text-emerald-400" : "bg-amber-500/20 text-amber-600 dark:text-amber-400"
-        }`}
-      >
-        {done ? <CheckCircle2 className="h-4 w-4" /> : n}
-      </div>
-      <h2 className="flex-1 text-sm font-semibold text-app-fg">{label}</h2>
-      {children}
-    </div>
-  );
-}
-
-type CoverMode = "ai" | "image";
+// CoverMode is re-exported via the CoverEditor module imported at the top.
 
 /** Active source tab for the merged Visual+Render card. Maps to backend `background_type`:
  *  ai → generated_image, image → client_image, clip → broll. */
@@ -1842,716 +322,132 @@ function bgSourceFromSession(t: string | null | undefined): BgSource {
   return "ai";
 }
 
-function ReelCoverSection({
-  hooks,
-  coverOptions,
-  coverRegenBusy,
-  onRegenerateCovers,
-  images,
-  thumbnailUrl,
-  thumbnailBusy,
-  coverText,
-  selectedImageId,
-  selectedCoverTemplate,
-  coverEdit,
-  mode,
-  onModeChange,
-  onCoverTextChange,
-  onCoverEditChange,
-  onSelectImage,
-  onGenerateAi,
-  onComposeFromImage,
-  step,
-}: {
-  hooks: Array<{ text?: string }>;
-  /** AI-written cover headlines (cover_text_options on the session). When present these
-   *  drive the chips; otherwise we fall back to spoken-line hooks for legacy sessions. */
-  coverOptions: string[];
-  coverRegenBusy: boolean;
-  onRegenerateCovers: () => void;
-  images: ClientImageRow[];
-  thumbnailUrl: string | null;
-  thumbnailBusy: boolean;
-  coverText: string;
-  selectedImageId: string;
-  selectedCoverTemplate?: GenerationSession["selected_cover_template"] | null;
-  coverEdit: CoverEditState;
-  mode: CoverMode;
-  onModeChange: (m: CoverMode) => void;
-  onCoverTextChange: (s: string) => void;
-  onCoverEditChange: (next: CoverEditState) => void;
-  onSelectImage: (id: string) => void;
-  onGenerateAi: () => void;
-  onComposeFromImage: () => void;
-  step: number;
-}) {
-  const usingCoverOptions = coverOptions.length > 0;
-  const chipItems: string[] = usingCoverOptions
-    ? coverOptions
-    : hooks.map((h) => h?.text ?? "").filter(Boolean);
-  const selectedImage = images.find((img) => img.id === selectedImageId) ?? null;
-  const previewText = coverText.trim() || "Cover headline";
-  const coverFormat = layoutFormatFromTemplateId(coverEdit.templateId);
-  const coverPin = coverEdit.templateId === "top-banner" ? "top" : coverEdit.layout.verticalAnchor ?? "center";
-  const coverContrast = inferContrast(coverEdit.appearance, coverEdit.templateId, coverEdit.themeId as VideoThemeId);
-  const coverHasAppearanceOverrides = appearanceHasSavedOverrides(coverEdit.appearance);
-  const coverFontFamily = coverPreviewFontFamily(coverEdit.themeId, coverEdit.appearance);
-  const coverTextColor = coverEdit.appearance.overlayTextColor ?? (coverContrast === "light" ? "#ffffff" : "#0a0a0a");
-  const coverStroke = coverEdit.textTreatment === "bold-outline" ? (coverEdit.appearance.overlayStroke ?? "#000000") : "transparent";
-  const coverCardBg =
-    coverEdit.appearance.cardBg ??
-    (coverContrast === "light" ? "rgba(20,20,20,0.72)" : coverFormat === "center" ? "transparent" : "rgba(255,255,255,0.88)");
-  const setCoverLayout = <K extends keyof VideoSpecLayout>(key: K, value: VideoSpecLayout[K]) =>
-    onCoverEditChange({ ...coverEdit, layout: { ...coverEdit.layout, [key]: value } });
-  const setCoverAppearanceOps = (ops: AppearanceOp[]) =>
-    onCoverEditChange({ ...coverEdit, appearance: mergeAppearanceOpsIntoDraft(coverEdit.appearance, ops) });
-  return (
-    <div className="glass rounded-2xl border border-app-divider/80 p-5 md:p-6">
-      <StepHeader n={step} label="Reel cover" done={Boolean(thumbnailUrl)}>
-        <span className="text-[10px] text-app-fg-subtle">Instagram cover · 9:16</span>
-      </StepHeader>
+// ReelCoverSection extracted to ./editors/cover/CoverEditor.tsx (renamed CoverEditor).
 
-      {selectedCoverTemplate ? (
-        <div className="mb-4 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-app-fg-muted">
-          <span className="font-semibold text-app-fg">Template:</span>{" "}
-          {selectedCoverTemplate.name}
-          {selectedCoverTemplate.instruction ? ` · ${selectedCoverTemplate.instruction}` : ""}
-        </div>
-      ) : null}
+// CaptionSection was extracted to ./editors/shared/CaptionSection.tsx.
 
-      <div className="flex flex-col gap-4 md:flex-row md:items-start md:gap-6">
-        <div className="mx-auto flex w-full max-w-[360px] shrink-0 flex-col items-center md:sticky md:top-4 md:mx-0 md:w-[min(360px,40vw)] md:self-start">
-          <CoverTextLayerEditor
-            layout={coverEdit.layout}
-            templateId={coverEdit.templateId}
-            coverPin={coverPin}
-            previewText={previewText}
-            coverTextColor={coverTextColor}
-            coverStroke={coverStroke}
-            coverCardBg={coverCardBg}
-            coverFontFamily={coverFontFamily}
-            coverContrast={coverContrast}
-            textTreatment={coverEdit.textTreatment}
-            mode={mode}
-            selectedImage={selectedImage}
-            thumbnailUrl={thumbnailUrl}
-            thumbnailBusy={thumbnailBusy}
-            wash={coverEdit.wash}
-            cropY={coverEdit.cropY}
-            zoom={coverEdit.zoom}
-            onLayoutPatch={(patch: Partial<VideoSpecLayout>) =>
-              onCoverEditChange({ ...coverEdit, layout: { ...coverEdit.layout, ...patch } })
-            }
-          />
-        </div>
+// AiContextSection was extracted to ./editors/shared/AiContextSection.tsx.
 
-        <div className="flex min-w-0 flex-1 flex-col gap-3">
-          <div className="space-y-3 rounded-xl border border-app-divider bg-app-chip-bg/20 p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="inline-flex rounded-lg border border-app-divider bg-app-chip-bg/40 p-0.5">
-                <button
-                  type="button"
-                  onClick={() => onModeChange("ai")}
-                  className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[10px] font-semibold transition-colors ${
-                    mode === "ai" ? "bg-white/10 text-app-fg shadow-sm" : "text-app-fg-muted hover:text-app-fg"
-                  }`}
-                >
-                  <Sparkles className="h-3 w-3 shrink-0" /> AI
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onModeChange("image")}
-                  className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[10px] font-semibold transition-colors ${
-                    mode === "image" ? "bg-white/10 text-app-fg shadow-sm" : "text-app-fg-muted hover:text-app-fg"
-                  }`}
-                >
-                  <ImageIcon className="h-3 w-3 shrink-0" /> Photo
-                </button>
-              </div>
-              {usingCoverOptions ? (
-                <button
-                  type="button"
-                  onClick={onRegenerateCovers}
-                  disabled={coverRegenBusy}
-                  className="inline-flex items-center gap-1 rounded-md border border-app-divider px-2 py-1 text-[10px] font-semibold text-app-fg-muted transition hover:border-amber-500/40 hover:text-app-fg disabled:opacity-50"
-                  title="New headline ideas"
-                >
-                  {coverRegenBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-                  Ideas
-                </button>
-              ) : null}
-            </div>
-
-            {mode === "image" ? (
-              <ClientImagesPicker
-                images={images}
-                selectedImageId={selectedImageId}
-                busy={thumbnailBusy}
-                onPick={onSelectImage}
-                compact
-                emptyHint="No client images yet — upload PNG/JPG in Media."
-              />
-            ) : null}
-
-            <label className="block space-y-1">
-              <span className="text-[9px] font-bold uppercase tracking-wide text-app-fg-muted">Headline</span>
-              <textarea
-                value={coverText}
-                onChange={(e) => onCoverTextChange(e.target.value)}
-                rows={3}
-                className="glass-inset w-full resize-y rounded-lg px-2.5 py-1.5 text-sm leading-snug text-app-fg placeholder:text-app-fg-subtle focus:outline-none focus:ring-2 focus:ring-amber-500/35"
-                placeholder="Cover headline"
-              />
-            </label>
-            <p className="text-[9px] text-app-fg-subtle">Drag the text on the preview to nudge; sliders under Fine-tune.</p>
-
-            {chipItems.length > 0 && (
-              <div>
-                <p className="mb-1 text-[9px] font-bold uppercase tracking-wide text-app-fg-muted">
-                  {usingCoverOptions ? "Suggestions" : "Hooks"}
-                </p>
-                <div className="flex max-h-24 flex-wrap gap-1 overflow-y-auto [scrollbar-width:thin] pr-0.5">
-                  {chipItems.map((txt, i) => {
-                    const active = coverText === txt;
-                    return (
-                      <button
-                        key={i}
-                        type="button"
-                        onClick={() => onCoverTextChange(active ? "" : txt)}
-                        className={`max-w-full rounded-md border px-1.5 py-0.5 text-left text-[10px] leading-snug transition-colors ${
-                          active
-                            ? "border-amber-500/45 bg-amber-500/10 text-app-fg"
-                            : "border-app-divider text-app-fg-muted hover:border-white/20 hover:text-app-fg"
-                        }`}
-                      >
-                        {txt.length > 56 ? txt.slice(0, 56) + "…" : txt}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="min-w-0 space-y-1.5">
-                <p className="text-[9px] font-bold uppercase tracking-wide text-app-fg-muted">Format</p>
-                <div className="flex flex-wrap gap-1">
-                  {(
-                    [
-                      { id: "center" as const, label: "Center", templateId: "centered-pop" as const, title: "Headline in the middle" },
-                      { id: "card" as const, label: "Card", templateId: "bottom-card" as const, title: "Caption on a card" },
-                      { id: "stack" as const, label: "Stack", templateId: "stacked-cards" as const, title: "Stacked cards" },
-                    ] as const
-                  ).map((t) => {
-                    const active = coverFormat === t.id;
-                    return (
-                      <button
-                        key={t.id}
-                        type="button"
-                        aria-pressed={active}
-                        title={t.title}
-                        onClick={() => onCoverEditChange({ ...coverEdit, templateId: t.templateId })}
-                        className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-semibold transition ${
-                          active ? STYLE_CHIP_ON : STYLE_CHIP_OFF
-                        }`}
-                      >
-                        <FormatGlyph format={t.id} />
-                        {t.label}
-                      </button>
-                    );
-                  })}
-                </div>
-                {(coverFormat === "card" || coverFormat === "stack") && (
-                  <div className="flex flex-wrap items-center gap-1 pt-0.5">
-                    <span className="text-[9px] font-bold uppercase text-app-fg-muted">Y</span>
-                    {(
-                      [
-                        { id: "top" as const, label: "Top" },
-                        { id: "center" as const, label: "Mid" },
-                        { id: "bottom" as const, label: "Bot" },
-                      ] as const
-                    ).map((p) => {
-                      const active = coverPin === p.id;
-                      return (
-                        <button
-                          key={p.id}
-                          type="button"
-                          aria-pressed={active}
-                          title="Caption vertical anchor"
-                          onClick={() =>
-                            onCoverEditChange({
-                              ...coverEdit,
-                              templateId:
-                                coverFormat === "card" && p.id === "top"
-                                  ? "top-banner"
-                                  : coverEdit.templateId === "top-banner"
-                                    ? "bottom-card"
-                                    : coverEdit.templateId,
-                              layout: { ...coverEdit.layout, verticalAnchor: p.id },
-                            })
-                          }
-                          className={`rounded-md border px-2 py-0.5 text-[10px] font-semibold transition ${
-                            active ? STYLE_CHIP_ON : STYLE_CHIP_OFF
-                          }`}
-                        >
-                          {p.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-              <div className="min-w-0 space-y-1.5">
-                <p className="text-[9px] font-bold uppercase tracking-wide text-app-fg-muted">Look</p>
-                <div className="-mx-0.5 flex gap-1 overflow-x-auto px-0.5 pb-0.5 [scrollbar-width:thin]">
-                  {LOOK_VISUAL.map((t) => {
-                    const active = coverEdit.themeId === t.id;
-                    return (
-                      <button
-                        key={t.id}
-                        type="button"
-                        aria-pressed={active}
-                        title={t.title}
-                        onClick={() => onCoverEditChange({ ...coverEdit, themeId: t.id })}
-                        className={`inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-semibold transition ${
-                          active ? STYLE_CHIP_ON : STYLE_CHIP_OFF
-                        }`}
-                      >
-                        <span className="flex shrink-0 gap-0.5" aria-hidden>
-                          {t.swatches.map((c) => (
-                            <span key={c} className="h-2.5 w-1 rounded-sm border border-white/10" style={{ background: c }} />
-                          ))}
-                        </span>
-                        <span className="font-bold leading-none text-app-fg-muted" style={{ fontFamily: t.fontFamily }}>
-                          Aa
-                        </span>
-                        <span className="max-w-[5.5rem] truncate">{t.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-
-            <div className="grid gap-3 border-t border-app-divider/40 pt-3 sm:grid-cols-2">
-              <div className="min-w-0 space-y-1.5">
-                <div className="flex items-center justify-between gap-1">
-                  <p className="text-[9px] font-bold uppercase tracking-wide text-app-fg-muted">Font</p>
-                  <button
-                    type="button"
-                    disabled={!coverHasAppearanceOverrides}
-                    title="Clear font / color overrides"
-                    onClick={() => onCoverEditChange({ ...coverEdit, appearance: {} })}
-                    className="rounded p-0.5 text-app-fg-muted transition hover:text-app-fg disabled:opacity-25"
-                  >
-                    <RotateCcw className="h-3 w-3" aria-hidden />
-                  </button>
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  <button
-                    type="button"
-                    aria-pressed={!coverEdit.appearance.fontId}
-                    onClick={() => setCoverAppearanceOps(opsForFontMood("auto"))}
-                    className={`rounded-md border px-2 py-0.5 text-[10px] font-semibold transition ${
-                      !coverEdit.appearance.fontId ? STYLE_CHIP_ON : STYLE_CHIP_OFF
-                    }`}
-                  >
-                    Theme
-                  </button>
-                  {(["playfair", "inter", "poppins"] as const).map((fid) => {
-                    const active = coverEdit.appearance.fontId === fid;
-                    return (
-                      <button
-                        key={fid}
-                        type="button"
-                        aria-pressed={active}
-                        style={{ fontFamily: CAROUSEL_FONT_STACKS[fid] }}
-                        onClick={() => setCoverAppearanceOps([{ key: "fontId", value: fid }])}
-                        className={`rounded-md border px-2 py-0.5 text-[10px] font-semibold transition ${
-                          active ? STYLE_CHIP_ON : STYLE_CHIP_OFF
-                        }`}
-                      >
-                        {CAROUSEL_FONT_LABELS[fid]}
-                      </button>
-                    );
-                  })}
-                  <button
-                    type="button"
-                    aria-pressed={coverEdit.appearance.fontId === "patrick"}
-                    style={{
-                      fontFamily: `"${COVER_PATRICK_FONT}", "Segoe Print", "Bradley Hand", cursive`,
-                    }}
-                    onClick={() => setCoverAppearanceOps([{ key: "fontId", value: "patrick" }])}
-                    className={`rounded-md border px-2 py-0.5 text-[10px] font-semibold transition ${
-                      coverEdit.appearance.fontId === "patrick" ? STYLE_CHIP_ON : STYLE_CHIP_OFF
-                    }`}
-                  >
-                    Patrick
-                  </button>
-                </div>
-              </div>
-              <div className="min-w-0 space-y-2">
-                <p className="text-[9px] font-bold uppercase tracking-wide text-app-fg-muted">Align & contrast</p>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <div className="inline-flex rounded-md border border-app-divider p-0.5">
-                    {(
-                      [
-                        { id: "left" as const, Icon: AlignLeft, label: "Align left" },
-                        { id: "center" as const, Icon: AlignCenter, label: "Align center" },
-                        { id: "right" as const, Icon: AlignRight, label: "Align right" },
-                      ] as const
-                    ).map(({ id, Icon, label }) => {
-                      const active = coverEdit.layout.textAlign === id;
-                      return (
-                        <button
-                          key={id}
-                          type="button"
-                          aria-pressed={active}
-                          aria-label={label}
-                          title={label}
-                          onClick={() => setCoverLayout("textAlign", id)}
-                          className={`rounded p-1 transition ${active ? "bg-amber-500/20 text-amber-200" : "text-app-fg-muted hover:text-app-fg"}`}
-                        >
-                          <Icon className="h-3.5 w-3.5" />
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <div className="inline-flex flex-wrap gap-0.5">
-                    {(
-                      [
-                        { id: "auto" as const, label: "Auto" },
-                        { id: "light" as const, label: "On dark" },
-                        { id: "dark" as const, label: "On light" },
-                      ] as const
-                    ).map((row) => {
-                      const active = coverContrast === row.id;
-                      return (
-                        <button
-                          key={row.id}
-                          type="button"
-                          aria-pressed={active}
-                          title={row.id === "auto" ? "Infer from look" : row.id === "light" ? "Light text" : "Dark text"}
-                          onClick={() =>
-                            setCoverAppearanceOps(
-                              opsForContrast(row.id, { templateId: coverEdit.templateId, themeId: coverEdit.themeId as VideoThemeId }),
-                            )
-                          }
-                          className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold transition ${
-                            active ? STYLE_CHIP_ON : STYLE_CHIP_OFF
-                          }`}
-                        >
-                          {row.id !== "auto" ? (
-                            <span
-                              className="h-2.5 w-2.5 shrink-0 rounded-full border border-white/15"
-                              style={{
-                                background:
-                                  row.id === "light"
-                                    ? "linear-gradient(90deg,#0a0a0a 50%,#f8fafc 50%)"
-                                    : "linear-gradient(90deg,#f8fafc 50%,#0a0a0a 50%)",
-                              }}
-                              aria-hidden
-                            />
-                          ) : null}
-                          {row.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-                <div className="inline-flex rounded-md border border-app-divider p-0.5">
-                  <button
-                    type="button"
-                    aria-pressed={!coverEdit.textTreatment}
-                    title="Standard lettering"
-                    onClick={() => onCoverEditChange({ ...coverEdit, textTreatment: undefined })}
-                    className={`rounded px-2 py-0.5 text-[10px] font-semibold transition ${
-                      !coverEdit.textTreatment ? "bg-amber-500/20 text-amber-200" : "text-app-fg-muted hover:text-app-fg"
-                    }`}
-                  >
-                    Normal
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={coverEdit.textTreatment === "bold-outline"}
-                    title="Heavy outline"
-                    onClick={() => onCoverEditChange({ ...coverEdit, textTreatment: "bold-outline" })}
-                    className={`inline-flex items-center gap-0.5 rounded px-2 py-0.5 text-[10px] font-semibold transition ${
-                      coverEdit.textTreatment === "bold-outline" ? "bg-amber-500/20 text-amber-200" : "text-app-fg-muted hover:text-app-fg"
-                    }`}
-                  >
-                    <OutlineGlyph />
-                    Outline
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <details className="group rounded-lg border border-app-divider/60 bg-app-chip-bg/15 [&_summary::-webkit-details-marker]:hidden">
-              <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1.5 text-[10px] font-bold uppercase tracking-wide text-app-fg-muted hover:text-app-fg">
-                <SlidersHorizontal className="h-3.5 w-3.5 shrink-0 text-app-fg-subtle" aria-hidden />
-                Fine-tune layout
-                <ChevronDown className="ml-auto h-3.5 w-3.5 shrink-0 text-app-fg-subtle transition group-open:rotate-180" aria-hidden />
-              </summary>
-              <div className="space-y-2 border-t border-app-divider/40 px-2 pb-2 pt-2">
-                <div className="flex items-center justify-between gap-2">
-                  {JSON.stringify(coverEdit.layout) !== JSON.stringify(DEFAULT_COVER_EDIT.layout) ? (
-                    <span className="rounded-sm bg-emerald-500/15 px-1 py-px text-[8px] font-semibold uppercase tracking-wide text-emerald-300">
-                      Adjusted
-                    </span>
-                  ) : (
-                    <span />
-                  )}
-                  <button
-                    type="button"
-                    disabled={JSON.stringify(coverEdit.layout) === JSON.stringify(DEFAULT_COVER_EDIT.layout)}
-                    onClick={() => onCoverEditChange({ ...coverEdit, layout: DEFAULT_COVER_EDIT.layout })}
-                    className="text-[9px] font-semibold uppercase tracking-wide text-app-fg-subtle hover:text-app-fg disabled:opacity-30"
-                  >
-                    Reset layout
-                  </button>
-                </div>
-                <LayoutSlider
-                  label="Vertical nudge"
-                  title="Fraction of frame height"
-                  leftHint="Up"
-                  rightHint="Down"
-                  min={LAYOUT_VERTICAL_OFFSET_MIN}
-                  max={LAYOUT_VERTICAL_OFFSET_MAX}
-                  step={0.005}
-                  value={coverEdit.layout.verticalOffset}
-                  formatValue={(v) => (v === 0 ? "0" : `${v > 0 ? "+" : ""}${Math.round(v * 100)}%`)}
-                  onChange={(v) => setCoverLayout("verticalOffset", v)}
-                  onCommit={(v) => setCoverLayout("verticalOffset", v)}
-                  showSteppers
-                  stepperStep={0.02}
-                />
-                <LayoutSlider
-                  label="Horizontal pan"
-                  title="Fraction of frame width"
-                  leftHint="Left"
-                  rightHint="Right"
-                  min={-1}
-                  max={1}
-                  step={0.005}
-                  value={coverEdit.layout.textPanX ?? 0}
-                  formatValue={(v) => (v === 0 ? "0" : `${v > 0 ? "+" : ""}${Math.round(v * 100)}%`)}
-                  onChange={(v) => setCoverLayout("textPanX", v)}
-                  onCommit={(v) => setCoverLayout("textPanX", v)}
-                  showSteppers
-                  stepperStep={0.02}
-                />
-                <LayoutSlider
-                  label="Text size"
-                  leftHint="Smaller"
-                  rightHint="Larger"
-                  min={0.7}
-                  max={1.3}
-                  step={0.05}
-                  value={coverEdit.layout.scale}
-                  formatValue={(v) => `${v.toFixed(2)}x`}
-                  onChange={(v) => setCoverLayout("scale", v)}
-                  onCommit={(v) => setCoverLayout("scale", v)}
-                />
-                <LayoutSlider
-                  label="Line width"
-                  title="Side inset — higher value = narrower text block"
-                  leftHint="Wide"
-                  rightHint="Narrow"
-                  min={0.02}
-                  max={0.12}
-                  step={0.005}
-                  value={coverEdit.layout.sidePadding}
-                  formatValue={(v) => `${Math.round((1 - 2 * v) * 100)}%`}
-                  onChange={(v) => setCoverLayout("sidePadding", v)}
-                  onCommit={(v) => setCoverLayout("sidePadding", v)}
-                />
-              </div>
-            </details>
-
-            <details className="group rounded-lg border border-app-divider/60 bg-app-chip-bg/15 [&_summary::-webkit-details-marker]:hidden">
-              <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1.5 text-[10px] font-bold uppercase tracking-wide text-app-fg-muted hover:text-app-fg">
-                <ImageIcon className="h-3.5 w-3.5 shrink-0 text-app-fg-subtle" aria-hidden />
-                Background
-                <ChevronDown className="ml-auto h-3.5 w-3.5 shrink-0 text-app-fg-subtle transition group-open:rotate-180" aria-hidden />
-              </summary>
-              <div className="space-y-2 border-t border-app-divider/40 px-2 pb-2 pt-2">
-                <label className="flex cursor-pointer items-center gap-2 text-[10px] text-app-fg-muted">
-                  <input
-                    type="checkbox"
-                    checked={coverEdit.wash}
-                    onChange={() => onCoverEditChange({ ...coverEdit, wash: !coverEdit.wash })}
-                    className="rounded border-app-divider"
-                  />
-                  Wash (desaturate)
-                </label>
-                {mode === "image" ? (
-                  <div className="grid gap-2">
-                    <LayoutSlider
-                      label="Photo focal (Y)"
-                      title="Vertical focus in frame"
-                      leftHint="Top"
-                      rightHint="Bottom"
-                      min={0}
-                      max={1}
-                      step={0.005}
-                      value={coverEdit.cropY}
-                      formatValue={(v) => `${Math.round(v * 100)}%`}
-                      onChange={(v) => onCoverEditChange({ ...coverEdit, cropY: v })}
-                      onCommit={(v) => onCoverEditChange({ ...coverEdit, cropY: v })}
-                      showSteppers
-                      stepperStep={0.05}
-                    />
-                    <LayoutSlider
-                      label="Photo zoom"
-                      title="Scale before crop"
-                      leftHint="1×"
-                      rightHint="3×"
-                      min={1}
-                      max={3}
-                      step={0.02}
-                      value={coverEdit.zoom}
-                      formatValue={(v) => `${v.toFixed(2)}×`}
-                      onChange={(v) => onCoverEditChange({ ...coverEdit, zoom: v })}
-                      onCommit={(v) => onCoverEditChange({ ...coverEdit, zoom: v })}
-                      showSteppers
-                      stepperStep={0.1}
-                    />
-                  </div>
-                ) : null}
-              </div>
-            </details>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              disabled={thumbnailBusy || (mode === "image" && !selectedImageId)}
-              onClick={mode === "ai" ? onGenerateAi : onComposeFromImage}
-              className="inline-flex items-center gap-2 rounded-xl bg-amber-500/15 px-4 py-2 text-xs font-bold text-app-on-amber-title hover:bg-amber-500/25 disabled:opacity-50"
-              title={mode === "image" && !selectedImageId ? "Pick an image first" : undefined}
-            >
-              {thumbnailBusy ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : mode === "ai" ? (
-                <Sparkles className="h-3.5 w-3.5" />
-              ) : (
-                <ImageIcon className="h-3.5 w-3.5" />
-              )}
-              {thumbnailBusy
-                ? mode === "ai" ? "Generating…" : "Composing…"
-                : thumbnailUrl
-                ? "Regenerate cover"
-                : mode === "ai" ? "Generate cover" : "Compose cover"}
-            </button>
-            {thumbnailUrl && !thumbnailBusy && (
-              <a
-                href={thumbnailUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1.5 text-xs font-semibold text-sky-500 hover:underline dark:text-sky-400"
-              >
-                <Download className="h-3.5 w-3.5" />
-                Open full size
-              </a>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+function formatSecondsShort(sec: number): string {
+  if (!Number.isFinite(sec)) return "0s";
+  return `${sec.toFixed(sec >= 10 ? 0 : 1)}s`;
 }
 
-function CaptionSection({
-  caption,
-  hashtags,
-  onCopy,
-  regenInline,
+function ClipWindowControl({
+  sourceDurationSec,
+  trimStartSec,
+  trimEndSec,
+  timelineSec,
+  disabled,
+  onChange,
+  onCommit,
 }: {
-  caption: string;
-  hashtags: string[];
-  onCopy: () => void;
-  regenInline: React.ReactNode;
+  sourceDurationSec: number;
+  trimStartSec: number;
+  trimEndSec: number;
+  timelineSec: number;
+  disabled?: boolean;
+  onChange: (start: number, end: number) => void;
+  onCommit: (start: number, end: number) => void;
 }) {
+  const trackRef = useRef<HTMLDivElement | null>(null);
+  const start = Math.max(0, Math.min(sourceDurationSec - 0.5, trimStartSec));
+  const end = Math.max(start + 0.5, Math.min(sourceDurationSec, trimEndSec));
+  const activeDur = Math.max(0.5, end - start);
+  const leftPct = (start / sourceDurationSec) * 100;
+  const widthPct = (activeDur / sourceDurationSec) * 100;
+
+  const valueFromPointer = (e: PointerEvent | ReactPointerEvent) => {
+    const track = trackRef.current;
+    if (!track) return 0;
+    const rect = track.getBoundingClientRect();
+    const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+    return Math.round((x / Math.max(1, rect.width)) * sourceDurationSec * 10) / 10;
+  };
+
+  const beginDrag = (kind: "start" | "end") => (e: ReactPointerEvent<HTMLButtonElement>) => {
+    if (disabled) return;
+    e.preventDefault();
+    e.stopPropagation();
+    let latestStart = start;
+    let latestEnd = end;
+    const apply = (clientEvent: PointerEvent | ReactPointerEvent) => {
+      const v = valueFromPointer(clientEvent);
+      if (kind === "start") {
+        latestStart = Math.max(0, Math.min(v, latestEnd - 0.5));
+      } else {
+        latestEnd = Math.min(sourceDurationSec, Math.max(v, latestStart + 0.5));
+      }
+      onChange(latestStart, latestEnd);
+    };
+    apply(e);
+    const onMove = (mv: PointerEvent) => apply(mv);
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("pointercancel", onUp);
+      onCommit(latestStart, latestEnd);
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointercancel", onUp);
+  };
+
   return (
-    <div className="glass rounded-2xl border border-app-divider/80 p-5 md:p-6">
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <h2 className="flex-1 text-sm font-semibold text-app-fg">Caption + hashtags</h2>
-        {regenInline}
+    <div className="space-y-2 rounded-xl border border-app-divider/60 bg-app-chip-bg/20 p-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Background clip</p>
+          <p className="mt-0.5 text-[10px] text-app-fg-subtle">
+            Drag the handles to choose the part of the source video used behind the reel.
+          </p>
+        </div>
+        <span className="rounded bg-app-chip-bg/50 px-1.5 py-px text-[9px] font-bold tabular-nums text-app-fg-muted">
+          {formatSecondsShort(sourceDurationSec)} source
+        </span>
+      </div>
+
+      <div ref={trackRef} className="relative h-12 overflow-hidden rounded-lg border border-app-divider/60 bg-black/25">
+        <div className="absolute inset-y-0 left-0 bg-white/5" style={{ width: `${leftPct}%` }} />
+        <div
+          className="absolute inset-y-0 rounded-md border border-amber-400/80 bg-amber-500/20 shadow-[0_0_0_1px_rgba(245,158,11,0.25)]"
+          style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+        />
+        <div className="absolute inset-y-0 right-0 bg-white/5" style={{ left: `${Math.min(100, leftPct + widthPct)}%` }} />
         <button
           type="button"
-          onClick={onCopy}
-          className="inline-flex items-center gap-1 rounded-lg bg-app-icon-btn-bg px-2.5 py-1 text-[11px] font-bold text-app-icon-btn-fg"
-        >
-          <Copy className="h-3 w-3" /> Copy
-        </button>
+          disabled={disabled}
+          onPointerDown={beginDrag("start")}
+          className="absolute top-1 bottom-1 z-10 w-4 -translate-x-1/2 cursor-ew-resize rounded bg-amber-400 shadow disabled:opacity-40"
+          style={{ left: `${leftPct}%` }}
+          aria-label="Set clip start"
+          title="Drag clip start"
+        />
+        <button
+          type="button"
+          disabled={disabled}
+          onPointerDown={beginDrag("end")}
+          className="absolute top-1 bottom-1 z-10 w-4 -translate-x-1/2 cursor-ew-resize rounded bg-amber-400 shadow disabled:opacity-40"
+          style={{ left: `${leftPct + widthPct}%` }}
+          aria-label="Set clip end"
+          title="Drag clip end"
+        />
       </div>
-      {caption ? (
-        <p className="whitespace-pre-wrap text-sm leading-relaxed text-app-fg">{caption}</p>
-      ) : (
-        <p className="text-xs text-app-fg-subtle">No caption yet.</p>
-      )}
-      {hashtags.length > 0 && (
-        <p className="mt-3 text-xs text-app-fg-muted">{hashtags.join(" ")}</p>
-      )}
-    </div>
-  );
-}
 
-function AiContextSection({
-  hooks,
-  scriptForTalkingHead,
-  regenHooks,
-  busy,
-}: {
-  hooks: Array<{ text?: string }>;
-  scriptForTalkingHead?: string | null;
-  regenHooks: (feedback: string) => Promise<boolean>;
-  busy: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  if (!hooks.length && !scriptForTalkingHead) return null;
-
-  return (
-    <div className="glass rounded-2xl border border-app-divider/60 p-4 md:p-5">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center justify-between gap-2 text-left text-xs font-semibold text-app-fg-muted hover:text-app-fg"
-      >
-        <span>What the AI is working with</span>
-        {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-      </button>
-
-      {open && (
-        <div className="mt-4 space-y-4">
-          {hooks.length > 0 && (
-            <div>
-              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                <p className="text-[11px] font-bold uppercase tracking-wide text-app-fg-subtle">
-                  Alternative hooks ({hooks.length})
-                </p>
-                <RegenInline
-                  scope="hooks"
-                  busy={busy}
-                  onRegen={async (_s, fb) => regenHooks(fb)}
-                  placeholder="More direct, shorter, …"
-                />
-              </div>
-              <ul className="space-y-1.5">
-                {hooks.map((h, i) => (
-                  <li
-                    key={i}
-                    className="rounded-lg border border-app-divider/50 bg-app-chip-bg/30 px-3 py-2 text-xs leading-relaxed text-app-fg"
-                  >
-                    {h?.text || "—"}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
+      <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-app-fg-subtle">
+        <span>
+          Active:{" "}
+          <span className="font-semibold text-app-fg">
+            {formatSecondsShort(start)}-{formatSecondsShort(end)}
+          </span>
+        </span>
+        <span>
+          Beats:{" "}
+          <span className={timelineSec > activeDur + 0.25 ? "font-semibold text-amber-200" : "font-semibold text-emerald-300"}>
+            {formatSecondsShort(timelineSec)} / {formatSecondsShort(activeDur)}
+          </span>
+        </span>
+      </div>
     </div>
   );
 }
@@ -2602,6 +498,21 @@ export function VideoCreateWorkspace({
   const [coverMode, setCoverMode] = useState<CoverMode>("ai");
   const [coverImageId, setCoverImageId] = useState("");
   const [coverEdit, setCoverEdit] = useState<CoverEditState>(DEFAULT_COVER_EDIT);
+  /** Hydrate flag: skip the autosave round-trip until the editor has loaded the
+   *  persisted cover_spec at least once (or confirmed there isn't one). Prevents
+   *  the initial mount from PATCHing default state over a real saved spec. */
+  const coverHydratedRef = useRef(false);
+  /** Counter of in-flight cover_spec PATCHes — drives the shared "Saving…" pill. */
+  const [coverSpecInFlight, setCoverSpecInFlight] = useState(0);
+  const coverSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Counter + debounce ref for text_blocks / script autosave. Mirrors the same
+   *  pattern so the "Save text blocks" and "Save script" buttons can disappear. */
+  const [contentInFlight, setContentInFlight] = useState(0);
+  const textBlocksSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scriptSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** In-flight count for carousel slide PATCHes (text + layout). Surfaces the
+   *  previously-silent autosave in the section header SaveStatusPill. */
+  const [carouselInFlight, setCarouselInFlight] = useState(0);
   const [coverRegenBusy, setCoverRegenBusy] = useState(false);
   const [regenBusyScope, setRegenBusyScope] = useState<RegenScope | null>(null);
   /**
@@ -2637,12 +548,146 @@ export function VideoCreateWorkspace({
     carouselDraftRef.current = carouselDraft;
   }, [carouselDraft]);
 
+  /**
+   * Snapshot-based undo for the video spec. We push the *previous* spec right
+   * before a destructive operation (template/theme swap, AI refine, layer
+   * delete) and let the user revert via Cmd+Z or the inline pill. Per-stroke
+   * autosaves intentionally do NOT push — that would fill the stack with
+   * micro-edits and bury the destructive moves the user actually wants to
+   * undo.
+   */
+  const undoStack = useUndoStack<VideoSpec>({ cap: 20 });
+  const undoApplyingRef = useRef(false);
+
   // Hold the latest parent callback in a ref so it never invalidates effects/callbacks.
   // (Parents typically pass an inline `onSessionUpdated`, which would otherwise loop.)
   const onSessionUpdatedRef = useRef(onSessionUpdated);
   useEffect(() => {
     onSessionUpdatedRef.current = onSessionUpdated;
   }, [onSessionUpdated]);
+
+  /** Debounced autosave for text blocks (on-screen captions for video formats).
+   *  Replaces the old explicit "Save text blocks" button: changes flush 600ms
+   *  after the user stops typing. The SaveStatusPill in the section header is
+   *  the only feedback users need. */
+  const textBlocksRef = useRef<TextBlock[]>([]);
+  useEffect(() => {
+    textBlocksRef.current = textDraft;
+  }, [textDraft]);
+  useEffect(() => {
+    if (!bootstrapDone) return;
+    const cs = clientSlug.trim();
+    const os = orgSlug.trim();
+    if (!cs || !os || !session?.id) return;
+    // Don't fire when there's nothing to save (initial server load already matches).
+    const serverBlocks = Array.isArray(session.text_blocks) ? session.text_blocks : [];
+    if (JSON.stringify(serverBlocks) === JSON.stringify(textDraft)) return;
+    if (textBlocksSaveTimer.current) clearTimeout(textBlocksSaveTimer.current);
+    textBlocksSaveTimer.current = setTimeout(() => {
+      void (async () => {
+        setContentInFlight((n) => n + 1);
+        try {
+          const res = await patchCreateSession(cs, os, session.id, {
+            text_blocks: textBlocksRef.current.filter((b) => b.text.trim()),
+          });
+          if (res.ok) {
+            // Avoid a full applySession (which would wipe other editor drafts);
+            // just mirror the canonical server-side text_blocks back into session.
+            setSession((prev) =>
+              prev ? { ...prev, text_blocks: res.data.text_blocks ?? prev.text_blocks } : prev,
+            );
+          }
+        } finally {
+          setContentInFlight((n) => Math.max(0, n - 1));
+        }
+      })();
+    }, 600);
+    return () => {
+      if (textBlocksSaveTimer.current) {
+        clearTimeout(textBlocksSaveTimer.current);
+        textBlocksSaveTimer.current = null;
+      }
+    };
+    // session.text_blocks intentionally not a dep — we re-derive from `session`
+    // when needed inside the effect. Including it would loop on server echo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [textDraft, bootstrapDone, clientSlug, orgSlug, session?.id]);
+
+  /** Same pattern for the talking-head script. */
+  const scriptDraftRef = useRef("");
+  useEffect(() => {
+    scriptDraftRef.current = scriptDraft;
+  }, [scriptDraft]);
+  useEffect(() => {
+    if (!bootstrapDone) return;
+    const cs = clientSlug.trim();
+    const os = orgSlug.trim();
+    if (!cs || !os || !session?.id) return;
+    if ((session.script ?? "") === scriptDraft) return;
+    if (scriptSaveTimer.current) clearTimeout(scriptSaveTimer.current);
+    scriptSaveTimer.current = setTimeout(() => {
+      void (async () => {
+        setContentInFlight((n) => n + 1);
+        try {
+          const res = await patchCreateSession(cs, os, session.id, {
+            script: scriptDraftRef.current,
+          });
+          if (res.ok) {
+            setSession((prev) =>
+              prev ? { ...prev, script: res.data.script ?? prev.script } : prev,
+            );
+          }
+        } finally {
+          setContentInFlight((n) => Math.max(0, n - 1));
+        }
+      })();
+    }, 700);
+    return () => {
+      if (scriptSaveTimer.current) {
+        clearTimeout(scriptSaveTimer.current);
+        scriptSaveTimer.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scriptDraft, bootstrapDone, clientSlug, orgSlug, session?.id]);
+
+  /** Debounced autosave for the cover editor. Pattern mirrors `carouselSaveTimer`:
+   *  any change to coverEdit / coverText / coverMode / coverImageId schedules a
+   *  PATCH 500ms later, so dragging sliders or typing in the headline doesn't
+   *  flood the network but the user never has to remember to click "save". */
+  useEffect(() => {
+    if (!coverHydratedRef.current) return;
+    const cs = clientSlug.trim();
+    const os = orgSlug.trim();
+    if (!cs || !os || !session?.id) return;
+    if (coverSaveTimer.current) clearTimeout(coverSaveTimer.current);
+    coverSaveTimer.current = setTimeout(() => {
+      void (async () => {
+        setCoverSpecInFlight((n) => n + 1);
+        try {
+          const payload = coverSpecToPayload(coverEdit, {
+            hookText: coverText.trim() || null,
+            coverMode,
+            clientImageId: coverImageId || null,
+          });
+          const res = await patchCoverSpec(cs, os, session.id, payload);
+          if (res.ok) {
+            // Mirror server-confirmed cover_spec into the session so any other
+            // listener (e.g. session header) sees the latest persisted state.
+            setSession((prev) => (prev ? { ...prev, cover_spec: payload } : prev));
+          }
+        } finally {
+          setCoverSpecInFlight((n) => Math.max(0, n - 1));
+        }
+      })();
+    }, 500);
+    return () => {
+      if (coverSaveTimer.current) {
+        clearTimeout(coverSaveTimer.current);
+        coverSaveTimer.current = null;
+      }
+    };
+  }, [coverEdit, coverText, coverMode, coverImageId, clientSlug, orgSlug, session?.id]);
 
   const applySession = useCallback((s: GenerationSession) => {
     setSession(s);
@@ -2655,6 +700,25 @@ export function VideoCreateWorkspace({
       setCoverImageId(s.selected_cover_template.reference_image_id);
     }
     if (s.thumbnail_url) setThumbnailUrl(s.thumbnail_url);
+    /** Hydrate cover editor state from the persisted `cover_spec` (if any).
+     *  Without this, the user lost every style/template/layout tweak on every
+     *  page mount — the editor would silently reset to defaults while leaving
+     *  the previously-baked thumbnail visible. */
+    if (!coverHydratedRef.current) {
+      const hydrated = coverSpecFromPayload(s.cover_spec);
+      if (hydrated) {
+        setCoverEdit(hydrated);
+        if (s.cover_spec && typeof s.cover_spec === "object") {
+          const mode = (s.cover_spec as Record<string, unknown>).cover_mode;
+          if (mode === "ai" || mode === "image") setCoverMode(mode);
+          const ci = (s.cover_spec as Record<string, unknown>).client_image_id;
+          if (typeof ci === "string" && ci) setCoverImageId(ci);
+          const ht = coverHookTextFromPayload(s.cover_spec);
+          if (ht) setCoverText(ht);
+        }
+      }
+      coverHydratedRef.current = true;
+    }
     if (Array.isArray(s.carousel_slides)) {
       const sorted = [...s.carousel_slides].sort((a, b) => a.idx - b.idx);
       const prevDraft = carouselDraftRef.current;
@@ -2692,6 +756,10 @@ export function VideoCreateWorkspace({
     const os = orgSlug.trim();
     if (!cs || !os || !sessionId) return;
     setBootstrapDone(false);
+    coverHydratedRef.current = false;
+    // New session = fresh undo history (otherwise Cmd+Z could restore the
+    // previous session's spec into the new one, which is destructive).
+    undoStack.reset();
     void (async () => {
       const [sRes, bRes, iRes, libRes] = await Promise.all([
         generationGetSession(cs, os, sessionId),
@@ -2733,7 +801,19 @@ export function VideoCreateWorkspace({
    *  post" surface with the playable video next to it). */
   const [previewOpen, setPreviewOpen] = useState(false);
   const [safeZonePreview, setSafeZonePreview] = useState(false);
-  const [refineVideoPrompt, setRefineVideoPrompt] = useState("");
+  /** ⌘K command palette open state — Phase D. The palette + visible inspector
+   *  buttons share a single action registry (see editors/video/videoActions.ts)
+   *  so they never drift apart. */
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  /** Visible canvas tab for the Studio editor. This replaces the old long
+   *  vertical stack of Step 1 → Step 2 → Step 3 → Step 4 for reel sessions. */
+  const [videoSurface, setVideoSurface] = useState<"reel" | "cover" | "output">("reel");
+  /** Studio selection state — Phase C primitive. Drives the InspectorForSelection
+   *  pattern. Until the Studio shell migration is fully wired into the
+   *  text_overlay branch, the workspace just uses it for `appliesTo` filters
+   *  in the action registry (hook/block actions become available based on
+   *  selectedSegmentId echoing into this hook). */
+  const editorSelection = useEditorSelection();
   /** AI refine is the only spec operation that should block the UI — it's a multi-step
    *  LLM round-trip the user shouldn't double-fire. Template / look / appearance /
    *  layout commits are tracked separately via per-field optimistic state below. */
@@ -2763,6 +843,13 @@ export function VideoCreateWorkspace({
    *  `layoutDraft` — flushes optimistically into `livePreviewSpec`, commits on
    *  release. `null` = not currently dragging; preview reflects saved spec. */
   const [timingDraft, setTimingDraft] = useState<{ id: string; durationSec: number } | null>(null);
+  /** Per-beat size while dragging — preview only until release. */
+  const [fontScaleDraft, setFontScaleDraft] = useState<{ segmentId: string; scale: number } | null>(null);
+  /** B-roll in/out while dragging — preview only until release. */
+  const [brollTrimDraft, setBrollTrimDraft] = useState<{
+    trimStartSec: number;
+    trimEndSec: number;
+  } | null>(null);
   const [layerTimingDraft, setLayerTimingDraft] = useState<{
     id: string;
     timing: { startSec?: number; endSec?: number };
@@ -2775,6 +862,7 @@ export function VideoCreateWorkspace({
   const isCarousel = fk === "carousel";
   const isBroll = fk === "b_roll_reel";
   const isTalkingHead = fk === "talking_head";
+
   /** PNG slides exist — slide text/images are persisted until user switches recipe (clears slides). */
   const carouselSlidesLocked = useMemo(() => {
     const slides = session?.carousel_slides;
@@ -2878,6 +966,7 @@ export function VideoCreateWorkspace({
   const sessionLayout: VideoSpecLayout = previewVideoSpec?.layout ?? DEFAULT_LAYOUT;
   const [layoutDraft, setLayoutDraft] = useState<VideoSpecLayout>(sessionLayout);
   const [layoutGuides, setLayoutGuides] = useState(false);
+  const [videoEditorTab, setVideoEditorTab] = useState<VideoEditorTab>("text");
   const layoutSyncKey = `${session?.id ?? ""}|${sessionLayout.verticalAnchor ?? "bottom"}|${sessionLayout.verticalOffset}|${sessionLayout.textPanX ?? 0}|${sessionLayout.scale}|${sessionLayout.sidePadding}|${sessionLayout.textAlign}|${sessionLayout.stackGap}|${sessionLayout.stackGrowth}`;
   useEffect(() => {
     setLayoutDraft(sessionLayout);
@@ -2951,15 +1040,47 @@ export function VideoCreateWorkspace({
     // Layer bars are absolute windows. Relayout is only for the legacy gap editor;
     // running it after layer drags would push later bars and destroy overlaps.
     const withPause = pauseDraft != null ? relayoutTimeline(raw, { applyClipCap: false }) : raw;
-    if (selectedSegmentId !== "hook" && withPause.blocks.some((b) => b.id === selectedSegmentId)) {
-      return {
-        ...withPause,
-        blocks: withPause.blocks.map((b) =>
+    let out: VideoSpec = withPause;
+    if (selectedSegmentId !== "hook" && out.blocks.some((b) => b.id === selectedSegmentId)) {
+      out = {
+        ...out,
+        blocks: out.blocks.map((b) =>
           b.id === selectedSegmentId ? { ...b, appearance: blockAppearanceDraft } : b,
         ),
       };
     }
-    return withPause;
+    if (brollTrimDraft && out.background.kind === "video") {
+      out = {
+        ...out,
+        background: {
+          ...out.background,
+          trimStartSec: brollTrimDraft.trimStartSec,
+          trimEndSec: brollTrimDraft.trimEndSec,
+        },
+      };
+    }
+    if (fontScaleDraft) {
+      const fsVal =
+        Math.abs(fontScaleDraft.scale - 1) < 0.02 ? undefined : fontScaleDraft.scale;
+      if (fontScaleDraft.segmentId === "hook") {
+        const hook = { ...out.hook };
+        if (fsVal === undefined) delete hook.fontScale;
+        else hook.fontScale = fsVal;
+        out = { ...out, hook };
+      } else {
+        out = {
+          ...out,
+          blocks: out.blocks.map((b) => {
+            if (b.id !== fontScaleDraft.segmentId) return b;
+            const row = { ...b };
+            if (fsVal === undefined) delete row.fontScale;
+            else row.fontScale = fsVal;
+            return row;
+          }),
+        };
+      }
+    }
+    return out;
     // Depend on primitives, not object refs — avoids spurious recomputes when
     // `previewVideoSpec` is reparsed but its content is unchanged.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2985,6 +1106,10 @@ export function VideoCreateWorkspace({
     layerTimingDraft?.timing.endSec,
     selectedSegmentId,
     blockAppearanceDraftKey,
+    fontScaleDraft?.segmentId,
+    fontScaleDraft?.scale,
+    brollTrimDraft?.trimStartSec,
+    brollTrimDraft?.trimEndSec,
   ]);
 
   const styleAppearanceForChips = useMemo(() => {
@@ -3030,6 +1155,15 @@ export function VideoCreateWorkspace({
     setLayerTextDraft(selectedLayer?.text ?? "");
     setLayerCtaDraft(Boolean(selectedLayer?.isCTA));
   }, [selectedLayer?.id, selectedLayer?.text, selectedLayer?.isCTA]);
+
+  /** Editable hook for Step 1. Single source of truth for the opening line.
+   *  Persisted via `/hook/text` op on blur (see `onCommitHookText` below,
+   *  declared after `applyVideoSpecOps`). The previous dual-text surface
+   *  (Timing tab → Layer text) is now read-only. */
+  const [hookDraft, setHookDraft] = useState("");
+  useEffect(() => {
+    setHookDraft(primaryHookText ?? "");
+  }, [primaryHookText]);
 
   const saveTextBlocks = useCallback(async () => {
     const cs = clientSlug.trim();
@@ -3252,6 +1386,10 @@ export function VideoCreateWorkspace({
       const cs = clientSlug.trim();
       const os = orgSlug.trim();
       if (!session || !cs || !os) return;
+      // Snapshot the previous spec so the user can revert template + any
+      // theme-derived overrides the server applies in a single Cmd+Z.
+      const prevSpec = parseVideoSpec(session.video_spec ?? null);
+      if (prevSpec) undoStack.push({ label: `Template → ${templateId}`, value: prevSpec });
       // Optimistic flip — UI shows the new active state immediately.
       setPendingTemplate(templateId);
       setSpecInFlight((n) => n + 1);
@@ -3273,7 +1411,7 @@ export function VideoCreateWorkspace({
         setSpecInFlight((n) => Math.max(0, n - 1));
       }
     },
-    [applySession, clientSlug, orgSlug, session, show],
+    [applySession, clientSlug, orgSlug, session, show, undoStack],
   );
 
   const onPatchVideoTheme = useCallback(
@@ -3281,6 +1419,10 @@ export function VideoCreateWorkspace({
       const cs = clientSlug.trim();
       const os = orgSlug.trim();
       if (!session || !cs || !os) return;
+      // Snapshot before clearing appearance overrides — theme switch is
+      // destructive (all per-block appearance values reset to inherit).
+      const prevSpec = parseVideoSpec(session.video_spec ?? null);
+      if (prevSpec) undoStack.push({ label: `Theme → ${themeId}`, value: prevSpec });
       setPendingTheme(themeId);
       setSpecInFlight((n) => n + 1);
       const reqId = ++specReqIdRef.current;
@@ -3302,7 +1444,7 @@ export function VideoCreateWorkspace({
         setSpecInFlight((n) => Math.max(0, n - 1));
       }
     },
-    [applySession, clientSlug, orgSlug, session, show],
+    [applySession, clientSlug, orgSlug, session, show, undoStack],
   );
 
   /** Persist a single layout knob. Drag-while-dragging updates `layoutDraft` only
@@ -3382,7 +1524,9 @@ export function VideoCreateWorkspace({
       if (f === "center") ops.push({ op: "replace", path: "/templateId", value: "centered-pop" });
       else if (f === "stack") {
         ops.push({ op: "replace", path: "/templateId", value: "stacked-cards" });
-        ops.push({ op: "replace", path: "/layout/stackGrowth", value: "down" });
+        // NOTE: layout/stackGrowth is intentionally not written here — the
+        // stacked-cards template renders cards top→down regardless, so writing
+        // it created a phantom "Adjusted" badge that no preview reflected.
         if (cur === "top-banner") ops.push({ op: "replace", path: "/layout/verticalAnchor", value: "top" });
         if (cur === "centered-pop") {
           ops.push({ op: "replace", path: "/layout/verticalAnchor", value: "bottom" });
@@ -3493,6 +1637,94 @@ export function VideoCreateWorkspace({
       selectedSegmentId,
       show,
     ],
+  );
+
+  const savedBeatFontScale = useMemo(() => {
+    if (!previewVideoSpec) return 1;
+    if (selectedSegmentId === "hook") {
+      const v = previewVideoSpec.hook.fontScale;
+      return v != null && Number.isFinite(Number(v)) ? Number(v) : 1;
+    }
+    const block = previewVideoSpec.blocks.find((b) => b.id === selectedSegmentId);
+    const v = block?.fontScale;
+    return v != null && Number.isFinite(Number(v)) ? Number(v) : 1;
+  }, [previewVideoSpec, selectedSegmentId]);
+
+  const displayBeatFontScale =
+    fontScaleDraft?.segmentId === selectedSegmentId ? fontScaleDraft.scale : savedBeatFontScale;
+
+  const onChangeFontScale = useCallback(
+    (scale: number) => {
+      setFontScaleDraft({ segmentId: selectedSegmentId, scale });
+    },
+    [selectedSegmentId],
+  );
+
+  const onCommitFontScale = useCallback(
+    async (scale: number) => {
+      if (!previewVideoSpec || !session) return;
+      if (Math.abs(savedBeatFontScale - scale) < 0.02) {
+        setFontScaleDraft(null);
+        return;
+      }
+      const blockIdx =
+        selectedSegmentId !== "hook"
+          ? previewVideoSpec.blocks.findIndex((b) => b.id === selectedSegmentId)
+          : -1;
+      if (selectedSegmentId !== "hook" && blockIdx < 0) {
+        setFontScaleDraft(null);
+        return;
+      }
+      const path =
+        selectedSegmentId === "hook" ? "/hook/fontScale" : (`/blocks/${blockIdx}/fontScale` as const);
+      const value = Math.abs(scale - 1) < 0.02 ? null : scale;
+      await onCommitVideoSpecOps([{ op: "replace", path, value }]);
+      setFontScaleDraft(null);
+    },
+    [onCommitVideoSpecOps, previewVideoSpec, savedBeatFontScale, selectedSegmentId, session],
+  );
+
+  const onApplyFontScaleToAllBeats = useCallback(async () => {
+    if (!previewVideoSpec || !session) return;
+    const value = Math.abs(displayBeatFontScale - 1) < 0.02 ? null : displayBeatFontScale;
+    const ops: Operation[] = [{ op: "replace", path: "/hook/fontScale", value }];
+    previewVideoSpec.blocks.forEach((_, i) => {
+      ops.push({ op: "replace", path: `/blocks/${i}/fontScale`, value });
+    });
+    await onCommitVideoSpecOps(ops);
+    setFontScaleDraft(null);
+  }, [displayBeatFontScale, onCommitVideoSpecOps, previewVideoSpec, session]);
+
+  const onChangeBrollTrim = useCallback(
+    (trimStartSec: number, trimEndSec: number) => {
+      setBrollTrimDraft({ trimStartSec, trimEndSec });
+    },
+    [],
+  );
+
+  const onCommitBrollTrim = useCallback(
+    async (trimStartSec: number, trimEndSec: number) => {
+      if (!previewVideoSpec || !session) return;
+      const bg = previewVideoSpec.background;
+      const savedStart = Number(bg.trimStartSec ?? 0);
+      const sourceDur = bg.durationSec != null ? Number(bg.durationSec) : null;
+      const savedEnd = bg.trimEndSec != null ? Number(bg.trimEndSec) : sourceDur;
+      if (
+        sourceDur != null &&
+        Math.abs(savedStart - trimStartSec) < 0.05 &&
+        savedEnd != null &&
+        Math.abs(savedEnd - trimEndSec) < 0.05
+      ) {
+        setBrollTrimDraft(null);
+        return;
+      }
+      await onCommitVideoSpecOps([
+        { op: "replace", path: "/background/trimStartSec", value: trimStartSec },
+        { op: "replace", path: "/background/trimEndSec", value: trimEndSec },
+      ]);
+      setBrollTrimDraft(null);
+    },
+    [onCommitVideoSpecOps, previewVideoSpec, session],
   );
 
   const onClearAppearance = useCallback(async () => {
@@ -3622,6 +1854,16 @@ export function VideoCreateWorkspace({
   /** Reset the in-flight timing draft whenever the saved spec changes (server
    *  ack, fresh fetch). Same gate-by-string-key pattern as `layoutDraft`. */
   const timingSyncKey = `${session?.id ?? ""}|${previewVideoSpec?.totalSec ?? 0}|${previewVideoSpec?.gapBetweenBlocksSec ?? 0}|${previewVideoSpec?.pausesSec?.join(",") ?? ""}`;
+  const fontScaleSyncKey = useMemo(() => {
+    if (!previewVideoSpec) return "";
+    const hookFs = previewVideoSpec.hook.fontScale ?? "";
+    const blockFs = previewVideoSpec.blocks
+      .map((b) => `${b.id}:${b.fontScale ?? ""}`)
+      .join("|");
+    return `${session?.id ?? ""}|${hookFs}|${blockFs}`;
+  }, [previewVideoSpec, session?.id]);
+  const brollTrimSyncKey = `${session?.id ?? ""}|${previewVideoSpec?.background.trimStartSec ?? 0}|${previewVideoSpec?.background.trimEndSec ?? ""}|${previewVideoSpec?.background.durationSec ?? ""}`;
+
   useEffect(() => {
     setTimingDraft(null);
     setPauseDraft(null);
@@ -3629,8 +1871,17 @@ export function VideoCreateWorkspace({
   }, [timingSyncKey]);
 
   useEffect(() => {
+    setFontScaleDraft(null);
+  }, [fontScaleSyncKey]);
+
+  useEffect(() => {
+    setBrollTrimDraft(null);
+  }, [brollTrimSyncKey]);
+
+  useEffect(() => {
     setPauseDraft(null);
     setLayerTimingDraft(null);
+    setFontScaleDraft(null);
   }, [selectedSegmentId]);
 
   /** If the selected segment disappears (e.g. an AI refine deletes a block),
@@ -3742,6 +1993,66 @@ export function VideoCreateWorkspace({
     [applySession, clientSlug, orgSlug, session, show],
   );
 
+  /**
+   * Restore a previously captured spec snapshot via a root-replace JSON
+   * Patch. Sends ``{ op: "replace", path: "", value: snapshot }`` which the
+   * jsonpatch library treats as a full document swap (RFC 6902 §4.3). The
+   * UI re-derives all drafts via ``applySession``.
+   */
+  const restoreSpecSnapshot = useCallback(
+    async (spec: VideoSpec) => {
+      const cs = clientSlug.trim();
+      const os = orgSlug.trim();
+      if (!session || !cs || !os) return;
+      undoApplyingRef.current = true;
+      setSpecInFlight((n) => n + 1);
+      const reqId = ++specReqIdRef.current;
+      try {
+        const res = await patchSessionVideoSpec(cs, os, session.id, {
+          ops: [{ op: "replace", path: "", value: spec as unknown as Record<string, unknown> }],
+        });
+        if (reqId !== specReqIdRef.current) return;
+        if (!res.ok) {
+          show(res.error, "error");
+          return;
+        }
+        applySession(res.data);
+      } finally {
+        setSpecInFlight((n) => Math.max(0, n - 1));
+        undoApplyingRef.current = false;
+      }
+    },
+    [applySession, clientSlug, orgSlug, session, show],
+  );
+
+  const onUndo = useCallback(() => {
+    const snap = undoStack.undo();
+    if (!snap) return;
+    void restoreSpecSnapshot(snap.value);
+  }, [restoreSpecSnapshot, undoStack]);
+
+  const onRedo = useCallback(() => {
+    const snap = undoStack.redo();
+    if (!snap) return;
+    void restoreSpecSnapshot(snap.value);
+  }, [restoreSpecSnapshot, undoStack]);
+
+  useUndoKeybindings({ onUndo, onRedo });
+
+  /** Commit the Step 1 hook input to video_spec.hook.text. Triggered on blur
+   *  / Enter. Empty input resets to the saved value rather than persisting an
+   *  empty hook (which would break the render). */
+  const onCommitHookText = useCallback(async () => {
+    const trimmed = hookDraft.trim();
+    if (!trimmed) {
+      setHookDraft(primaryHookText ?? "");
+      return;
+    }
+    if (trimmed === (primaryHookText ?? "")) return;
+    if (!previewVideoSpec) return;
+    await applyVideoSpecOps([{ op: "replace", path: "/hook/text", value: trimmed }]);
+  }, [applyVideoSpecOps, hookDraft, previewVideoSpec, primaryHookText]);
+
   const onAddTextLayer = useCallback(async () => {
     if (!previewVideoSpec) return;
     const id =
@@ -3780,46 +2091,66 @@ export function VideoCreateWorkspace({
     await applyVideoSpecOps(result.ops);
   }, [applyVideoSpecOps, layerCtaDraft, layerTextDraft, previewVideoSpec, selectedLayer, show]);
 
-  const onVideoRefineApply = useCallback(async () => {
-    const cs = clientSlug.trim();
-    const os = orgSlug.trim();
-    const instruction = refineVideoPrompt.trim();
-    if (!session || !cs || !os || !instruction) return;
-    setAiRefineBusy(true);
-    setAiRefinePhase("thinking");
-    setSpecInFlight((n) => n + 1);
-    const reqId = ++specReqIdRef.current;
-    try {
-      const pe = await promptEditSessionVideoSpec(cs, os, session.id, { instruction });
-      if (reqId !== specReqIdRef.current) return;
-      if (!pe.ok) {
-        show(pe.error, "error");
-        return;
+  // NOTE: the Timing tab "Layer text" field is now read-only (Step 1 is the
+  // single source for hook + block text), so the previous debounced autosave
+  // effect on `layerTextDraft` / `layerCtaDraft` has been removed. CTA toggles
+  // happen in Step 1; timing changes go through `onCommitLayerTiming`.
+
+  /**
+   * Apply a free-text AI refine prompt to the live video spec.
+   *
+   * Phase D: this is the shared implementation behind the ⌘K palette and
+   * any inspector button that wants to invoke AI refine. Takes the
+   * instruction explicitly so callers control where the text comes from
+   * (palette prompt, future inline input, programmatic action, etc).
+   */
+  const runVideoRefine = useCallback(
+    async (instructionRaw: string) => {
+      const cs = clientSlug.trim();
+      const os = orgSlug.trim();
+      const instruction = instructionRaw.trim();
+      if (!session || !cs || !os || !instruction) return;
+      setAiRefineBusy(true);
+      setAiRefinePhase("thinking");
+      setSpecInFlight((n) => n + 1);
+      const reqId = ++specReqIdRef.current;
+      try {
+        const pe = await promptEditSessionVideoSpec(cs, os, session.id, { instruction });
+        if (reqId !== specReqIdRef.current) return;
+        if (!pe.ok) {
+          show(pe.error, "error");
+          return;
+        }
+        if (!Array.isArray(pe.data.ops) || pe.data.ops.length === 0) {
+          show("AI couldn't translate that into a change — try being more specific.", "error");
+          return;
+        }
+        setAiRefinePhase("applying");
+        const prevSpec = parseVideoSpec(session.video_spec ?? null);
+        if (prevSpec) {
+          undoStack.push({
+            label: `AI refine: ${instruction.slice(0, 28)}${instruction.length > 28 ? "…" : ""}`,
+            value: prevSpec,
+          });
+        }
+        const res = await patchSessionVideoSpec(cs, os, session.id, { ops: pe.data.ops });
+        if (reqId !== specReqIdRef.current) return;
+        if (!res.ok) {
+          show(res.error, "error");
+          return;
+        }
+        applySession(res.data);
+        show(pe.data.summary || `Updated (${pe.data.ops.length} change${pe.data.ops.length === 1 ? "" : "s"}).`, "success");
+      } catch (e) {
+        show(e instanceof Error ? e.message : "AI refine failed unexpectedly.", "error");
+      } finally {
+        setAiRefineBusy(false);
+        setAiRefinePhase("idle");
+        setSpecInFlight((n) => Math.max(0, n - 1));
       }
-      // Zero-op responses look like a success but the user sees nothing change.
-      // Fail loudly (and keep the prompt so they can rephrase).
-      if (!Array.isArray(pe.data.ops) || pe.data.ops.length === 0) {
-        show("AI couldn't translate that into a change — try being more specific.", "error");
-        return;
-      }
-      setAiRefinePhase("applying");
-      const res = await patchSessionVideoSpec(cs, os, session.id, { ops: pe.data.ops });
-      if (reqId !== specReqIdRef.current) return;
-      if (!res.ok) {
-        show(res.error, "error");
-        return;
-      }
-      applySession(res.data);
-      setRefineVideoPrompt("");
-      show(pe.data.summary || `Updated (${pe.data.ops.length} change${pe.data.ops.length === 1 ? "" : "s"}).`, "success");
-    } catch (e) {
-      show(e instanceof Error ? e.message : "AI refine failed unexpectedly.", "error");
-    } finally {
-      setAiRefineBusy(false);
-      setAiRefinePhase("idle");
-      setSpecInFlight((n) => Math.max(0, n - 1));
-    }
-  }, [applySession, clientSlug, orgSlug, refineVideoPrompt, session, show]);
+    },
+    [applySession, clientSlug, orgSlug, session, show, undoStack],
+  );
 
   const onRegenerateCovers = useCallback(async () => {
     const cs = clientSlug.trim();
@@ -3946,8 +2277,8 @@ export function VideoCreateWorkspace({
         }
         show(
           clearSlides
-            ? "Recipe updated — slides cleared. Adjust count if needed, then Generate slides."
-            : "Carousel recipe updated.",
+            ? "Template updated — slides cleared. Adjust count if needed, then Generate slides."
+            : "Carousel template updated.",
           "success",
         );
       } finally {
@@ -3988,14 +2319,19 @@ export function VideoCreateWorkspace({
     const cs = clientSlug.trim();
     const os = orgSlug.trim();
     if (!session || !cs || !os) return false;
-    const res = await carouselSlidesPatch(cs, os, session.id, carouselDraftRef.current);
-    if (!res.ok) {
-      show(res.error, "error");
-      return false;
+    setCarouselInFlight((n) => n + 1);
+    try {
+      const res = await carouselSlidesPatch(cs, os, session.id, carouselDraftRef.current);
+      if (!res.ok) {
+        show(res.error, "error");
+        return false;
+      }
+      carouselDraftDirty.current = false;
+      applySession(res.data);
+      return true;
+    } finally {
+      setCarouselInFlight((n) => Math.max(0, n - 1));
     }
-    carouselDraftDirty.current = false;
-    applySession(res.data);
-    return true;
   }, [applySession, clientSlug, orgSlug, session, show]);
 
   const onApplyCarouselTextStyleToAll = useCallback(
@@ -4036,6 +2372,62 @@ export function VideoCreateWorkspace({
       if (await commitCarouselDraft()) show("Background fade applied to all slides.", "success");
     },
     [commitCarouselDraft, show],
+  );
+
+  const patchCarouselDraftBroadcastTextBox = useCallback(
+    <K extends keyof CarouselTextBox>(field: K, value: CarouselTextBox[K]) => {
+      const next = carouselDraftRef.current.map((s) => {
+        const tb = mergeCarouselTextBox(s, carouselDraftRef.current.length);
+        return { ...s, text_box: { ...tb, [field]: value } };
+      });
+      carouselDraftRef.current = next;
+      setCarouselDraft(next);
+      carouselDraftDirty.current = true;
+    },
+    [],
+  );
+
+  const patchCarouselDraftBroadcastBackground = useCallback(
+    <K extends keyof CarouselBackgroundStyle>(field: K, value: CarouselBackgroundStyle[K]) => {
+      const next = carouselDraftRef.current.map((s) => {
+        const bg = mergeCarouselBackgroundStyle(s);
+        return { ...s, background_style: { ...bg, [field]: value } };
+      });
+      carouselDraftRef.current = next;
+      setCarouselDraft(next);
+      carouselDraftDirty.current = true;
+    },
+    [],
+  );
+
+  const onBroadcastCarouselTextBoxField = useCallback(
+    async <K extends keyof CarouselTextBox>(field: K, value: CarouselTextBox[K]) => {
+      patchCarouselDraftBroadcastTextBox(field, value);
+      await commitCarouselDraft();
+    },
+    [commitCarouselDraft, patchCarouselDraftBroadcastTextBox],
+  );
+
+  const onBroadcastCarouselBackgroundField = useCallback(
+    async <K extends keyof CarouselBackgroundStyle>(field: K, value: CarouselBackgroundStyle[K]) => {
+      patchCarouselDraftBroadcastBackground(field, value);
+      await commitCarouselDraft();
+    },
+    [commitCarouselDraft, patchCarouselDraftBroadcastBackground],
+  );
+
+  const onBroadcastCarouselTextBoxDraft = useCallback(
+    <K extends keyof CarouselTextBox>(field: K, value: CarouselTextBox[K]) => {
+      patchCarouselDraftBroadcastTextBox(field, value);
+    },
+    [patchCarouselDraftBroadcastTextBox],
+  );
+
+  const onBroadcastCarouselBackgroundDraft = useCallback(
+    <K extends keyof CarouselBackgroundStyle>(field: K, value: CarouselBackgroundStyle[K]) => {
+      patchCarouselDraftBroadcastBackground(field, value);
+    },
+    [patchCarouselDraftBroadcastBackground],
   );
 
   const onRegenerateCarouselSlide = useCallback(
@@ -4181,13 +2573,18 @@ export function VideoCreateWorkspace({
         void (async () => {
           // Snapshot current draft after the debounce window so we always send the latest text.
           const latest = carouselDraftRef.current;
-          const res = await carouselSlidesPatch(cs, os, session.id, latest);
-          if (!res.ok) {
-            show(res.error, "error");
-            return;
+          setCarouselInFlight((n) => n + 1);
+          try {
+            const res = await carouselSlidesPatch(cs, os, session.id, latest);
+            if (!res.ok) {
+              show(res.error, "error");
+              return;
+            }
+            carouselDraftDirty.current = false;
+            applySession(res.data);
+          } finally {
+            setCarouselInFlight((n) => Math.max(0, n - 1));
           }
-          carouselDraftDirty.current = false;
-          applySession(res.data);
         })();
       }, 600);
     },
@@ -4212,6 +2609,37 @@ export function VideoCreateWorkspace({
     [show],
   );
 
+  // Video editor action registry (Phase D). Same registry feeds both the
+  // ⌘K command palette and the visible inspector buttons (Improve / Vary /
+  // Shorten / Outline / …). No sparkles — plain text labels.
+  //
+  // Keep this hook ABOVE all conditional returns. Placing it below the
+  // talking_head/carousel branches changes hook order between formats and
+  // crashes React.
+  const videoActions = useMemo(
+    () =>
+      buildVideoActions({
+        selectedSegmentId,
+        aiRefineBusy,
+        regenBusyScope,
+        spec: previewVideoSpec,
+        regen: (scope, feedback) => onRegenSection(scope, feedback),
+        applyRefinePrompt: runVideoRefine,
+        setBoldOutline: async (on) => {
+          await onSetOutlineLayout(on);
+        },
+      }),
+    [
+      aiRefineBusy,
+      onRegenSection,
+      onSetOutlineLayout,
+      previewVideoSpec,
+      regenBusyScope,
+      runVideoRefine,
+      selectedSegmentId,
+    ],
+  );
+
   if (!bootstrapDone) {
     return (
       <div className="flex min-h-[20vh] items-center justify-center">
@@ -4234,97 +2662,56 @@ export function VideoCreateWorkspace({
     Array.isArray(session.hashtags) && session.hashtags.length ? `\n\n${session.hashtags.join(" ")}` : ""
   }`.trim();
 
+  // ────────────────────────────────────────────────────────────────────────────────────────────
+  // FORMAT DISPATCH
+  //
+  // After bootstrap, the workspace dispatches to the right per-format editor:
+  //
+  //   talking_head            → <TalkingHeadEditor>   (./editors/talking-head/)
+  //   carousel                → <CarouselEditor>      (./editors/carousel/)
+  //   text_overlay/b_roll_reel → inline JSX below     (./editors/video/VideoEditor.tsx
+  //                                                     is the planned home; the Studio
+  //                                                     shell migration in Phase C will
+  //                                                     replace the inline JSX entirely)
+  //
+  // The workspace still owns autosave/session lifecycle for all formats — extracted
+  // editors take callbacks; the inline path uses them directly. See
+  // `editors/README.md` for the full split status and rationale.
+  // ────────────────────────────────────────────────────────────────────────────────────────────
+
   // ─────────────────────────────── talking_head minimal flow ───────────────────────────────
   if (isTalkingHead) {
     return (
-      <div className="space-y-4">
-        <div className="glass rounded-2xl border border-app-divider/80 p-5 md:p-6">
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            <Video className="h-4 w-4 text-amber-500" />
-            <h2 className="flex-1 text-sm font-semibold text-app-fg">Script</h2>
-            <RegenInline
-              scope="script"
-              busy={regenBusyScope === "script"}
-              onRegen={async (s, fb) => onRegenSection(s, fb)}
-              placeholder="Tighter, more direct, add a story…"
-            />
-            <button
-              type="button"
-              onClick={() => void copyText("script", scriptDraft)}
-              className="inline-flex items-center gap-1 rounded-lg bg-app-icon-btn-bg px-2.5 py-1 text-[11px] font-bold text-app-icon-btn-fg"
-            >
-              <Copy className="h-3 w-3" /> Copy
-            </button>
-          </div>
-          <p className="mb-3 text-xs leading-relaxed text-app-fg-muted">
-            Talking-head format — film yourself reading this script. Edit freely; markdown headings
-            (##&nbsp;Hook, ##&nbsp;Build-up, ##&nbsp;Reframe, ##&nbsp;Clarity, ##&nbsp;CTA) match the content brief.
-          </p>
-          <textarea
-            value={scriptDraft}
-            onChange={(e) => setScriptDraft(e.target.value)}
-            rows={Math.min(28, Math.max(10, scriptDraft.split("\n").length + 1))}
-            className="glass-inset w-full resize-y rounded-xl px-3 py-3 font-mono text-[13px] leading-relaxed text-app-fg placeholder:text-app-fg-subtle focus:outline-none focus:ring-2 focus:ring-amber-500/35"
-            placeholder="## Hook&#10;…&#10;&#10;## Build-up&#10;…&#10;&#10;## Reframe&#10;…"
-          />
-          <div className="mt-3 flex items-center gap-2">
-            <button
-              type="button"
-              disabled={loading || !hasUnsavedScript}
-              onClick={() => void saveScript()}
-              className="inline-flex items-center gap-2 rounded-xl bg-amber-500/15 px-4 py-2 text-xs font-bold text-app-on-amber-title hover:bg-amber-500/25 disabled:opacity-40"
-            >
-              {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-              {loading ? "Saving…" : "Save script"}
-            </button>
-            {!hasUnsavedScript && scriptDraft.trim() && (
-              <span className="text-[11px] text-emerald-600 dark:text-emerald-400">Saved ✓</span>
-            )}
-          </div>
-        </div>
-
-        <ReelCoverSection
-          hooks={hooks}
-          coverOptions={coverOptions}
-          coverRegenBusy={coverRegenBusy}
-          onRegenerateCovers={onRegenerateCovers}
-          images={images}
-          thumbnailUrl={thumbnailUrl}
-          thumbnailBusy={thumbnailBusy}
-          coverText={coverText}
-          selectedImageId={coverImageId}
-          selectedCoverTemplate={session.selected_cover_template ?? null}
-          coverEdit={coverEdit}
-          mode={coverMode}
-          onModeChange={setCoverMode}
-          onCoverTextChange={setCoverText}
-          onCoverEditChange={setCoverEdit}
-          onSelectImage={setCoverImageId}
-          onGenerateAi={onGenerateThumbnail}
-          onComposeFromImage={onComposeCoverFromImage}
-          step={2}
-        />
-
-        <CaptionSection
-          caption={session.caption_body ?? ""}
-          hashtags={session.hashtags ?? []}
-          onCopy={() => void copyText("caption + hashtags", captionFull)}
-          regenInline={
-            <RegenInline
-              scope="caption"
-              busy={regenBusyScope === "caption"}
-              onRegen={async (s, fb) => onRegenSection(s, fb)}
-              placeholder="Different angle, shorter, …"
-            />
-          }
-        />
-
-        <AiContextSection
-          hooks={hooks}
-          regenHooks={(fb) => onRegenSection("hooks", fb)}
-          busy={regenBusyScope === "hooks"}
-        />
-      </div>
+      <TalkingHeadEditor
+        scriptDraft={scriptDraft}
+        setScriptDraft={setScriptDraft}
+        contentInFlight={contentInFlight}
+        regenBusyScope={regenBusyScope}
+        onRegenSection={onRegenSection}
+        copyText={copyText}
+        hooks={hooks}
+        coverOptions={coverOptions}
+        coverRegenBusy={coverRegenBusy}
+        onRegenerateCovers={onRegenerateCovers}
+        images={images}
+        thumbnailUrl={thumbnailUrl}
+        thumbnailBusy={thumbnailBusy}
+        coverText={coverText}
+        coverImageId={coverImageId}
+        selectedCoverTemplate={session.selected_cover_template ?? null}
+        coverEdit={coverEdit}
+        coverSpecInFlight={coverSpecInFlight}
+        coverMode={coverMode}
+        onCoverModeChange={setCoverMode}
+        onCoverTextChange={setCoverText}
+        onCoverEditChange={setCoverEdit}
+        onSelectCoverImage={setCoverImageId}
+        onGenerateThumbnail={onGenerateThumbnail}
+        onComposeCoverFromImage={onComposeCoverFromImage}
+        captionBody={session.caption_body ?? ""}
+        hashtags={session.hashtags ?? []}
+        captionFull={captionFull}
+      />
     );
   }
 
@@ -4349,12 +2736,15 @@ export function VideoCreateWorkspace({
         <div className="glass rounded-2xl border border-app-divider/80 p-4 md:p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-app-fg-muted">
-                Carousel recipe
+              <p className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-app-fg-muted">
+                Carousel template
+                <HelpHint label="Carousel template">
+                  Background style and slide order. Pick from your saved templates in Settings → Content defaults.
+                </HelpHint>
               </p>
               <p className="mt-1 text-[11px] leading-relaxed text-app-fg-muted">
                 Background references from Media. Change anytime before slides exist; after that, use{" "}
-                <span className="font-semibold text-app-fg-secondary">Switch recipe</span> (clears slides so new
+                <span className="font-semibold text-app-fg-secondary">Switch template</span> (clears slides so new
                 backgrounds apply).
               </p>
             </div>
@@ -4362,7 +2752,7 @@ export function VideoCreateWorkspace({
               href="/settings#content-defaults"
               className="shrink-0 text-[11px] font-semibold text-amber-600 hover:underline dark:text-amber-400"
             >
-              Edit recipes →
+              Edit templates →
             </Link>
           </div>
           {snap && typeof snap === "object" && typeof snap.name === "string" && snap.name.trim() ? (
@@ -4403,19 +2793,19 @@ export function VideoCreateWorkspace({
             </div>
           ) : (
             <p className="mt-3 text-xs text-app-fg-muted">
-              No reference recipe — slides use AI-generated backgrounds instead of your Media library.
+              No reference template — slides use AI-generated backgrounds instead of your Media library.
             </p>
           )}
           {snapId !== "" && !snapInLibrary && carouselTemplateLibrary.length > 0 ? (
             <p className="mt-2 text-[11px] leading-relaxed text-amber-800 dark:text-amber-300/90">
-              This snapshot is not in your current recipe library. Pick a recipe below to replace it.
+              This snapshot is not in your current template library. Pick a template below to replace it.
             </p>
           ) : null}
 
           {carouselTemplateLibrary.length > 0 && !carouselSlidesLocked ? (
             <label className="mt-3 block">
-              <span className="mb-1.5 block text-[11px] font-semibold text-app-fg-muted">Change recipe</span>
-              <span className="sr-only">Carousel recipe</span>
+              <span className="mb-1.5 block text-[11px] font-semibold text-app-fg-muted">Change template</span>
+              <span className="sr-only">Carousel template</span>
               <div className="relative">
                 <select
                   className="w-full appearance-none rounded-xl border border-zinc-200/90 bg-white px-3 py-2.5 pr-9 text-sm text-zinc-900 shadow-sm disabled:opacity-60 dark:border-white/10 dark:bg-zinc-900/80 dark:text-app-fg"
@@ -4431,11 +2821,11 @@ export function VideoCreateWorkspace({
                 >
                   {!snapInLibrary && snapId !== "" ? (
                     <option value="" disabled>
-                      — Choose a recipe to replace snapshot —
+                      — Choose a template to replace snapshot —
                     </option>
                   ) : (
                     <option value="" disabled={snapInLibrary}>
-                      {snapInLibrary ? "Change to…" : "Choose a recipe…"}
+                      {snapInLibrary ? "Change to…" : "Choose a template…"}
                     </option>
                   )}
                   {carouselTemplateLibrary.map((t) => (
@@ -4465,12 +2855,12 @@ export function VideoCreateWorkspace({
                   }}
                   className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-app-divider bg-app-chip-bg/40 px-3 py-2.5 text-xs font-bold text-app-fg transition-colors hover:bg-app-chip-bg/70 disabled:opacity-50 sm:w-auto"
                 >
-                  Switch carousel recipe…
+                  Switch carousel template…
                 </button>
               ) : (
                 <div className="rounded-xl border border-amber-500/30 bg-amber-500/[0.06] p-4">
                   <p className="text-[11px] leading-relaxed text-app-fg-muted">
-                    Pick a new recipe, then confirm.{" "}
+                    Pick a new template, then confirm.{" "}
                     <span className="font-semibold text-app-fg">
                       All current slides (text and images) are removed
                     </span>{" "}
@@ -4478,7 +2868,7 @@ export function VideoCreateWorkspace({
                     <span className="font-semibold text-app-fg-secondary">Generate slides</span> below when ready.
                   </p>
                   <label className="mt-3 block">
-                    <span className="mb-1.5 block text-[11px] font-semibold text-app-fg-muted">New recipe</span>
+                    <span className="mb-1.5 block text-[11px] font-semibold text-app-fg-muted">New template</span>
                     <div className="relative">
                       <select
                         className="w-full appearance-none rounded-xl border border-zinc-200/90 bg-white px-3 py-2.5 pr-9 text-sm text-zinc-900 shadow-sm dark:border-white/10 dark:bg-zinc-900/80 dark:text-app-fg"
@@ -4521,7 +2911,7 @@ export function VideoCreateWorkspace({
                       {carouselTemplateBusy ? (
                         <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
                       ) : null}
-                      Apply recipe &amp; clear slides
+                      Apply template &amp; clear slides
                     </button>
                     <button
                       type="button"
@@ -4543,12 +2933,14 @@ export function VideoCreateWorkspace({
           {carouselTemplateBusy ? (
             <p className="mt-2 flex items-center gap-2 text-[11px] text-app-fg-muted">
               <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
-              Updating recipe…
+              Updating template…
             </p>
           ) : null}
         </div>
 
-        <CarouselSection
+        <CarouselEditor
+          clientSlug={clientSlug}
+          orgSlug={orgSlug}
           sessionId={session.id}
           slides={carouselDraft}
           images={images}
@@ -4574,10 +2966,15 @@ export function VideoCreateWorkspace({
           onLayoutCommit={onCarouselLayoutCommit}
           onTextBoxAdjust={onCarouselTextBoxAdjust}
           onBackgroundStyleAdjust={onCarouselBackgroundStyleAdjust}
+          onBroadcastTextBoxField={onBroadcastCarouselTextBoxField}
+          onBroadcastBackgroundField={onBroadcastCarouselBackgroundField}
+          onBroadcastTextBoxDraft={onBroadcastCarouselTextBoxDraft}
+          onBroadcastBackgroundDraft={onBroadcastCarouselBackgroundDraft}
           onApplyTextStyleToAll={onApplyCarouselTextStyleToAll}
           onApplyBackgroundToAll={onApplyCarouselBackgroundToAll}
           onRemoveSlide={onRemoveCarouselSlide}
           onError={(message) => show(message, "error")}
+          inFlight={carouselInFlight}
         />
 
         <CaptionSection
@@ -4604,6 +3001,7 @@ export function VideoCreateWorkspace({
   }
 
   // ────────────────── visual formats: text_overlay / b_roll_reel ──────────────────
+
   if (!isTextOverlay && !isBroll) {
     return (
       <div className="glass rounded-2xl border border-app-divider/80 p-5 md:p-6">
@@ -4630,245 +3028,50 @@ export function VideoCreateWorkspace({
 
   return (
     <div className="space-y-4">
-      {/* ── Pinned deliverable recap (only on Done sessions) ──
-          Sits above the build steps so when a user reopens a finished session they
-          immediately see the result (cover + caption + download / copy actions),
-          instead of having to scroll past four build cards to find it. Mild action
-          overlap with the Output card below is intentional — top of page is the
-          "show me what I made" view; Output is the "how do I publish it" view. */}
-      {step3Done && session.thumbnail_url ? (
-        <div className="glass rounded-2xl border border-emerald-500/30 bg-emerald-500/[0.04] p-4 md:p-5">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
-            <a
-              href={session.thumbnail_url}
-              target="_blank"
-              rel="noreferrer"
-              title="Open cover full size"
-              className="mx-auto block shrink-0 sm:mx-0"
-            >
-              <div className="w-[120px] overflow-hidden rounded-lg border border-app-divider bg-black/20 shadow-md">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={session.thumbnail_url}
-                  alt="Reel cover"
-                  width={120}
-                  className="block aspect-[9/16] w-full object-cover"
-                />
-              </div>
-            </a>
-
-            <div className="flex min-w-0 flex-1 flex-col gap-2.5">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
-                <span className="text-xs font-bold uppercase tracking-wide text-emerald-400">
-                  Ready to publish
-                </span>
-                {session.updated_at ? (
-                  <span className="text-[11px] tabular-nums text-app-fg-subtle">
-                    · {new Date(session.updated_at).toLocaleDateString()}
-                  </span>
-                ) : null}
-              </div>
-
-              {session.caption_body ? (
-                <p className="line-clamp-3 whitespace-pre-line text-[13px] leading-relaxed text-app-fg-secondary">
-                  {session.caption_body}
-                </p>
-              ) : (
-                <p className="text-xs text-app-fg-muted">No caption yet.</p>
-              )}
-
-              <div className="flex flex-wrap items-center gap-2 pt-0.5">
-                <button
-                  type="button"
-                  onClick={() => setPreviewOpen(true)}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500/15 px-3 py-1.5 text-xs font-bold text-app-on-amber-title hover:bg-amber-500/25"
-                >
-                  <Eye className="h-3 w-3" /> Preview post
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void copyText("caption + hashtags", captionFull)}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-app-divider px-3 py-1.5 text-xs font-bold text-app-fg hover:bg-white/5"
-                >
-                  <Copy className="h-3 w-3" /> Copy caption
-                </button>
-                {session.rendered_video_url ? (
-                  <a
-                    href={session.rendered_video_url}
-                    download="reel.mp4"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold text-zinc-950 shadow-sm hover:opacity-90"
-                  >
-                    <Download className="h-3 w-3" /> Download MP4
-                  </a>
-                ) : null}
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {/* ── Step 1: On-screen text ── */}
-      <div className="glass rounded-2xl border border-app-divider/80 p-5 md:p-6">
-        <StepHeader n={1} label="On-screen text" done={step1Done}>
-          <RegenInline
-            scope="text_blocks"
-            busy={regenBusyScope === "text_blocks"}
-            onRegen={async (s, fb) => onRegenSection(s, fb)}
-            placeholder="More direct, add emoji, shorter…"
+      <div className="glass rounded-2xl border border-app-divider/80 p-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <StudioFormatTabs
+            value={videoSurface}
+            onChange={setVideoSurface}
+            tabs={[
+              { id: "reel", label: "Reel" },
+              { id: "cover", label: "Cover" },
+              { id: "output", label: "Output" },
+            ]}
           />
-        </StepHeader>
-
-        <div className="mb-3">
-          <div className="mb-2 flex items-center justify-between">
-            <p className="text-xs font-semibold text-app-fg">
-              On-screen text blocks
-              <span className="ml-1.5 font-normal text-app-fg-muted">
-                ({textDraft.length}/6 · 6–7 words max)
-              </span>
-            </p>
-            <button
-              type="button"
-              onClick={() => setTextDraft((prev) => [...prev, { text: "", isCTA: false }])}
-              disabled={textDraft.length >= 6}
-              className="inline-flex items-center gap-1 rounded-lg border border-app-divider px-2 py-1 text-[11px] font-semibold text-app-fg-muted hover:text-app-fg disabled:opacity-40"
-            >
-              <Plus className="h-3 w-3" /> Add block
-            </button>
+          <div className="ml-auto flex items-center gap-2 text-[10px] text-app-fg-muted">
+            <SaveStatusPill inFlight={contentInFlight + specInFlight + coverSpecInFlight} />
+            <span className="hidden sm:inline">Autosaved studio</span>
           </div>
-          <div className="space-y-2">
-            {/* Hook row — same opener as ``video_spec.hook`` / Remotion (see
-                ``sessionPrimaryHookText`` + backend ``_session_hook_text``). Read-only
-                here; alternatives + regen live in the bottom panel. */}
-            {primaryHookText ? (
-              <div className="flex items-center gap-2">
-                <div
-                  className="glass-inset flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2"
-                  title="Hook · burned into the first segment of the reel"
-                >
-                  <span className="shrink-0 rounded-md bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
-                    Hook
-                  </span>
-                  <p className="min-w-0 flex-1 truncate text-sm font-semibold text-app-fg">
-                    {primaryHookText}
-                  </p>
-                </div>
-                <RegenInline
-                  scope="hooks"
-                  busy={regenBusyScope === "hooks"}
-                  onRegen={async (s, fb) => onRegenSection(s, fb)}
-                  placeholder="More direct, shorter, …"
-                />
-              </div>
-            ) : null}
-
-            {textDraft.map((b, i) => (
-              <div key={i} className="flex items-center gap-2">
-                <input
-                  value={b.text}
-                  onChange={(e) => {
-                    const next = [...textDraft];
-                    next[i] = { ...next[i], text: e.target.value };
-                    setTextDraft(next);
-                  }}
-                  placeholder={b.isCTA ? "👇 Schreib 'Keyword' für …" : "❌ Short punchy line…"}
-                  className="glass-inset min-w-0 flex-1 rounded-xl px-3 py-2 text-sm text-app-fg placeholder:text-app-fg-subtle focus:outline-none focus:ring-2 focus:ring-amber-500/35"
-                />
-                <label
-                  className="flex cursor-pointer select-none items-center gap-1 rounded-lg border border-app-divider px-2 py-2 text-[10px] font-semibold text-app-fg-muted hover:border-amber-500/30"
-                  title="Mark as CTA block"
-                >
-                  <input
-                    type="checkbox"
-                    checked={b.isCTA ?? false}
-                    onChange={(e) => {
-                      const next = [...textDraft];
-                      next[i] = { ...next[i], isCTA: e.target.checked };
-                      setTextDraft(next);
-                    }}
-                    className="h-3 w-3 accent-amber-500"
-                  />
-                  CTA
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setTextDraft((prev) => prev.filter((_, j) => j !== i))}
-                  className="rounded-lg p-2 text-app-fg-subtle hover:bg-red-500/10 hover:text-red-400"
-                  aria-label="Remove block"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ))}
-            {textDraft.length === 0 && !primaryHookText && (
-              <p className="rounded-xl border border-dashed border-app-divider/60 py-4 text-center text-xs text-app-fg-subtle">
-                No text blocks yet — click Add block above, or hit Regenerate.
-              </p>
-            )}
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            disabled={loading || !hasUnsavedBlocks}
-            onClick={() => void saveTextBlocks()}
-            className="inline-flex items-center gap-2 rounded-xl bg-amber-500/15 px-4 py-2 text-xs font-bold text-app-on-amber-title hover:bg-amber-500/25 disabled:opacity-40"
-          >
-            {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-            {loading ? "Saving…" : "Save text blocks"}
-          </button>
-          {!hasUnsavedBlocks && textDraft.length > 0 && (
-            <span className="text-[11px] text-emerald-600 dark:text-emerald-400">Saved ✓</span>
-          )}
         </div>
       </div>
 
-      {/* ── Step 2: Visual & render (merged) ──
-          Source picker (tabs) + shared preview + per-source controls + render footer
-          all live in one card. The old separate Render step is now the card's footer
-          so the user never sees a "blocked" Render card sitting empty. */}
-      <div className="glass rounded-2xl border border-app-divider/80 p-5 md:p-6">
-        <StepHeader n={2} label="Visual & render" done={step3Done} />
-
-        {/* Source tabs — only shown when there's >1 valid source for this format.
-            b_roll_reel has only one valid source (clip), so we skip the tabs. */}
-        {isTextOverlay ? (
-          <div className="mb-4 inline-flex rounded-xl border border-app-divider bg-app-chip-bg/40 p-1">
-            {(
-              [
-                { key: "ai" as const, label: "AI image", icon: Sparkles },
-                { key: "image" as const, label: "Client photo", icon: ImageIcon },
-                { key: "clip" as const, label: "Stock clip", icon: Film },
-              ] as const
-            ).map(({ key, label, icon: Icon }) => {
-              const active = bgSource === key;
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => onPickBgSource(key)}
-                  className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-semibold transition-colors ${
-                    active
-                      ? "bg-white/10 text-app-fg shadow-sm"
-                      : "text-app-fg-muted hover:text-app-fg"
-                  }`}
-                >
-                  <Icon className="h-3 w-3" /> {label}
-                </button>
-              );
-            })}
+      {videoSurface === "reel" ? (
+      <div className="glass rounded-2xl border border-app-divider/80 p-3.5 md:p-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3 border-b border-app-divider/50 pb-3">
+          <div>
+            <p className="text-sm font-semibold text-app-fg">Reel studio</p>
+            <p className="mt-0.5 text-[11px] leading-relaxed text-app-fg-muted">
+              Edit the on-screen text, background, look, and timing while the preview stays visible.
+            </p>
           </div>
-        ) : null}
+          <button
+            type="button"
+            disabled={renderBusy || !step2Done}
+            onClick={() => void onRender()}
+            className="inline-flex items-center gap-2 rounded-xl bg-violet-500/20 px-4 py-2 text-xs font-bold text-violet-200 hover:bg-violet-500/30 disabled:opacity-50"
+          >
+            {renderBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Video className="h-4 w-4" />}
+            {session.rendered_video_url ? "Re-render" : renderBusy ? "Starting…" : "Render video"}
+          </button>
+        </div>
 
         {/* Preview column (sticky) + edit column: preview stays visible while scrolling
             template/look/layout/timing — matches NLE / Figma mental model. */}
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:gap-8">
-          <div className="mx-auto flex w-full max-w-[320px] shrink-0 flex-col gap-2 lg:sticky lg:top-4 lg:mx-0 lg:basis-[340px] lg:max-w-none lg:self-start xl:basis-[380px]">
+        <div className="grid gap-5 lg:grid-cols-[250px_minmax(0,1fr)] lg:items-start xl:grid-cols-[270px_minmax(0,1fr)]">
+          <div className="mx-auto flex w-full max-w-[270px] shrink-0 flex-col gap-2 lg:sticky lg:top-4 lg:mx-0">
             {bgBusy ? (
-              <div className="flex aspect-[9/16] w-full max-w-[300px] flex-col items-center justify-center gap-2 self-center rounded-xl border border-app-divider bg-app-chip-bg/40">
+              <div className="flex aspect-[9/16] w-full max-w-[250px] flex-col items-center justify-center gap-2 self-center rounded-xl border border-app-divider bg-app-chip-bg/40">
                 <Loader2 className="h-6 w-6 animate-spin text-app-fg-subtle" />
                 <p className="text-[10px] text-app-fg-muted">~30–60s</p>
               </div>
@@ -4908,161 +3111,246 @@ export function VideoCreateWorkspace({
                   spec={livePreviewSpec}
                   safeZone={safeZonePreview}
                   layoutGuides={layoutGuides}
-                  width={300}
+                  width={250}
                   selectedSegmentId={selectedSegmentId}
                   onSelectSegment={setSelectedSegmentId}
                   onResizeLayerTimingDraft={onResizeLayerTimingDraft}
                   onResizeLayerTimingCommit={onResizeLayerTimingCommit}
                 />
-                {((isTextOverlay && bgSource === "clip") || isBroll) && (
-                  <>
-                    <BrollLibrarySection
-                      clips={clips}
-                      loading={loading}
-                      deletingClipId={deletingClipId}
-                      selectedClipId={selectedClipId}
-                      sessionBrollClipId={session.broll_clip_id}
-                      showClipBanner={false}
-                      variant="strip"
-                      onPick={(id) => void onSetBroll(id)}
-                      onDelete={(id) => void onDeleteClip(id)}
-                    />
-                    <div className="w-full space-y-3 rounded-xl border border-app-divider/50 bg-app-chip-bg/15 p-3.5">
-                      <div>
-                        <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Background</p>
-                        <p className="mt-0.5 text-[9px] leading-snug text-app-fg-subtle">
-                          {isBroll
-                            ? "Active clip is your reel background and sets timing limits. Refine text on the right."
-                            : "Selected clip loads into the preview above. Refine look and timing in the column on the right."}
-                        </p>
-                      </div>
-                      {isTextOverlay && bgSource === "clip" && !isBroll ? (
-                        <p className="text-[10px] leading-relaxed text-app-fg-muted">
-                          Longer clips are fine — we trim to your beats, or use{" "}
-                          <span className="font-semibold text-app-fg-secondary">Fit beats to B-roll</span> in Timing.
-                        </p>
-                      ) : null}
-                      {session.background_url ? (
-                        <a
-                          href={session.background_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex text-[10px] font-semibold text-app-fg-muted underline decoration-app-divider underline-offset-2 hover:text-amber-200/90"
-                        >
-                          Open background asset ↗
-                        </a>
-                      ) : null}
-                    </div>
-                  </>
-                )}
               </>
             )}
           </div>
 
-          <div className="flex min-w-0 flex-1 flex-col gap-4">
-            {isTextOverlay && (bgSource === "ai" || bgSource === "image") ? (
-              <div className="space-y-3 rounded-xl border border-app-divider/50 bg-app-chip-bg/15 p-3.5">
+          <div className="flex min-w-0 flex-col rounded-2xl border border-app-divider/70 bg-app-chip-bg/10">
+            <div className="z-10 shrink-0 border-b border-app-divider/40 bg-app-bg/95 p-3 backdrop-blur-sm">
+              <SegmentedTabs<VideoEditorTab>
+                value={videoEditorTab}
+                onChange={setVideoEditorTab}
+                tabs={[
+                  { id: "text", label: "Text" },
+                  { id: "background", label: "Background" },
+                  { id: "look", label: "Look" },
+                  { id: "timing", label: "Timing" },
+                ]}
+              />
+            </div>
+            <div className="space-y-4 px-3 pb-4 pt-3 md:px-4">
+            {videoEditorTab === "text" ? (
+              <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Background</p>
-                  <p className="mt-0.5 text-[9px] leading-snug text-app-fg-subtle">
-                    {bgSource === "ai"
-                      ? "Generate a 9:16 still — unlocks layout, timing, and render."
-                      : "Pick a client photo as a static backdrop."}
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">On-screen text</p>
+                  <p className="mt-0.5 text-[10px] text-app-fg-subtle">
+                    Hook and beat text. Keep each line short enough to read in under 2 seconds.
                   </p>
                 </div>
-                {bgSource === "ai" ? (
-                  <>
+                <div className="flex items-center gap-2">
+                  <SaveStatusPill inFlight={contentInFlight} />
+                  <button
+                    type="button"
+                    onClick={() => setTextDraft((prev) => [...prev, { text: "", isCTA: false }])}
+                    disabled={textDraft.length >= 6}
+                    className="inline-flex items-center gap-1 rounded-lg border border-app-divider px-2 py-1 text-[11px] font-semibold text-app-fg-muted hover:text-app-fg disabled:opacity-40"
+                  >
+                    <Plus className="h-3 w-3" /> Add beat
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                {primaryHookText !== null && primaryHookText !== undefined ? (
+                  <div className="flex items-center gap-2">
+                    <div
+                      className="glass-inset flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2"
+                      title="Hook · burned into the first segment of the reel"
+                    >
+                      <span className="inline-flex shrink-0 rounded-md bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+                        Hook
+                      </span>
+                      <input
+                        value={hookDraft}
+                        onChange={(e) => setHookDraft(e.target.value)}
+                        onBlur={() => void onCommitHookText()}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            e.currentTarget.blur();
+                          }
+                        }}
+                        placeholder="Stop-the-scroll opening line…"
+                        className="min-w-0 flex-1 bg-transparent text-sm font-semibold text-app-fg placeholder:text-app-fg-subtle focus:outline-none"
+                      />
+                    </div>
+                    <RegenInline
+                      scope="hooks"
+                      busy={regenBusyScope === "hooks"}
+                      onRegen={async (s, fb) => onRegenSection(s, fb)}
+                      placeholder="More direct, shorter, …"
+                    />
+                  </div>
+                ) : null}
+
+                {textDraft.map((b, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <input
+                      value={b.text}
+                      onChange={(e) => {
+                        const next = [...textDraft];
+                        next[i] = { ...next[i], text: e.target.value };
+                        setTextDraft(next);
+                      }}
+                      placeholder={b.isCTA ? "👇 Comment 'KEYWORD' to get …" : "Short punchy line…"}
+                      className="glass-inset min-w-0 flex-1 rounded-xl px-3 py-2 text-sm text-app-fg placeholder:text-app-fg-subtle focus:outline-none focus:ring-2 focus:ring-amber-500/35"
+                    />
+                    <label
+                      className="flex cursor-pointer select-none items-center gap-1 rounded-lg border border-app-divider px-2 py-2 text-[10px] font-semibold text-app-fg-muted hover:border-amber-500/30"
+                      title="Mark as CTA block"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={b.isCTA ?? false}
+                        onChange={(e) => {
+                          const next = [...textDraft];
+                          next[i] = { ...next[i], isCTA: e.target.checked };
+                          setTextDraft(next);
+                        }}
+                        className="h-3 w-3 accent-amber-500"
+                      />
+                      CTA
+                    </label>
                     <button
                       type="button"
-                      disabled={bgBusy}
-                      onClick={() => void onGenerateBg()}
-                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-amber-500/15 px-4 py-2.5 text-xs font-bold text-app-on-amber-title hover:bg-amber-500/25 disabled:opacity-50 sm:w-auto sm:justify-start"
+                      onClick={() => setTextDraft((prev) => prev.filter((_, j) => j !== i))}
+                      className="rounded-lg p-2 text-app-fg-subtle hover:bg-red-500/10 hover:text-red-400"
+                      aria-label="Remove block"
                     >
-                      {bgBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-                      {bgBusy
-                        ? "Generating…"
-                        : session.background_type === "generated_image" && session.background_url
-                          ? "Regenerate image"
-                          : "Generate image"}
+                      <Trash2 className="h-3.5 w-3.5" />
                     </button>
-                    <p className="text-[10px] text-app-fg-muted">~30–60s per run.</p>
-                  </>
-                ) : (
-                  <ClientImagesPicker
+                  </div>
+                ))}
+              </div>
+              </div>
+            ) : null}
+
+            {videoEditorTab === "background" ? (
+              <div className="space-y-3">
+                <div className="rounded-xl border border-app-divider/60 bg-app-chip-bg/20 p-3.5">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">
+                        Active background
+                      </p>
+                      <p className="mt-1 text-[11px] leading-relaxed text-app-fg-muted">
+                        {isBroll || session.background_type === "broll"
+                          ? "Stock clip controls the reel timing. Trim range and beat duration stay tied to the usable clip window."
+                          : session.background_type === "client_image"
+                            ? "Client photo is used as the static reel backdrop."
+                            : session.background_type === "generated_image"
+                              ? "AI image is used as the static reel backdrop."
+                              : "Pick a background source before rendering."}
+                      </p>
+                      {livePreviewSpec?.background.kind === "video" ? (
+                        <p className="mt-1 text-[10px] text-app-fg-subtle">
+                          Usable clip length:{" "}
+                          <span className="font-semibold text-app-fg">
+                            {(effectiveBackgroundDuration(livePreviewSpec.background) ?? livePreviewSpec.background.durationSec ?? 0).toFixed(1)}s
+                          </span>
+                        </p>
+                      ) : null}
+                    </div>
+                    {session.background_url ? (
+                      <a
+                        href={session.background_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="shrink-0 rounded-lg border border-app-divider px-2 py-1 text-[10px] font-semibold text-app-fg-muted hover:border-amber-500/40 hover:text-amber-200"
+                      >
+                        Open asset ↗
+                      </a>
+                    ) : null}
+                  </div>
+                </div>
+
+                {isTextOverlay ? (
+                  <BackgroundPicker
+                    source={bgSource ?? "ai"}
+                    onSourceChange={onPickBgSource}
+                    aiBusy={bgBusy}
+                    hasGeneratedImage={
+                      session.background_type === "generated_image" && Boolean(session.background_url)
+                    }
+                    onGenerateAi={onGenerateBg}
                     images={images}
                     selectedImageId={session.background_type === "client_image" ? selectedImageId : ""}
-                    busy={loading}
-                    onPick={(id) => void onSetBackgroundImage(id)}
+                    pickerBusy={loading}
+                    onPickImage={(id) => void onSetBackgroundImage(id)}
+                    clips={clips}
+                    selectedClipId={selectedClipId}
+                    sessionBrollClipId={session.broll_clip_id}
+                    deletingClipId={deletingClipId}
+                    onPickClip={(id) => void onSetBroll(id)}
+                    onDeleteClip={(id) => void onDeleteClip(id)}
+                    backgroundUrl={null}
                   />
-                )}
-                {session.background_url ? (
-                  <a
-                    href={session.background_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex text-[10px] font-semibold text-app-fg-muted underline decoration-app-divider underline-offset-2 hover:text-amber-200/90"
-                  >
-                    Open background asset ↗
-                  </a>
+                ) : isBroll ? (
+                  <BrollLibrarySection
+                    clips={clips}
+                    loading={loading}
+                    deletingClipId={deletingClipId}
+                    selectedClipId={selectedClipId}
+                    sessionBrollClipId={session.broll_clip_id}
+                    showClipBanner={false}
+                    onPick={(id) => void onSetBroll(id)}
+                    onDelete={(id) => void onDeleteClip(id)}
+                  />
                 ) : null}
               </div>
             ) : null}
 
+            {videoEditorTab === "look" ? (
+            <>
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-app-divider/40 pb-2">
-              <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Look & timing</p>
-              {specInFlight > 0 ? (
-                <span
-                  className="inline-flex items-center gap-1 rounded-md bg-sky-500/15 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-300"
-                  title="Saving your latest changes"
-                >
-                  <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-sky-300" />
-                  Saving…
-                </span>
-              ) : null}
-            </div>
-
-            <div
-              className={`mb-3 space-y-2 rounded-xl border px-2.5 py-2 transition-colors ${
-                aiRefineBusy
-                  ? "border-violet-500/45 bg-violet-500/[0.09] shadow-[0_0_0_1px_rgba(139,92,246,0.18)]"
-                  : "border-transparent"
-              }`}
-            >
-              {aiRefineBusy ? (
-                <div className="flex items-center gap-2 text-[10px] font-semibold text-violet-100">
-                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
-                  <span>
-                    {aiRefinePhase === "applying"
-                      ? "Applying changes to your video…"
-                      : "Generating edits from your prompt…"}
-                  </span>
-                </div>
-              ) : null}
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
-                <input
-                  value={refineVideoPrompt}
-                  onChange={(e) => setRefineVideoPrompt(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey && !aiRefineBusy && refineVideoPrompt.trim()) {
-                      e.preventDefault();
-                      void onVideoRefineApply();
-                    }
-                  }}
-                  disabled={aiRefineBusy}
-                  placeholder="make it cleaner · move card to top · easier to read…"
-                  className="glass-inset min-h-[36px] flex-1 rounded-lg border border-app-divider/50 bg-app-surface/60 px-2.5 py-1.5 text-[11px] text-app-fg placeholder:text-app-fg-subtle disabled:opacity-50"
+              <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Look & layout</p>
+              <div className="flex items-center gap-2">
+                <UndoPill
+                  canUndo={undoStack.canUndo}
+                  canRedo={undoStack.canRedo}
+                  label={undoStack.lastLabel}
+                  onUndo={onUndo}
+                  onRedo={onRedo}
                 />
-                <button
-                  type="button"
-                  disabled={aiRefineBusy || !refineVideoPrompt.trim() || !session.background_url}
-                  onClick={() => void onVideoRefineApply()}
-                  className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-violet-500/25 px-3 py-1.5 text-[10px] font-bold text-violet-100 hover:bg-violet-500/35 disabled:opacity-40 sm:self-stretch"
-                >
-                  {aiRefineBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
-                  {aiRefineBusy ? (aiRefinePhase === "applying" ? "Applying" : "Please wait") : "Apply"}
-                </button>
+                <SaveStatusPill inFlight={specInFlight} />
               </div>
             </div>
+
+            {/* Phase D: legacy AI Refine prompt box was deleted. Refine, regen,
+                hook variants, and other actions now live in the ⌘K command
+                palette and are reachable via the visible pill below — same
+                registry powers both surfaces (`editors/video/videoActions.ts`).
+                The palette opens with ⌘K (or click the pill) and surfaces a
+                contextual list of actions for whatever's selected. */}
+            <button
+              type="button"
+              onClick={() => setPaletteOpen(true)}
+              disabled={aiRefineBusy}
+              className="glass-inset mb-3 inline-flex w-full items-center gap-2 rounded-lg border border-app-divider/60 px-3 py-2 text-[11px] text-app-fg-subtle transition hover:border-amber-500/40 hover:text-app-fg disabled:opacity-50"
+            >
+              {aiRefineBusy ? (
+                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+              ) : (
+                <Search className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              )}
+              <span className="min-w-0 flex-1 truncate text-left">
+                {aiRefineBusy
+                  ? aiRefinePhase === "applying"
+                    ? "Applying AI refine…"
+                    : "Generating edits…"
+                  : "Search actions — refine, vary hook, darken background…"}
+              </span>
+              <kbd className="shrink-0 rounded border border-app-divider bg-app-chip-bg/60 px-1 py-px font-mono text-[9px] text-app-fg-muted">
+                ⌘K
+              </kbd>
+            </button>
 
             <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
               <div className="min-w-0 space-y-4">
@@ -5237,6 +3525,7 @@ export function VideoCreateWorkspace({
                     />
                     <LayoutSlider
                       label="Size"
+                      title="Text size for the whole video. For one beat only, use Size under Look → Style."
                       leftHint="Smaller"
                       rightHint="Larger"
                       min={0.7}
@@ -5310,30 +3599,11 @@ export function VideoCreateWorkspace({
                           onChange={(v) => setLayoutDraft((s) => ({ ...s, stackGap: v }))}
                           onCommit={(v) => void onCommitLayout("stackGap", v)}
                         />
-                        <AppSelect
-                          label="New beats"
-                          title="Add below: first line stays put, new beats stack under (often with Position: Top). Hug bottom: stack stays in the lower safe area."
-                          value={layoutDraft.stackGrowth}
-                          disabled={!session.background_url || styleTemplateId !== "stacked-cards"}
-                          onChange={(v) => {
-                            const next = v as VideoSpecLayout["stackGrowth"];
-                            setLayoutDraft((s) => ({ ...s, stackGrowth: next }));
-                            void onCommitLayout("stackGrowth", next);
-                          }}
-                          options={[
-                            {
-                              value: "down",
-                              label: "Add below — first line stays put",
-                            },
-                            {
-                              value: "up",
-                              label: "Hug bottom — stack shifts up",
-                            },
-                          ]}
-                          className="w-full"
-                          triggerClassName="min-w-0 w-full py-1.5 text-[10px] font-semibold"
-                          dense
-                        />
+                        {/* NOTE: the legacy "stackGrowth" control used to live here
+                            but the stacked-cards template (templates/stackedCards.tsx)
+                            intentionally ignores the field — cards always grow top→down
+                            from the anchor. Removed in May 2026 so we don't show users
+                            a knob that has no visual effect. */}
                       </div>
                     </div>
                   </details>
@@ -5399,6 +3669,41 @@ export function VideoCreateWorkspace({
                       <span className="text-[9px] font-semibold uppercase tracking-wide">Reset</span>
                     </button>
                   </div>
+                  <div className="space-y-1.5">
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <p className="text-[9px] font-semibold uppercase tracking-wide text-app-fg-muted">
+                        Text size
+                      </p>
+                      <button
+                        type="button"
+                        disabled={!session.background_url}
+                        onClick={() => void onApplyFontScaleToAllBeats()}
+                        className="text-[9px] font-semibold text-app-fg-muted underline decoration-app-divider underline-offset-2 hover:text-app-fg disabled:opacity-30"
+                      >
+                        Copy to all beats
+                      </button>
+                    </div>
+                    <LayoutSlider
+                      label="Size"
+                      title={
+                        selectedSegmentId === "hook"
+                          ? "Hook text size on top of the global Size in Layout."
+                          : "This beat only. Global Size in Layout still applies to every beat."
+                      }
+                      leftHint="Smaller"
+                      rightHint="Larger"
+                      min={0.5}
+                      max={2}
+                      step={0.05}
+                      value={displayBeatFontScale}
+                      disabled={!session.background_url}
+                      formatValue={(v) =>
+                        Math.abs(v - 1) < 0.02 ? "Default" : `${Math.round(v * 100)}%`
+                      }
+                      onChange={onChangeFontScale}
+                      onCommit={(v) => void onCommitFontScale(v)}
+                    />
+                  </div>
                   <div className="space-y-1">
                     <p className="text-[9px] font-semibold uppercase tracking-wide text-app-fg-muted">Font</p>
                     <div className="flex flex-wrap gap-1">
@@ -5428,6 +3733,12 @@ export function VideoCreateWorkspace({
                         );
                       })}
                     </div>
+                    {styleFontMood === "auto" ? (
+                      <InheritanceHint>
+                        Auto = {resolvedThemeFontLabel(styleThemeForCard)} (from{" "}
+                        {resolvedThemeLookLabel(styleThemeForCard)} look)
+                      </InheritanceHint>
+                    ) : null}
                   </div>
                   <div className="space-y-1">
                     <p className="text-[9px] font-semibold uppercase tracking-wide text-app-fg-muted">Contrast</p>
@@ -5475,6 +3786,11 @@ export function VideoCreateWorkspace({
                         );
                       })}
                     </div>
+                    {styleContrast === "auto" ? (
+                      <InheritanceHint>
+                        {resolvedContrastLabel("auto", styleThemeForCard)}
+                      </InheritanceHint>
+                    ) : null}
                   </div>
                   <div className="space-y-1">
                     <p className="text-[9px] font-semibold uppercase tracking-wide text-app-fg-muted">Text treatment</p>
@@ -5511,17 +3827,36 @@ export function VideoCreateWorkspace({
                   </div>
                 </div>
 
-                {/* Timing: select a segment in the timeline strip, then trim/extend
-                    its on-screen window. Duration changes end only — other beats stay put. */}
+              </div>
+            </div>
+            </>
+            ) : null}
+
+            {videoEditorTab === "timing" ? (
+            <div className="min-w-0 space-y-4">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Timing</p>
+                <p className="text-[9px] text-app-fg-subtle">
+                  Select a beat on the preview timeline, then adjust duration and gaps below.
+                </p>
                 {(() => {
                   if (!previewVideoSpec) return null;
                   const segId = selectedSegmentId;
                   const range = segmentDurationRange(segId);
+                  const usableBackgroundSec =
+                    livePreviewSpec?.background.kind === "video"
+                      ? (effectiveBackgroundDuration(livePreviewSpec.background) ??
+                        livePreviewSpec.background.durationSec ??
+                        null)
+                      : null;
+                  const durationMax = Math.max(
+                    range.min,
+                    Math.min(range.max, usableBackgroundSec ?? 20),
+                  );
                   const draftActive = timingDraft?.id === segId;
                   const displayedDur = draftActive
                     ? timingDraft!.durationSec
                     : segmentDurationSec(livePreviewSpec ?? previewVideoSpec, segId);
-                  const sliderVal = Math.min(range.max, Math.max(range.min, displayedDur));
+                  const sliderVal = Math.min(durationMax, Math.max(range.min, displayedDur));
                   const savedDur = segmentDurationSec(previewVideoSpec, segId);
                   const label = segmentLabel(previewVideoSpec, segId);
                   const excerpt = segmentExcerpt(previewVideoSpec, segId);
@@ -5530,6 +3865,18 @@ export function VideoCreateWorkspace({
                     const b = previewVideoSpec.blocks.find((x) => x.id === id);
                     return autoBlockDurationSec(b?.text ?? "");
                   };
+                  const autoDur = Math.min(durationMax, autoFor(segId));
+                  const videoBg = livePreviewSpec?.background.kind === "video" ? livePreviewSpec.background : null;
+                  const sourceDur = videoBg?.durationSec != null ? Number(videoBg.durationSec) : null;
+                  const trimStart = videoBg ? Number(videoBg.trimStartSec ?? 0) : 0;
+                  const trimEnd =
+                    videoBg && sourceDur != null
+                      ? videoBg.trimEndSec != null
+                        ? Number(videoBg.trimEndSec)
+                        : sourceDur
+                      : 0;
+                  const effDur = videoBg && sourceDur != null ? (effectiveBackgroundDuration(videoBg) ?? sourceDur) : null;
+                  const timelineOver = effDur != null && livePreviewSpec != null ? livePreviewSpec.totalSec > effDur + 0.25 : false;
                   return (
                     <div className="space-y-2 border-t border-app-divider/30 pt-4">
                       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -5548,17 +3895,55 @@ export function VideoCreateWorkspace({
                           {(livePreviewSpec?.totalSec ?? previewVideoSpec.totalSec).toFixed(1)}s
                         </span>
                       </div>
+
+                      {videoBg && sourceDur != null && effDur != null ? (
+                        <>
+                          <ClipWindowControl
+                            sourceDurationSec={sourceDur}
+                            trimStartSec={trimStart}
+                            trimEndSec={trimEnd}
+                            timelineSec={livePreviewSpec?.totalSec ?? previewVideoSpec.totalSec}
+                            disabled={!session.background_url}
+                            onChange={onChangeBrollTrim}
+                            onCommit={onCommitBrollTrim}
+                          />
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              disabled={!session.background_url}
+                              onClick={() => void onFitBlocksToBroll()}
+                              className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-amber-100 hover:bg-amber-500/20 disabled:opacity-30"
+                            >
+                              Fit all beats to clip
+                            </button>
+                            <button
+                              type="button"
+                              disabled={!session.background_url}
+                              onClick={() => void onCommitTiming(segId, autoDur)}
+                              className="rounded-lg border border-app-divider px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-app-fg-muted hover:border-amber-500/40 hover:text-app-fg disabled:opacity-30"
+                            >
+                              Auto-time selected beat
+                            </button>
+                          </div>
+                          {timelineOver ? (
+                            <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-[10px] leading-relaxed text-amber-100">
+                              Beats are {((livePreviewSpec?.totalSec ?? previewVideoSpec.totalSec) - effDur).toFixed(1)}s longer than the active clip window. Use Fit all beats to clip or shorten selected beats from the preview timeline.
+                            </p>
+                          ) : null}
+                        </>
+                      ) : null}
+
                       <div className="rounded-md border border-app-divider/50 bg-app-chip-bg/20 px-2 py-1.5">
                         <div className="flex items-baseline justify-between gap-2">
                           <span className="text-[10px] font-bold text-amber-200">{label}</span>
                           <button
                             type="button"
-                            disabled={!session.background_url || Math.abs(autoFor(segId) - savedDur) < 0.05}
-                            onClick={() => void onCommitTiming(segId, autoFor(segId))}
+                            disabled={!session.background_url || Math.abs(autoDur - savedDur) < 0.05}
+                            onClick={() => void onCommitTiming(segId, autoDur)}
                             className="rounded-sm border border-app-divider/60 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-app-fg-muted hover:border-amber-500/40 hover:text-app-fg disabled:opacity-30"
-                            title={`Auto-fit from word count (~${autoFor(segId).toFixed(1)}s)`}
+                            title={`Auto-fit from word count (~${autoDur.toFixed(1)}s)`}
                           >
-                            Auto {autoFor(segId).toFixed(1)}s
+                            Auto {autoDur.toFixed(1)}s
                           </button>
                         </div>
                         <p className="mt-0.5 truncate text-[10px] italic text-app-fg-subtle">{excerpt}</p>
@@ -5566,149 +3951,192 @@ export function VideoCreateWorkspace({
                       {selectedLayer ? (
                         <div className="space-y-2 rounded-md border border-app-divider/50 bg-app-chip-bg/15 p-2">
                           <div className="flex items-center justify-between gap-2">
-                            <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">
-                              Layer text
+                            <p className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">
+                              Beat text
+                              <HelpHint label="Beat text">
+                                Read-only here. Edit beat text in Step 1 (On-screen text) so it stays in sync with the script and caption.
+                              </HelpHint>
                             </p>
                             <button
                               type="button"
                               disabled={!session.background_url || textDraft.length >= 6}
                               onClick={() => void onAddTextLayer()}
                               className="inline-flex items-center gap-1 rounded-sm border border-app-divider/60 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-app-fg-muted hover:border-amber-500/40 hover:text-app-fg disabled:opacity-30"
-                              title="Add a new text layer after the selected layer"
+                              title="Add a new beat after the selected one (edit its text in Step 1)"
                             >
-                              <Plus className="h-3 w-3" /> Add
+                              <Plus className="h-3 w-3" /> Add beat
                             </button>
                           </div>
-                          <textarea
-                            value={layerTextDraft}
-                            onChange={(e) => setLayerTextDraft(e.target.value)}
-                            rows={2}
-                            disabled={!session.background_url}
-                            className="glass-inset w-full resize-none rounded-lg px-2 py-1.5 text-[11px] text-app-fg placeholder:text-app-fg-subtle focus:outline-none focus:ring-1 focus:ring-amber-500/35 disabled:opacity-50"
-                          />
-                          <div className="grid grid-cols-2 gap-2">
-                            <label className="text-[9px] font-bold uppercase tracking-wide text-app-fg-muted">
-                              Appears
-                              <input
-                                key={`${selectedLayer.id}-start-${selectedLayer.startSec}`}
-                                type="number"
-                                min={0}
-                                step={0.1}
-                                defaultValue={selectedLayer.startSec.toFixed(1)}
-                                disabled={!session.background_url || selectedLayer.id === "hook"}
-                                onBlur={(e) => {
-                                  const v = Number(e.currentTarget.value);
-                                  if (Number.isFinite(v)) void onCommitLayerTiming(selectedLayer.id, { startSec: v });
-                                }}
-                                className="glass-inset mt-1 w-full rounded-md px-2 py-1 text-[11px] font-semibold tabular-nums text-app-fg disabled:opacity-50"
-                              />
-                            </label>
-                            <label className="text-[9px] font-bold uppercase tracking-wide text-app-fg-muted">
-                              Disappears
-                              <input
-                                key={`${selectedLayer.id}-end-${selectedLayer.endSec}`}
-                                type="number"
-                                min={0.5}
-                                step={0.1}
-                                defaultValue={selectedLayer.endSec.toFixed(1)}
-                                disabled={!session.background_url}
-                                onBlur={(e) => {
-                                  const v = Number(e.currentTarget.value);
-                                  if (Number.isFinite(v)) void onCommitLayerTiming(selectedLayer.id, { endSec: v });
-                                }}
-                                className="glass-inset mt-1 w-full rounded-md px-2 py-1 text-[11px] font-semibold tabular-nums text-app-fg disabled:opacity-50"
-                              />
-                            </label>
-                          </div>
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <label className="inline-flex cursor-pointer select-none items-center gap-1.5 text-[10px] font-semibold text-app-fg-muted">
-                              <input
-                                type="checkbox"
-                                checked={layerCtaDraft}
-                                disabled={!session.background_url || selectedLayer.id === "hook"}
-                                onChange={(e) => setLayerCtaDraft(e.target.checked)}
-                                className="h-3 w-3 accent-amber-500"
-                              />
-                              CTA layer
-                            </label>
-                            <div className="flex items-center gap-1.5">
-                              {selectedLayer.id !== "hook" ? (
-                                <button
-                                  type="button"
-                                  disabled={!session.background_url}
-                                  onClick={() => void onDeleteSelectedLayer()}
-                                  className="rounded-sm border border-red-500/30 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-red-300 hover:bg-red-500/10 disabled:opacity-30"
-                                >
-                                  Delete
-                                </button>
-                              ) : null}
+                          {/* Read-only preview of the beat text. The previous
+                              editable textarea created a dual-source-of-truth
+                              with Step 1 — same data, two surfaces, contradictory
+                              permissions for the hook. Removed in May 2026. */}
+                          <p
+                            className="glass-inset w-full rounded-lg px-2 py-1.5 text-[11px] text-app-fg-muted"
+                            title={layerTextDraft || "(empty)"}
+                          >
+                            {layerTextDraft || (
+                              <span className="text-app-fg-subtle">
+                                (empty — set the text in Step 1)
+                              </span>
+                            )}
+                            {layerCtaDraft ? (
+                              <span className="ml-2 rounded-sm bg-amber-500/15 px-1 py-px text-[8px] font-bold uppercase tracking-wide text-amber-300">
+                                CTA
+                              </span>
+                            ) : null}
+                          </p>
+                          <p className="text-[10px] text-app-fg-subtle">
+                            Runs from{" "}
+                            <span className="font-semibold tabular-nums text-app-fg">
+                              {selectedLayer.startSec.toFixed(1)}s
+                            </span>{" "}
+                            to{" "}
+                            <span className="font-semibold tabular-nums text-app-fg">
+                              {selectedLayer.endSec.toFixed(1)}s
+                            </span>
+                            . Exact start/end fields live in Advanced.
+                          </p>
+                          <div className="flex flex-wrap items-center justify-end gap-2">
+                            <SaveStatusPill inFlight={specInFlight} />
+                            {selectedLayer.id !== "hook" ? (
                               <button
                                 type="button"
-                                disabled={!session.background_url || !layerTextDraft.trim()}
-                                onClick={() => void onSaveSelectedLayer()}
-                                className="rounded-sm border border-amber-500/50 bg-amber-500/10 px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-amber-100 hover:bg-amber-500/20 disabled:opacity-30"
+                                disabled={!session.background_url}
+                                onClick={() => void onDeleteSelectedLayer()}
+                                className="rounded-sm border border-red-500/30 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-red-300 hover:bg-red-500/10 disabled:opacity-30"
                               >
-                                Save layer
+                                Delete beat
                               </button>
-                            </div>
+                            ) : null}
                           </div>
                         </div>
                       ) : null}
                       <LayoutSlider
                         label="Duration"
                         leftHint={`${range.min.toFixed(1)}s`}
-                        rightHint={`${range.max.toFixed(1)}s`}
+                        rightHint={`${durationMax.toFixed(1)}s`}
                         min={range.min}
-                        max={range.max}
+                        max={durationMax}
                         step={0.1}
                         value={sliderVal}
                         disabled={!session.background_url}
                         formatValue={(v) => `${v.toFixed(1)}s`}
-                        onChange={(v) => setTimingDraft({ id: segId, durationSec: v })}
-                        onCommit={(v) => void onCommitTiming(segId, v)}
+                        onChange={(v) => setTimingDraft({ id: segId, durationSec: Math.min(durationMax, v) })}
+                        onCommit={(v) => void onCommitTiming(segId, Math.min(durationMax, v))}
                       />
-                      {livePreviewSpec?.background.kind === "video" &&
-                      livePreviewSpec.background.durationSec != null ? (
-                        <div className="space-y-1.5">
-                          <p className="text-[9px] text-app-fg-subtle">
-                            {livePreviewSpec.totalSec > livePreviewSpec.background.durationSec + 0.25 ? (
-                              <>
-                                Timeline is{" "}
-                                <span className="font-bold tabular-nums text-amber-200">
-                                  {(livePreviewSpec.totalSec - livePreviewSpec.background.durationSec).toFixed(1)}s
-                                </span>
-                                {" "}
-                                longer than this B-roll (
-                                {livePreviewSpec.background.durationSec.toFixed(1)}s). Shrink beats or gaps.
-                              </>
-                            ) : (
-                              <>
-                                B-roll clip{" "}
-                                <span className="font-bold tabular-nums text-app-fg">
-                                  {livePreviewSpec.background.durationSec.toFixed(1)}s
-                                </span>
-                                . Timeline fits within it.
-                              </>
-                            )}
-                          </p>
-                          {livePreviewSpec.totalSec > livePreviewSpec.background.durationSec + 0.25 ? (
-                            <button
-                              type="button"
-                              disabled={!session.background_url}
-                              onClick={() => void onFitBlocksToBroll()}
-                              className="w-full rounded-md border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-100 hover:bg-amber-500/20 disabled:opacity-30"
-                            >
-                              Fit beats to B-roll (
-                              {livePreviewSpec.background.durationSec.toFixed(1)}s)
-                            </button>
-                          ) : null}
-                        </div>
-                      ) : null}
+                      {usableBackgroundSec != null ? (
+                        <p className="text-[9px] leading-relaxed text-app-fg-subtle">
+                          Max is capped to the usable clip length ({usableBackgroundSec.toFixed(1)}s) so a beat can’t run longer than the source.
+                        </p>
+                      ) : (
+                        <p className="text-[9px] leading-relaxed text-app-fg-subtle">
+                          Static backgrounds use a 20s editorial cap to avoid accidental long dead-air segments.
+                        </p>
+                      )}
                       <details className="rounded-lg border border-app-divider/50 bg-app-chip-bg/10 px-2 py-1.5">
                         <summary className="cursor-pointer select-none text-[9px] font-bold uppercase tracking-wide text-app-fg-muted marker:text-app-fg-subtle">
                           Advanced timing
                         </summary>
                         <div className="mt-2 space-y-2 border-t border-app-divider/30 pt-2">
+                          {videoBg && sourceDur != null ? (
+                            <div className="space-y-2 rounded-md border border-app-divider/40 bg-app-chip-bg/15 p-2">
+                              <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">
+                                Exact clip range
+                              </p>
+                              <div className="grid grid-cols-2 gap-2">
+                                <label className="text-[9px] font-bold uppercase tracking-wide text-app-fg-muted">
+                                  In
+                                  <input
+                                    key={`clip-in-${trimStart}`}
+                                    type="number"
+                                    min={0}
+                                    max={Math.max(0, sourceDur - 0.5)}
+                                    step={0.1}
+                                    defaultValue={trimStart.toFixed(1)}
+                                    disabled={!session.background_url}
+                                    onBlur={(e) => {
+                                      const v = Number(e.currentTarget.value);
+                                      if (Number.isFinite(v)) void onCommitBrollTrim(v, trimEnd);
+                                    }}
+                                    className="glass-inset mt-1 w-full rounded-md px-2 py-1 text-[11px] font-semibold tabular-nums text-app-fg disabled:opacity-50"
+                                  />
+                                </label>
+                                <label className="text-[9px] font-bold uppercase tracking-wide text-app-fg-muted">
+                                  Out
+                                  <input
+                                    key={`clip-out-${trimEnd}`}
+                                    type="number"
+                                    min={trimStart + 0.5}
+                                    max={sourceDur}
+                                    step={0.1}
+                                    defaultValue={trimEnd.toFixed(1)}
+                                    disabled={!session.background_url}
+                                    onBlur={(e) => {
+                                      const v = Number(e.currentTarget.value);
+                                      if (Number.isFinite(v)) void onCommitBrollTrim(trimStart, v);
+                                    }}
+                                    className="glass-inset mt-1 w-full rounded-md px-2 py-1 text-[11px] font-semibold tabular-nums text-app-fg disabled:opacity-50"
+                                  />
+                                </label>
+                              </div>
+                              <button
+                                type="button"
+                                disabled={!session.background_url || (trimStart <= 0 && videoBg.trimEndSec == null)}
+                                onClick={() => {
+                                  setBrollTrimDraft(null);
+                                  void onCommitVideoSpecOps([
+                                    { op: "replace", path: "/background/trimStartSec", value: 0 },
+                                    { op: "replace", path: "/background/trimEndSec", value: null },
+                                  ]);
+                                }}
+                                className="text-[9px] font-semibold text-app-fg-muted underline decoration-app-divider underline-offset-2 hover:text-app-fg disabled:opacity-30"
+                              >
+                                Use full clip
+                              </button>
+                            </div>
+                          ) : null}
+                          {selectedLayer ? (
+                            <div className="space-y-2 rounded-md border border-app-divider/40 bg-app-chip-bg/15 p-2">
+                              <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">
+                                Exact selected beat
+                              </p>
+                              <div className="grid grid-cols-2 gap-2">
+                                <label className="text-[9px] font-bold uppercase tracking-wide text-app-fg-muted">
+                                  Appears
+                                  <input
+                                    key={`${selectedLayer.id}-start-${selectedLayer.startSec}`}
+                                    type="number"
+                                    min={0}
+                                    step={0.1}
+                                    defaultValue={selectedLayer.startSec.toFixed(1)}
+                                    disabled={!session.background_url || selectedLayer.id === "hook"}
+                                    onBlur={(e) => {
+                                      const v = Number(e.currentTarget.value);
+                                      if (Number.isFinite(v)) void onCommitLayerTiming(selectedLayer.id, { startSec: v });
+                                    }}
+                                    className="glass-inset mt-1 w-full rounded-md px-2 py-1 text-[11px] font-semibold tabular-nums text-app-fg disabled:opacity-50"
+                                  />
+                                </label>
+                                <label className="text-[9px] font-bold uppercase tracking-wide text-app-fg-muted">
+                                  Disappears
+                                  <input
+                                    key={`${selectedLayer.id}-end-${selectedLayer.endSec}`}
+                                    type="number"
+                                    min={0.5}
+                                    step={0.1}
+                                    defaultValue={selectedLayer.endSec.toFixed(1)}
+                                    disabled={!session.background_url}
+                                    onBlur={(e) => {
+                                      const v = Number(e.currentTarget.value);
+                                      if (Number.isFinite(v)) void onCommitLayerTiming(selectedLayer.id, { endSec: v });
+                                    }}
+                                    className="glass-inset mt-1 w-full rounded-md px-2 py-1 text-[11px] font-semibold tabular-nums text-app-fg disabled:opacity-50"
+                                  />
+                                </label>
+                              </div>
+                            </div>
+                          ) : null}
                       {(() => {
                         const chrono = [...previewVideoSpec.blocks].sort(
                           (a, b) => a.startSec - b.startSec,
@@ -5800,7 +4228,8 @@ export function VideoCreateWorkspace({
                     </div>
                   );
                 })()}
-              </div>
+            </div>
+            ) : null}
             </div>
           </div>
         </div>
@@ -5900,9 +4329,10 @@ export function VideoCreateWorkspace({
           )}
         </div>
       </div>
+      ) : null}
 
-      {/* ── Step 3: Reel cover ── */}
-      <ReelCoverSection
+      {videoSurface === "cover" ? (
+      <CoverEditor
         hooks={hooks}
         coverOptions={coverOptions}
         coverRegenBusy={coverRegenBusy}
@@ -5914,6 +4344,7 @@ export function VideoCreateWorkspace({
         selectedImageId={coverImageId}
         selectedCoverTemplate={session.selected_cover_template ?? null}
         coverEdit={coverEdit}
+        coverSpecInFlight={coverSpecInFlight}
         mode={coverMode}
         onModeChange={setCoverMode}
         onCoverTextChange={setCoverText}
@@ -5921,13 +4352,19 @@ export function VideoCreateWorkspace({
         onSelectImage={setCoverImageId}
         onGenerateAi={onGenerateThumbnail}
         onComposeFromImage={onComposeCoverFromImage}
-        step={3}
+        step={1}
       />
+      ) : null}
 
-      {/* ── Step 4: Output (video + caption + hashtags) ── */}
-      {(step3Done || session.rendered_video_url) && (
+      {videoSurface === "output" && (step3Done || session.rendered_video_url) && (
         <div className="glass rounded-2xl border border-app-divider/80 p-5 md:p-6">
-          <StepHeader n={4} label="Output" done={Boolean(session.rendered_video_url)} />
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-app-divider/50 pb-3">
+            <div>
+              <p className="text-sm font-semibold text-app-fg">Output</p>
+              <p className="mt-1 text-xs text-app-fg-muted">Final MP4, cover, caption, and post preview.</p>
+            </div>
+            {session.rendered_video_url ? <CheckCircle2 className="h-5 w-5 text-emerald-400" /> : null}
+          </div>
 
           {session.rendered_video_url ? (
             <div className="flex flex-col gap-5 sm:flex-row sm:items-start">
@@ -5939,8 +4376,18 @@ export function VideoCreateWorkspace({
                   className="w-full rounded-xl border border-app-divider"
                   style={{ aspectRatio: "9/16" }}
                 />
+                {session.thumbnail_url ? (
+                  <a
+                    href={session.thumbnail_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-2 block text-[10px] font-semibold text-app-fg-muted underline decoration-app-divider underline-offset-2 hover:text-amber-200/90"
+                  >
+                    Open cover full size ↗
+                  </a>
+                ) : null}
               </div>
-              <div className="flex flex-col gap-4">
+              <div className="flex min-w-0 flex-1 flex-col gap-4">
                 <div>
                   <p className="text-sm font-semibold text-app-fg">Your video is ready.</p>
                   <p className="mt-1 text-xs leading-relaxed text-app-fg-muted">
@@ -5948,16 +4395,39 @@ export function VideoCreateWorkspace({
                     boosts reach significantly.
                   </p>
                 </div>
-                <a
-                  href={session.rendered_video_url}
-                  download="reel.mp4"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-2 self-start rounded-xl bg-emerald-500 px-5 py-2.5 text-sm font-bold text-zinc-950 shadow-md shadow-emerald-900/25 hover:opacity-90"
-                >
-                  <Download className="h-4 w-4" />
-                  Download MP4
-                </a>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <a
+                    href={session.rendered_video_url}
+                    download="reel.mp4"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 text-xs font-bold text-zinc-950 shadow-md shadow-emerald-900/25 hover:opacity-90"
+                  >
+                    <Download className="h-3.5 w-3.5" /> Download MP4
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewOpen(true)}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-app-divider px-3 py-2 text-xs font-bold text-app-fg hover:bg-white/5"
+                  >
+                    <Eye className="h-3.5 w-3.5" /> Preview post
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void copyText("caption + hashtags", captionFull)}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-app-divider px-3 py-2 text-xs font-bold text-app-fg hover:bg-white/5"
+                  >
+                    <Copy className="h-3.5 w-3.5" /> Copy caption
+                  </button>
+                </div>
+
+                {session.caption_body ? (
+                  <p className="line-clamp-3 whitespace-pre-line rounded-lg border border-app-divider/60 bg-app-chip-bg/20 px-3 py-2 text-[13px] leading-relaxed text-app-fg-secondary">
+                    {session.caption_body}
+                  </p>
+                ) : null}
+
                 <div className="rounded-lg border border-amber-500/20 bg-amber-500/[0.07] px-3 py-2.5">
                   <p className="text-xs font-semibold text-amber-700 dark:text-amber-300">Before publishing</p>
                   <p className="mt-0.5 text-xs leading-relaxed text-app-fg-muted">
@@ -5972,7 +4442,26 @@ export function VideoCreateWorkspace({
         </div>
       )}
 
+      {videoSurface === "output" && !step3Done && !session.rendered_video_url ? (
+        <div className="glass rounded-2xl border border-app-divider/80 p-5 md:p-6">
+          <p className="text-sm font-semibold text-app-fg">Output not ready yet.</p>
+          <p className="mt-1 text-xs leading-relaxed text-app-fg-muted">
+            Go back to the Reel tab, choose a background, then render the video. The final MP4,
+            cover, caption, and post preview will appear here.
+          </p>
+          <button
+            type="button"
+            onClick={() => setVideoSurface("reel")}
+            className="mt-4 rounded-xl bg-violet-500/20 px-4 py-2 text-xs font-bold text-violet-200 hover:bg-violet-500/30"
+          >
+            Back to Reel
+          </button>
+        </div>
+      ) : null}
+
       {/* ── Caption + hashtags (always after Cover; copy with a button) ── */}
+      {videoSurface !== "cover" ? (
+      <>
       <CaptionSection
         caption={session.caption_body ?? ""}
         hashtags={session.hashtags ?? []}
@@ -5992,6 +4481,8 @@ export function VideoCreateWorkspace({
         regenHooks={(fb) => onRegenSection("hooks", fb)}
         busy={regenBusyScope === "hooks"}
       />
+      </>
+      ) : null}
 
       <PostPreviewModal
         open={previewOpen}
@@ -6001,6 +4492,17 @@ export function VideoCreateWorkspace({
         hashtags={session.hashtags}
         thumbnailUrl={session.thumbnail_url}
         videoUrl={session.rendered_video_url}
+      />
+
+      {/* Phase D: ⌘K command palette. Bound globally inside its own effect so
+          the user can hit ⌘K anywhere on /generate. Actions come from
+          `videoActions` above; the visible "Search actions…" pill above the
+          look controls also opens this. */}
+      <EditorCommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        selection={editorSelection.selection}
+        actions={videoActions}
       />
     </div>
   );

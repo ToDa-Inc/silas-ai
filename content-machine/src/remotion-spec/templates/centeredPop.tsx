@@ -5,7 +5,7 @@ import { blockEntranceStyle } from '../animations';
 import { flexAlignForTextAlign } from '../alignLayout';
 import { resolveLayoutPx } from '../layout';
 import { isBoldOutlineLayer, overlayBoldOutlineCaptionStyle } from '../textTreatment';
-import { activeCaptionLayers } from '../activeLayers';
+import { activeCaptionLayers, beatFontScaleMult } from '../activeLayers';
 
 export default function CenteredPopTemplate({ spec, frame, fps }: VideoSpecWithTimeline) {
   const sec = frame / fps;
@@ -53,7 +53,7 @@ export default function CenteredPopTemplate({ spec, frame, fps }: VideoSpecWithT
             const animStyle = blockEntranceStyle(frame, fps, startFrame, layer.animation);
             const baseSize = layer.kind === 'hook' ? 68 : 60;
             const ctaScaled = layer.isCTA ? Math.round(baseSize * layerTheme.ctaScale) : baseSize;
-            const fontSize = Math.round(ctaScaled * layout.scale);
+            const fontSize = Math.round(ctaScaled * beatFontScaleMult(layer) * layout.scale);
             return (
               <p
                 key={layer.key}

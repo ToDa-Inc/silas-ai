@@ -4,7 +4,6 @@ import Link from "next/link";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
-  Grid3x3,
   Download,
   Eye,
   Film,
@@ -15,6 +14,7 @@ import {
   Video,
 } from "lucide-react";
 import { useToast } from "@/components/ui/toast-provider";
+import { LinkPendingOverlay, PendingLink } from "@/components/ui/pending-link";
 import { PostPreviewModal } from "@/components/post-preview-modal";
 import {
   brollDelete,
@@ -24,12 +24,12 @@ import {
   clientImagesList,
   contentApiFetch,
   creationListSessions,
-  fetchClientGenerationLibraries,
   type BrollClipRow,
   type ClientImageRow,
   type GenerationSession,
 } from "@/lib/api-client";
 import { getContentApiBase } from "@/lib/env";
+import { generateSessionHref } from "@/lib/generate-session-url";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -53,9 +53,9 @@ function sessionTitle(s: GenerationSession): string {
   return s.id.slice(0, 8);
 }
 
-type Tab = "renders" | "covers" | "broll" | "images" | "templates";
+type Tab = "renders" | "covers" | "broll" | "images";
 
-const VALID_TAB = new Set<string>(["renders", "covers", "broll", "images", "templates"]);
+const VALID_TAB = new Set<string>(["renders", "covers", "broll", "images"]);
 
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 
@@ -112,7 +112,6 @@ function MediaPageInner() {
    *  hashtags in one place — replaces the old plain-MP4 new-tab link, which gave no
    *  context (no caption, no cover, no actions). */
   const [previewSession, setPreviewSession] = useState<GenerationSession | null>(null);
-  const [recipeCount, setRecipeCount] = useState(0);
 
   const searchParams = useSearchParams();
   const pathname = usePathname();
@@ -139,19 +138,15 @@ function MediaPageInner() {
       setClientSlug(cs);
       setOrgSlug(os);
       if (cs && os) {
-        const [sRes, bRes, iRes, libRes] = await Promise.all([
+        const [sRes, bRes, iRes] = await Promise.all([
           creationListSessions(cs, os, 200),
           brollList(cs, os),
           clientImagesList(cs, os),
-          fetchClientGenerationLibraries(cs, os),
         ]);
         if (cancelled) return;
         if (sRes.ok) setSessions(sRes.data);
         if (bRes.ok) setClips(bRes.data);
         if (iRes.ok) setImages(iRes.data);
-        if (libRes.ok) {
-          setRecipeCount(libRes.data.carouselTemplates.length + libRes.data.coverTemplates.length);
-        }
       }
       setBootstrapDone(true);
     })();
@@ -282,17 +277,6 @@ function MediaPageInner() {
     }
   }, [clientSlug, orgSlug, show]);
 
-  const refreshRecipeCount = useCallback(() => {
-    const cs = clientSlug.trim();
-    const os = orgSlug.trim();
-    if (!cs || !os) return;
-    void fetchClientGenerationLibraries(cs, os).then((r) => {
-      if (r.ok) {
-        setRecipeCount(r.data.carouselTemplates.length + r.data.coverTemplates.length);
-      }
-    });
-  }, [clientSlug, orgSlug]);
-
   // ── Loading guard ────────────────────────────────────────────────────────
 
   if (!bootstrapDone) {
@@ -305,12 +289,16 @@ function MediaPageInner() {
 
   // ── Render ───────────────────────────────────────────────────────────────
 
+  // NOTE: the "Styles" tab used to live here as a stub that just pointed users
+  // back to Settings → Content defaults. That made Media look half-built —
+  // a tab with a count but no editor. Style management is owned by Settings
+  // (where the full `<GenerationTemplatesPanel>` is mounted), so the tab has
+  // been removed. The header now carries a Settings link for discoverability.
   const tabs: { id: Tab; label: string; count: number }[] = [
     { id: "renders", label: "Renders", count: renders.length },
     { id: "covers", label: "Covers", count: covers.length },
     { id: "broll", label: "B-roll", count: clips.length },
     { id: "images", label: "Images", count: images.length },
-    { id: "templates", label: "Styles", count: recipeCount },
   ];
 
   return (
@@ -320,9 +308,13 @@ function MediaPageInner() {
         <div>
           <h1 className="text-xl font-bold text-app-fg">Media</h1>
           <p className="mt-0.5 max-w-xl text-sm text-app-fg-muted">
-            {tab === "templates"
-              ? "Carousel and cover styles are managed from Settings and use images from this Media library."
-              : "Outputs from Create plus uploaded images and clips."}
+            Outputs from Create plus uploaded images and clips.{" "}
+            <Link
+              href="/settings#content-defaults"
+              className="font-semibold text-amber-600 hover:underline dark:text-amber-400"
+            >
+              Manage style templates in Settings →
+            </Link>
           </p>
         </div>
         {tab === "broll" && (
@@ -391,9 +383,9 @@ function MediaPageInner() {
                       go from "browsing finished posts" → "edit / re-publish this one" without
                       having to copy the session ID by hand. */}
                   <Link
-                    href={`/generate?session=${encodeURIComponent(s.id)}`}
+                    href={generateSessionHref(s.id)}
                     title="Open session"
-                    className="group block overflow-hidden rounded-xl bg-black"
+                    className="group relative block overflow-hidden rounded-xl bg-black"
                     style={{ aspectRatio: "9/16" }}
                   >
                     {s.thumbnail_url ? (
@@ -408,6 +400,7 @@ function MediaPageInner() {
                         <Video className="h-6 w-6 text-white/20" />
                       </div>
                     )}
+                    <LinkPendingOverlay label="Opening session..." />
                   </Link>
                   {/* Meta */}
                   <p className="line-clamp-2 text-[11px] font-medium leading-snug text-app-fg">
@@ -443,12 +436,13 @@ function MediaPageInner() {
                       <Download className="h-3 w-3" />
                     </a>
                   </div>
-                  <Link
-                    href={`/generate?session=${encodeURIComponent(s.id)}`}
+                  <PendingLink
+                    href={generateSessionHref(s.id)}
                     className="text-center text-[11px] font-semibold text-sky-500 hover:underline dark:text-sky-400"
+                    pendingLabel="Opening session"
                   >
                     Open session →
-                  </Link>
+                  </PendingLink>
                 </div>
               ))}
             </div>
@@ -465,9 +459,9 @@ function MediaPageInner() {
                 <div key={s.id} className="glass flex flex-col gap-2 rounded-2xl p-3">
                   {/* Cover thumbnail clicks back to the source session, same as Renders. */}
                   <Link
-                    href={`/generate?session=${encodeURIComponent(s.id)}`}
+                    href={generateSessionHref(s.id)}
                     title="Open session"
-                    className="group block overflow-hidden rounded-xl border border-app-divider"
+                    className="group relative block overflow-hidden rounded-xl border border-app-divider"
                     style={{ aspectRatio: "9/16" }}
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -476,6 +470,7 @@ function MediaPageInner() {
                       alt=""
                       className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
                     />
+                    <LinkPendingOverlay label="Opening session..." />
                   </Link>
                   {/* Meta */}
                   <p className="line-clamp-2 text-[11px] font-medium leading-snug text-app-fg">
@@ -508,12 +503,13 @@ function MediaPageInner() {
                       <Download className="h-3 w-3" />
                     </a>
                   </div>
-                  <Link
-                    href={`/generate?session=${encodeURIComponent(s.id)}`}
+                  <PendingLink
+                    href={generateSessionHref(s.id)}
                     className="text-center text-[11px] font-semibold text-sky-500 hover:underline dark:text-sky-400"
+                    pendingLabel="Opening session"
                   >
                     Open session →
-                  </Link>
+                  </PendingLink>
                 </div>
               ))}
             </div>
@@ -636,42 +632,6 @@ function MediaPageInner() {
           )
       )}
 
-      {tab === "templates" && (
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-start gap-3 rounded-2xl border border-app-divider/80 bg-app-chip-bg/30 px-4 py-3 dark:border-white/10">
-            <Grid3x3 className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" aria-hidden />
-            <div className="min-w-0 text-sm text-app-fg-muted">
-              <p className="font-semibold text-app-fg">Carousel and cover styles</p>
-              <p className="mt-1 leading-relaxed">
-                Upload images here, then choose which ones should become reusable carousel or cover examples in Settings.
-              </p>
-            </div>
-          </div>
-          <div className="rounded-2xl border border-dashed border-app-divider/70 px-5 py-10 text-center">
-            <p className="text-sm font-semibold text-app-fg">Styles live in Settings</p>
-            <p className="mx-auto mt-2 max-w-lg text-sm leading-relaxed text-app-fg-muted">
-              Keep the image files here. Set up reusable links, carousel structures, and cover examples
-              from Content defaults in Settings.
-            </p>
-            <div className="mt-5 flex flex-wrap justify-center gap-3">
-              <Link
-                href="/settings#content-defaults"
-                className="inline-flex items-center rounded-lg bg-amber-500 px-4 py-2 text-sm font-bold text-zinc-950"
-              >
-                Open content defaults
-              </Link>
-              <button
-                type="button"
-                onClick={() => refreshRecipeCount()}
-                className="inline-flex items-center rounded-lg border border-app-divider px-4 py-2 text-sm font-semibold text-app-fg hover:bg-app-chip-bg"
-              >
-                Refresh count
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       <PostPreviewModal
         open={previewSession !== null}
         onClose={() => setPreviewSession(null)}
@@ -681,7 +641,7 @@ function MediaPageInner() {
         thumbnailUrl={previewSession?.thumbnail_url}
         videoUrl={previewSession?.rendered_video_url}
         openSessionHref={
-          previewSession ? `/generate?session=${encodeURIComponent(previewSession.id)}` : null
+          previewSession ? generateSessionHref(previewSession.id) : null
         }
       />
     </main>

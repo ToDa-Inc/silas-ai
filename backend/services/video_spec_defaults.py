@@ -13,6 +13,7 @@ from models.video_spec import (
     VideoSpecHook,
     VideoSpecLayout,
     VideoSpecV1,
+    effective_background_duration,
     parse_video_spec,
     validate_video_spec_dict,
 )
@@ -242,6 +243,8 @@ def apply_live_session_fields(spec: VideoSpecV1, session: Dict[str, Any]) -> Vid
                 kind=kind,
                 focalPoint=spec.background.focalPoint,
                 durationSec=bdur,
+                trimStartSec=spec.background.trimStartSec,
+                trimEndSec=spec.background.trimEndSec,
             )
         }
     )
@@ -565,11 +568,7 @@ def merge_text_blocks_into_spec(
         # cap (when known). Same logic as ``build_default_video_spec``: only
         # block on-screen time is auto-tuned, hook + pauses stay sacred.
         raw_durs = [block_read_duration_sec(r["text"], language=lang) for r in cleaned]
-        cap_dur = (
-            float(spec.background.durationSec)
-            if spec.background.kind == "video" and spec.background.durationSec is not None
-            else None
-        )
+        cap_dur = effective_background_duration(spec.background)
         if cap_dur is not None and cap_dur > 0:
             available = max(MIN_BLOCK * len(raw_durs), cap_dur - float(hook_s) - sum(new_pauses))
             raw_durs = fit_block_durs_to_available(raw_durs, available)
@@ -604,8 +603,8 @@ def fit_spec_blocks_to_broll(spec: VideoSpecV1) -> VideoSpecV1:
     """
     if spec.background.kind != "video" or spec.background.durationSec is None:
         raise ValueError("Fit-to-B-roll requires a video background with durationSec set.")
-    cap = float(spec.background.durationSec)
-    if cap <= 0:
+    cap = effective_background_duration(spec.background)
+    if cap is None or cap <= 0:
         raise ValueError("Invalid B-roll duration.")
 
     blocks_sorted = sorted(spec.blocks, key=lambda b: b.startSec)

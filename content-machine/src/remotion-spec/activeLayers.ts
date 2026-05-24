@@ -1,7 +1,7 @@
 import type { VideoSpecAppearance, VideoTextTreatmentId } from "./schema";
 
 export type CaptionLayerInput = {
-  hook: { text?: string | null; durationSec: number };
+  hook: { text?: string | null; durationSec: number; fontScale?: number | null };
   blocks: Array<{
     id: string;
     text?: string | null;
@@ -11,6 +11,7 @@ export type CaptionLayerInput = {
     animation?: "pop" | "fade" | "slide-up" | "none" | null;
     appearance?: VideoSpecAppearance | null;
     textTreatment?: VideoTextTreatmentId | null;
+    fontScale?: number | null;
   }>;
 };
 
@@ -23,7 +24,14 @@ export type ActiveCaptionLayer = {
   kind: "hook" | "block";
   appearance?: VideoSpecAppearance | null;
   textTreatment?: VideoTextTreatmentId | null;
+  /** Per-beat multiplier on top of global ``layout.scale``; default 1. */
+  fontScale?: number | null;
 };
+
+export function beatFontScaleMult(layer: ActiveCaptionLayer): number {
+  const v = layer.fontScale;
+  return v != null && Number.isFinite(v) && v > 0 ? v : 1;
+}
 
 export function activeCaptionLayers(spec: CaptionLayerInput, sec: number): ActiveCaptionLayer[] {
   const layers: ActiveCaptionLayer[] = [];
@@ -36,6 +44,7 @@ export function activeCaptionLayers(spec: CaptionLayerInput, sec: number): Activ
       startSec: 0,
       animation: "fade",
       kind: "hook",
+      fontScale: spec.hook.fontScale ?? undefined,
     });
   }
 
@@ -53,6 +62,7 @@ export function activeCaptionLayers(spec: CaptionLayerInput, sec: number): Activ
         kind: "block",
         appearance: b.appearance ?? undefined,
         textTreatment: b.textTreatment ?? undefined,
+        fontScale: b.fontScale ?? undefined,
       });
     });
 

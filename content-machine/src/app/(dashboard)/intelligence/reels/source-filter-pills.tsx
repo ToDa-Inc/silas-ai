@@ -1,7 +1,7 @@
 "use client";
 
-import Link, { useLinkStatus } from "next/link";
-import { Loader2 } from "lucide-react";
+import Link from "next/link";
+import { LinkPendingSpinner } from "@/components/ui/pending-link";
 
 type Variant = "neutral" | "amber" | "purple";
 
@@ -51,17 +51,6 @@ const SEGMENTED_IDLE =
  * re-fetches the reels list with the new `source` filter — the work is server-side,
  * but the UI was previously silent during the round-trip.
  */
-function PillSpinner() {
-  const { pending } = useLinkStatus();
-  if (!pending) return null;
-  return (
-    <Loader2
-      className="ml-1.5 inline h-3 w-3 shrink-0 animate-spin align-[-1px]"
-      aria-hidden
-    />
-  );
-}
-
 export function SourceFilterPills({ pills, layout = "wrap" }: Props) {
   if (layout === "segmented") {
     return (
@@ -75,7 +64,7 @@ export function SourceFilterPills({ pills, layout = "wrap" }: Props) {
             prefetch={false}
           >
             {p.label}
-            <PillSpinner />
+            <LinkPendingSpinner className="ml-1.5" label="Updating reels filter" />
           </Link>
         ))}
       </nav>
@@ -95,7 +84,7 @@ export function SourceFilterPills({ pills, layout = "wrap" }: Props) {
           prefetch={false}
         >
           {p.label}
-          <PillSpinner />
+          <LinkPendingSpinner className="ml-1.5" label="Updating reels filter" />
         </Link>
       ))}
     </div>

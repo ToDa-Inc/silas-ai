@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import Link from "next/link";
 import { ArrowRight, Compass, Flame, Loader2, Sparkles } from "lucide-react";
 import { ReelThumbnail } from "@/components/reel-thumbnail";
 import type { ScrapedReelRow } from "@/lib/api";
@@ -10,7 +9,8 @@ import {
   fetchDashboardCompetitorWinsClient,
   fetchDashboardFreshNicheClient,
 } from "@/lib/api-client";
-import { RecreateReelModal } from "@/app/(dashboard)/intelligence/components/recreate-reel-modal";
+import { RecreateButton } from "@/components/recreate-button";
+import { PendingLink } from "@/components/ui/pending-link";
 
 /**
  * Dashboard "what dropped today" lanes.
@@ -106,7 +106,6 @@ function DashboardDailyLane({
   const [reels, setReels] = useState<ScrapedReelRow[]>(initial);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [recreateRow, setRecreateRow] = useState<ScrapedReelRow | null>(null);
 
   // Client-side re-fetch on range change. Skip the initial default range
   // render (initial prop already covers that exact query).
@@ -207,15 +206,13 @@ function DashboardDailyLane({
                         </p>
                       ) : null}
                     </div>
-                    <button
-                      type="button"
+                    <RecreateButton
+                      reel={reel}
+                      clientSlug={clientSlug}
+                      orgSlug={orgSlug}
                       disabled={disabled}
-                      title={disabledHint ?? undefined}
-                      onClick={() => setRecreateRow(reel)}
-                      className="shrink-0 rounded-md bg-amber-500/15 px-2.5 py-1.5 text-[10px] font-bold text-app-on-amber-title hover:bg-amber-500/25 disabled:opacity-50"
-                    >
-                      Recreate
-                    </button>
+                      disabledHint={disabledHint}
+                    />
                   </li>
                 );
               })}
@@ -224,25 +221,17 @@ function DashboardDailyLane({
         </div>
 
         <div className="border-t border-app-divider px-4 py-2.5">
-          <Link
+          <PendingLink
             href={config.reelsPageHref(activeDays)}
             className="inline-flex items-center gap-1 text-[11px] font-semibold text-app-accent hover:underline"
+            pendingLabel="Opening reels catalog"
           >
             View all
             <ArrowRight className="h-3 w-3" aria-hidden />
-          </Link>
+          </PendingLink>
         </div>
       </div>
 
-      <RecreateReelModal
-        open={Boolean(recreateRow)}
-        onClose={() => setRecreateRow(null)}
-        reel={recreateRow}
-        clientSlug={clientSlug}
-        orgSlug={orgSlug}
-        disabled={disabled}
-        disabledHint={disabledHint}
-      />
     </>
   );
 }

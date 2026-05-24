@@ -6,7 +6,7 @@
  */
 
 import type { Operation } from "fast-json-patch";
-import type { VideoSpec } from "@/lib/video-spec";
+import { effectiveBackgroundDuration, type VideoSpec } from "@/lib/video-spec";
 
 // Mirrors backend services/video_spec_timeline.py — keep both in sync. 5s per
 // pause is plenty; the real ceiling is the spec's ``totalSec`` (≤ 600s).
@@ -77,11 +77,7 @@ export function relayoutTimeline(
   const h = spec.hook.durationSec;
   const pauses = effectivePausesSec({ ...spec, blocks: blocksSorted });
 
-  let cap: number | null = null;
-  if (spec.background.kind === "video" && spec.background.durationSec != null) {
-    const c = Number(spec.background.durationSec);
-    if (Number.isFinite(c) && c > 0) cap = c;
-  }
+  let cap: number | null = effectiveBackgroundDuration(spec.background);
 
   if (cap != null && n > 0) {
     const pauseSum = pauses.reduce((a, b) => a + b, 0);

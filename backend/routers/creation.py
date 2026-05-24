@@ -893,7 +893,22 @@ def _merge_carousel_background_style_dict(
 
 
 def _use_legacy_carousel_render(prev: Dict[str, Any], body_tb: Any) -> bool:
-    """Slides created before ``text_box`` may only have ``layout`` — keep Pillow layout overlay."""
+    """Decide whether to fall back to the legacy layout-only Pillow path.
+
+    Canonical (post UX overhaul): the frontend ALWAYS sends a ``text_box``
+    (defaults applied via ``mergeCarouselTextBox`` in the workspace), and the
+    backend composes via ``compose_carousel_final_png``. This is the single
+    source of truth used by Fabric live preview, ZIP export, and regenerate.
+
+    Legacy: pre-``text_box`` slides only have a ``layout`` dict. Those rows are
+    rendered with the layout-only Pillow overlay so re-opening an old session
+    doesn't repaint with default text_box geometry. New slides never enter this
+    branch.
+
+    TODO(carousel-render): once a backfill migration writes default ``text_box``
+    onto all legacy rows, drop this helper and the layout-only branches in
+    :func:`carousel_slide_regenerate`.
+    """
     if body_tb is not None:
         return False
     prev_tb = prev.get("text_box")

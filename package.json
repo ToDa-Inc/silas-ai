@@ -12,6 +12,7 @@
     "dashboard": "cd content-machine && npm run dev",
     "dashboard:build": "cd content-machine && npm run build",
     "broll:studio": "cd video-production/broll-caption-editor && npm run dev",
+    "check:remotion-drift": "node scripts/check-remotion-spec-drift.js",
     "scrape": "node scripts/scraper.js",
     "discover": "node scripts/competitor-discovery.js",
     "analyze": "node scripts/analyze.js",

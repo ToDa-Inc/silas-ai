@@ -1,14 +1,15 @@
 import { AbsoluteFill } from 'remotion';
 import type { VideoSpecWithTimeline } from '../templateProps';
-import { mergeLayerAppearance } from '../appearance';
+import { resolveAppearance } from '../appearance';
 import { blockEntranceStyle } from '../animations';
 import { flexAlignForTextAlign } from '../alignLayout';
 import { resolveLayoutPx } from '../layout';
-import { cardBoldOutlineCaptionStyle, isBoldOutlineLayer } from '../textTreatment';
-import { activeCaptionLayers } from '../activeLayers';
+import { cardBoldOutlineCaptionStyle, isBoldOutlineTreatment } from '../textTreatment';
+import { activeCaptionLayers, beatFontScaleMult } from '../activeLayers';
 
 export default function TopBannerTemplate({ spec, frame, fps }: VideoSpecWithTimeline) {
   const sec = frame / fps;
+  const theme = resolveAppearance(spec);
   const layout = resolveLayoutPx(spec);
   const layers = activeCaptionLayers(spec, sec);
   const ta = layout.textAlign;
@@ -38,19 +39,18 @@ export default function TopBannerTemplate({ spec, frame, fps }: VideoSpecWithTim
         }}
       >
         {layers.map((layer) => {
-          const layerTheme = mergeLayerAppearance(spec, layer.kind === 'block' ? layer.appearance : null);
           const startFrame = Math.round(layer.startSec * fps);
           const animStyle = blockEntranceStyle(frame, fps, startFrame, layer.animation);
           const baseSize = layer.kind === 'hook' ? 56 : 50;
-          const ctaScaled = layer.isCTA ? Math.round(baseSize * layerTheme.ctaScale) : baseSize;
-          const fontSize = Math.round(ctaScaled * layout.scale);
+          const ctaScaled = layer.isCTA ? Math.round(baseSize * theme.ctaScale) : baseSize;
+          const fontSize = Math.round(ctaScaled * beatFontScaleMult(layer) * layout.scale);
           return (
             <div
               key={layer.key}
               style={{
                 display: 'inline-block',
                 maxWidth: layout.innerWidth,
-                backgroundColor: layerTheme.cardBg === 'transparent' ? 'rgba(255,255,255,0.94)' : layerTheme.cardBg,
+                backgroundColor: theme.cardBg === 'transparent' ? 'rgba(255,255,255,0.94)' : theme.cardBg,
                 borderRadius: '14px',
                 padding: '22px 28px',
                 opacity: animStyle.opacity,
@@ -61,12 +61,12 @@ export default function TopBannerTemplate({ spec, frame, fps }: VideoSpecWithTim
                 style={{
                   fontSize,
                   fontWeight: 800,
-                  fontFamily: layerTheme.bodyFontStack,
-                  color: layerTheme.cardText,
+                  fontFamily: theme.bodyFontStack,
+                  color: theme.cardText,
                   margin: 0,
                   lineHeight: 1.2,
                   letterSpacing: '-0.02em',
-                  ...(isBoldOutlineLayer(spec, layer) ? cardBoldOutlineCaptionStyle() : {}),
+                  ...(isBoldOutlineTreatment(spec) ? cardBoldOutlineCaptionStyle() : {}),
                   wordWrap: 'break-word',
                   overflowWrap: 'break-word',
                   textAlign: ta,

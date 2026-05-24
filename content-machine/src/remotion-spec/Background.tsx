@@ -1,5 +1,5 @@
 import React from 'react';
-import { Img, Video } from 'remotion';
+import { Img, useVideoConfig, Video } from 'remotion';
 import type { VideoSpec } from './schema';
 
 const FILL: React.CSSProperties = {
@@ -27,10 +27,23 @@ const FILL: React.CSSProperties = {
  * cinematic behavior.
  */
 export default function Background({ spec }: { spec: VideoSpec }) {
+  const { fps } = useVideoConfig();
   const { url, kind } = spec.background;
   if (!url) return null;
   if (kind === 'video') {
-    return <Video key={url} src={url} muted style={FILL} />;
+    const trimStart = Number(spec.background.trimStartSec ?? 0);
+    const trimEnd =
+      spec.background.trimEndSec != null ? Number(spec.background.trimEndSec) : undefined;
+    return (
+      <Video
+        key={`${url}|${trimStart}|${trimEnd ?? 'end'}`}
+        src={url}
+        muted
+        startFrom={Math.round(trimStart * fps)}
+        endAt={trimEnd != null ? Math.round(trimEnd * fps) : undefined}
+        style={FILL}
+      />
+    );
   }
   return <Img key={url} src={url} style={FILL} />;
 }
