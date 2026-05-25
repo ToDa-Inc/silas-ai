@@ -2,21 +2,17 @@
 
 import Link from "next/link";
 import type { Operation } from "fast-json-patch";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 // Font loaders moved to ./editors/carousel/carousel-helpers.ts and
 // ./editors/shared/style-helpers.tsx (their module-load side effect registers
 // @font-face for the Remotion player).
 import {
-  AlignCenter,
-  AlignLeft,
-  AlignRight,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
   Copy,
   Download,
   Eye,
-  Film,
   Grid3x3,
   Image as ImageIcon,
   Loader2,
@@ -25,9 +21,6 @@ import {
   RotateCcw,
   Search,
   Shield,
-  MoreHorizontal,
-  SlidersHorizontal,
-  Sparkles,
   Trash2,
   Video,
 } from "lucide-react";
@@ -50,7 +43,6 @@ import {
   type CoverTab,
   type VideoEditorTab,
 } from "@/components/editor-ui";
-import { StepHeader } from "@/components/editors/shared/StepHeader";
 import { CaptionSection } from "@/components/editors/shared/CaptionSection";
 import { CoverTextLayerEditor } from "@/components/editors/cover/CoverTextLayerEditor";
 import { BackgroundPicker } from "@/components/editors/video/BackgroundPicker";
@@ -91,9 +83,8 @@ import { UndoPill } from "@/components/undo-pill";
 import { useUndoKeybindings, useUndoStack } from "@/lib/use-undo-stack";
 import { useToast } from "@/components/ui/toast-provider";
 import { PostPreviewModal } from "@/components/post-preview-modal";
-import { VideoSpecPreview } from "@/components/video-spec-preview";
+import { VideoSpecPreview, type VideoClipTrimProps } from "@/components/video-spec-preview";
 import { LayoutSlider } from "@/components/layout-slider";
-import { AppSelect } from "@/components/ui/app-select";
 import {
   brollDelete,
   brollList,
@@ -161,6 +152,8 @@ import {
   segmentLabel,
 } from "@/lib/video-spec-timing";
 import { effectivePausesSec, pauseGapToExplicitTimelinePatchOps, relayoutTimeline } from "@/lib/video-spec-timeline";
+import { createRafCoalescer } from "@/lib/raf-coalesce";
+import { stablePlayerSpec } from "@/lib/player-spec";
 import {
   buildLayerRows,
   computeLayerTimingChange,
@@ -327,130 +320,6 @@ function bgSourceFromSession(t: string | null | undefined): BgSource {
 // CaptionSection was extracted to ./editors/shared/CaptionSection.tsx.
 
 // AiContextSection was extracted to ./editors/shared/AiContextSection.tsx.
-
-function formatSecondsShort(sec: number): string {
-  if (!Number.isFinite(sec)) return "0s";
-  return `${sec.toFixed(sec >= 10 ? 0 : 1)}s`;
-}
-
-function ClipWindowControl({
-  sourceDurationSec,
-  trimStartSec,
-  trimEndSec,
-  timelineSec,
-  disabled,
-  onChange,
-  onCommit,
-}: {
-  sourceDurationSec: number;
-  trimStartSec: number;
-  trimEndSec: number;
-  timelineSec: number;
-  disabled?: boolean;
-  onChange: (start: number, end: number) => void;
-  onCommit: (start: number, end: number) => void;
-}) {
-  const trackRef = useRef<HTMLDivElement | null>(null);
-  const start = Math.max(0, Math.min(sourceDurationSec - 0.5, trimStartSec));
-  const end = Math.max(start + 0.5, Math.min(sourceDurationSec, trimEndSec));
-  const activeDur = Math.max(0.5, end - start);
-  const leftPct = (start / sourceDurationSec) * 100;
-  const widthPct = (activeDur / sourceDurationSec) * 100;
-
-  const valueFromPointer = (e: PointerEvent | ReactPointerEvent) => {
-    const track = trackRef.current;
-    if (!track) return 0;
-    const rect = track.getBoundingClientRect();
-    const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
-    return Math.round((x / Math.max(1, rect.width)) * sourceDurationSec * 10) / 10;
-  };
-
-  const beginDrag = (kind: "start" | "end") => (e: ReactPointerEvent<HTMLButtonElement>) => {
-    if (disabled) return;
-    e.preventDefault();
-    e.stopPropagation();
-    let latestStart = start;
-    let latestEnd = end;
-    const apply = (clientEvent: PointerEvent | ReactPointerEvent) => {
-      const v = valueFromPointer(clientEvent);
-      if (kind === "start") {
-        latestStart = Math.max(0, Math.min(v, latestEnd - 0.5));
-      } else {
-        latestEnd = Math.min(sourceDurationSec, Math.max(v, latestStart + 0.5));
-      }
-      onChange(latestStart, latestEnd);
-    };
-    apply(e);
-    const onMove = (mv: PointerEvent) => apply(mv);
-    const onUp = () => {
-      document.removeEventListener("pointermove", onMove);
-      document.removeEventListener("pointerup", onUp);
-      document.removeEventListener("pointercancel", onUp);
-      onCommit(latestStart, latestEnd);
-    };
-    document.addEventListener("pointermove", onMove);
-    document.addEventListener("pointerup", onUp);
-    document.addEventListener("pointercancel", onUp);
-  };
-
-  return (
-    <div className="space-y-2 rounded-xl border border-app-divider/60 bg-app-chip-bg/20 p-3">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <div>
-          <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Background clip</p>
-          <p className="mt-0.5 text-[10px] text-app-fg-subtle">
-            Drag the handles to choose the part of the source video used behind the reel.
-          </p>
-        </div>
-        <span className="rounded bg-app-chip-bg/50 px-1.5 py-px text-[9px] font-bold tabular-nums text-app-fg-muted">
-          {formatSecondsShort(sourceDurationSec)} source
-        </span>
-      </div>
-
-      <div ref={trackRef} className="relative h-12 overflow-hidden rounded-lg border border-app-divider/60 bg-black/25">
-        <div className="absolute inset-y-0 left-0 bg-white/5" style={{ width: `${leftPct}%` }} />
-        <div
-          className="absolute inset-y-0 rounded-md border border-amber-400/80 bg-amber-500/20 shadow-[0_0_0_1px_rgba(245,158,11,0.25)]"
-          style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-        />
-        <div className="absolute inset-y-0 right-0 bg-white/5" style={{ left: `${Math.min(100, leftPct + widthPct)}%` }} />
-        <button
-          type="button"
-          disabled={disabled}
-          onPointerDown={beginDrag("start")}
-          className="absolute top-1 bottom-1 z-10 w-4 -translate-x-1/2 cursor-ew-resize rounded bg-amber-400 shadow disabled:opacity-40"
-          style={{ left: `${leftPct}%` }}
-          aria-label="Set clip start"
-          title="Drag clip start"
-        />
-        <button
-          type="button"
-          disabled={disabled}
-          onPointerDown={beginDrag("end")}
-          className="absolute top-1 bottom-1 z-10 w-4 -translate-x-1/2 cursor-ew-resize rounded bg-amber-400 shadow disabled:opacity-40"
-          style={{ left: `${leftPct + widthPct}%` }}
-          aria-label="Set clip end"
-          title="Drag clip end"
-        />
-      </div>
-
-      <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-app-fg-subtle">
-        <span>
-          Active:{" "}
-          <span className="font-semibold text-app-fg">
-            {formatSecondsShort(start)}-{formatSecondsShort(end)}
-          </span>
-        </span>
-        <span>
-          Beats:{" "}
-          <span className={timelineSec > activeDur + 0.25 ? "font-semibold text-amber-200" : "font-semibold text-emerald-300"}>
-            {formatSecondsShort(timelineSec)} / {formatSecondsShort(activeDur)}
-          </span>
-        </span>
-      </div>
-    </div>
-  );
-}
 
 export type VideoCreateWorkspaceProps = {
   clientSlug: string;
@@ -1112,6 +981,17 @@ export function VideoCreateWorkspace({
     brollTrimDraft?.trimEndSec,
   ]);
 
+  const playerSpecCacheRef = useRef<{ key: string; spec: VideoSpec } | null>(null);
+  const playerSpec = useMemo(() => {
+    if (!livePreviewSpec) {
+      playerSpecCacheRef.current = null;
+      return null;
+    }
+    const result = stablePlayerSpec(livePreviewSpec, playerSpecCacheRef.current);
+    playerSpecCacheRef.current = result.cache;
+    return result.spec;
+  }, [livePreviewSpec]);
+
   const styleAppearanceForChips = useMemo(() => {
     if (!livePreviewSpec) return DEFAULT_APPEARANCE;
     if (selectedSegmentId === "hook") return livePreviewSpec.appearance ?? DEFAULT_APPEARANCE;
@@ -1149,6 +1029,31 @@ export function VideoCreateWorkspace({
     [livePreviewSpec, previewVideoSpec],
   );
   const selectedLayer = selectedLayerRows.find((r) => r.id === selectedSegmentId) ?? selectedLayerRows[0] ?? null;
+
+  const stableBlockLabelsRef = useRef<Record<string, string>>({});
+  const lastSessionIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const sessId = session?.id ?? null;
+    const map = stableBlockLabelsRef.current;
+    if (lastSessionIdRef.current !== sessId) {
+      lastSessionIdRef.current = sessId;
+      stableBlockLabelsRef.current = { hook: "Hook" };
+    }
+    if (!previewVideoSpec) return;
+    let textCount = Object.values(stableBlockLabelsRef.current).filter((v) => v.startsWith("Text ")).length;
+    previewVideoSpec.blocks.forEach((b) => {
+      if (!stableBlockLabelsRef.current[b.id]) {
+        if (b.isCTA) {
+          stableBlockLabelsRef.current[b.id] = "CTA";
+        } else {
+          textCount++;
+          stableBlockLabelsRef.current[b.id] = `Text ${textCount}`;
+        }
+      }
+    });
+  }, [session?.id, previewVideoSpec]);
+
   const [layerTextDraft, setLayerTextDraft] = useState("");
   const [layerCtaDraft, setLayerCtaDraft] = useState(false);
   useEffect(() => {
@@ -1184,6 +1089,18 @@ export function VideoCreateWorkspace({
       setLoading(false);
     }
   }, [applySession, clientSlug, orgSlug, session, show, textDraft]);
+
+  const moveTextBlock = useCallback((index: number, direction: -1 | 1) => {
+    setTextDraft((prev) => {
+      const nextIndex = index + direction;
+      if (nextIndex < 0 || nextIndex >= prev.length) return prev;
+      const next = [...prev];
+      const temp = next[index]!;
+      next[index] = next[nextIndex]!;
+      next[nextIndex] = temp;
+      return next;
+    });
+  }, []);
 
   const saveScript = useCallback(async () => {
     const cs = clientSlug.trim();
@@ -1969,6 +1886,29 @@ export function VideoCreateWorkspace({
   useEffect(() => {
     onCommitLayerTimingRef.current = onCommitLayerTiming;
   }, [onCommitLayerTiming]);
+
+  const onChangeBrollTrimRaf = useMemo(
+    () => createRafCoalescer(onChangeBrollTrim),
+    [onChangeBrollTrim],
+  );
+  const onResizeLayerTimingDraftRaf = useMemo(
+    () => createRafCoalescer(onResizeLayerTimingDraft),
+    [onResizeLayerTimingDraft],
+  );
+
+  const previewClipTrim = useMemo((): VideoClipTrimProps | null => {
+    if (!livePreviewSpec || livePreviewSpec.background.kind !== "video") return null;
+    const bg = livePreviewSpec.background;
+    const sourceDur = bg.durationSec != null ? Number(bg.durationSec) : null;
+    if (sourceDur == null || !Number.isFinite(sourceDur)) return null;
+    return {
+      sourceDurationSec: sourceDur,
+      trimStartSec: Number(bg.trimStartSec ?? 0),
+      trimEndSec: bg.trimEndSec != null ? Number(bg.trimEndSec) : sourceDur,
+      onChange: onChangeBrollTrimRaf,
+      onCommit: onCommitBrollTrim,
+    };
+  }, [livePreviewSpec, onChangeBrollTrimRaf, onCommitBrollTrim]);
 
   const applyVideoSpecOps = useCallback(
     async (ops: Operation[], afterApply?: (s: GenerationSession) => void) => {
@@ -3109,13 +3049,16 @@ export function VideoCreateWorkspace({
                 </div>
                 <VideoSpecPreview
                   spec={livePreviewSpec}
+                  playerSpec={playerSpec}
                   safeZone={safeZonePreview}
                   layoutGuides={layoutGuides}
                   width={250}
                   selectedSegmentId={selectedSegmentId}
                   onSelectSegment={setSelectedSegmentId}
-                  onResizeLayerTimingDraft={onResizeLayerTimingDraft}
+                  onResizeLayerTimingDraft={onResizeLayerTimingDraftRaf}
                   onResizeLayerTimingCommit={onResizeLayerTimingCommit}
+                  clipTrim={previewClipTrim}
+                  timingDisabled={!session.background_url}
                 />
               </>
             )}
@@ -3191,7 +3134,27 @@ export function VideoCreateWorkspace({
                 ) : null}
 
                 {textDraft.map((b, i) => (
-                  <div key={i} className="flex items-center gap-2">
+                  <div key={i} className="flex items-center gap-2 group/item">
+                    <div className="flex flex-col shrink-0">
+                      <button
+                        type="button"
+                        disabled={i === 0}
+                        onClick={() => moveTextBlock(i, -1)}
+                        className="rounded p-0.5 text-app-fg-subtle hover:bg-white/10 hover:text-app-fg disabled:opacity-10 transition duration-150"
+                        title="Move up"
+                      >
+                        <ChevronUp className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={i === textDraft.length - 1}
+                        onClick={() => moveTextBlock(i, 1)}
+                        className="rounded p-0.5 text-app-fg-subtle hover:bg-white/10 hover:text-app-fg disabled:opacity-10 transition duration-150"
+                        title="Move down"
+                      >
+                        <ChevronDown className="h-3 w-3" />
+                      </button>
+                    </div>
                     <input
                       value={b.text}
                       onChange={(e) => {
@@ -3834,397 +3797,128 @@ export function VideoCreateWorkspace({
 
             {videoEditorTab === "timing" ? (
             <div className="min-w-0 space-y-4">
-                <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Timing</p>
-                <p className="text-[9px] text-app-fg-subtle">
-                  Select a beat on the preview timeline, then adjust duration and gaps below.
-                </p>
+                <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted font-mono tracking-wider">Timing Overview</p>
                 {(() => {
-                  if (!previewVideoSpec) return null;
+                  if (!previewVideoSpec || !livePreviewSpec) return null;
                   const segId = selectedSegmentId;
-                  const range = segmentDurationRange(segId);
-                  const usableBackgroundSec =
-                    livePreviewSpec?.background.kind === "video"
-                      ? (effectiveBackgroundDuration(livePreviewSpec.background) ??
-                        livePreviewSpec.background.durationSec ??
-                        null)
-                      : null;
-                  const durationMax = Math.max(
-                    range.min,
-                    Math.min(range.max, usableBackgroundSec ?? 20),
-                  );
-                  const draftActive = timingDraft?.id === segId;
-                  const displayedDur = draftActive
-                    ? timingDraft!.durationSec
-                    : segmentDurationSec(livePreviewSpec ?? previewVideoSpec, segId);
-                  const sliderVal = Math.min(durationMax, Math.max(range.min, displayedDur));
-                  const savedDur = segmentDurationSec(previewVideoSpec, segId);
-                  const label = segmentLabel(previewVideoSpec, segId);
+                  const timelineSec = livePreviewSpec.totalSec;
+                  const label = stableBlockLabelsRef.current[segId] || segmentLabel(previewVideoSpec, segId);
                   const excerpt = segmentExcerpt(previewVideoSpec, segId);
+                  const layerDur = selectedLayer
+                    ? (selectedLayer.endSec - selectedLayer.startSec).toFixed(1)
+                    : segmentDurationSec(livePreviewSpec, segId).toFixed(1);
                   const autoFor = (id: string): number => {
                     if (id === "hook") return autoHookDurationSec();
                     const b = previewVideoSpec.blocks.find((x) => x.id === id);
                     return autoBlockDurationSec(b?.text ?? "");
                   };
+                  const usableBackgroundSec =
+                    livePreviewSpec.background.kind === "video"
+                      ? (effectiveBackgroundDuration(livePreviewSpec.background) ??
+                        livePreviewSpec.background.durationSec ??
+                        null)
+                      : null;
+                  const durationMax = Math.max(
+                    segmentDurationRange(segId).min,
+                    Math.min(segmentDurationRange(segId).max, usableBackgroundSec ?? 20),
+                  );
                   const autoDur = Math.min(durationMax, autoFor(segId));
-                  const videoBg = livePreviewSpec?.background.kind === "video" ? livePreviewSpec.background : null;
-                  const sourceDur = videoBg?.durationSec != null ? Number(videoBg.durationSec) : null;
-                  const trimStart = videoBg ? Number(videoBg.trimStartSec ?? 0) : 0;
-                  const trimEnd =
-                    videoBg && sourceDur != null
-                      ? videoBg.trimEndSec != null
-                        ? Number(videoBg.trimEndSec)
-                        : sourceDur
-                      : 0;
-                  const effDur = videoBg && sourceDur != null ? (effectiveBackgroundDuration(videoBg) ?? sourceDur) : null;
-                  const timelineOver = effDur != null && livePreviewSpec != null ? livePreviewSpec.totalSec > effDur + 0.25 : false;
+                  const savedDur = segmentDurationSec(previewVideoSpec, segId);
+                  const videoBg = livePreviewSpec.background.kind === "video" ? livePreviewSpec.background : null;
+                  const effDur =
+                    videoBg?.durationSec != null
+                      ? (effectiveBackgroundDuration(videoBg) ?? Number(videoBg.durationSec))
+                      : null;
+                  const timelineOver = effDur != null ? timelineSec > effDur + 0.25 : false;
+                  const timingDisabled = !session.background_url;
+
                   return (
-                    <div className="space-y-2 border-t border-app-divider/30 pt-4">
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">
-                            Selected beat
-                          </p>
-                          <p className="mt-0.5 text-[9px] text-app-fg-subtle">
-                            Tap the timeline under the preview, then set duration here
-                          </p>
+                    <div className="space-y-4 border-t border-app-divider/30 pt-4">
+                      {/* Reel Health & Summary Dashboard */}
+                      <div className="grid grid-cols-2 gap-2 rounded-xl border border-app-divider/40 bg-app-chip-bg/10 p-2.5">
+                        <div className="space-y-0.5">
+                          <p className="text-[9px] font-bold uppercase tracking-wide text-app-fg-subtle">Reel Length</p>
+                          <p className="text-sm font-black tabular-nums text-app-fg">{timelineSec.toFixed(1)}s</p>
                         </div>
-                        <span
-                          className="rounded-sm bg-app-chip-bg/40 px-1.5 py-px text-[9px] font-bold tabular-nums text-app-fg-muted"
-                          title="Total video length"
-                        >
-                          {(livePreviewSpec?.totalSec ?? previewVideoSpec.totalSec).toFixed(1)}s
-                        </span>
+                        <div className="space-y-0.5">
+                          <p className="text-[9px] font-bold uppercase tracking-wide text-app-fg-subtle">Text Beats</p>
+                          <p className="text-sm font-black text-app-fg">{selectedLayerRows.length} Cards</p>
+                        </div>
+                        <div className="col-span-2 border-t border-app-divider/20 pt-1.5 mt-1.5 space-y-0.5">
+                          <p className="text-[9px] font-bold uppercase tracking-wide text-app-fg-subtle">Background Source</p>
+                          {videoBg ? (
+                            <p className="text-[10px] font-semibold text-app-fg-muted truncate">
+                              Video clip ({effDur?.toFixed(1) || "12"}s usable segment)
+                            </p>
+                          ) : (
+                            <p className="text-[10px] font-semibold text-app-fg-muted">Static Image</p>
+                          )}
+                        </div>
                       </div>
 
-                      {videoBg && sourceDur != null && effDur != null ? (
-                        <>
-                          <ClipWindowControl
-                            sourceDurationSec={sourceDur}
-                            trimStartSec={trimStart}
-                            trimEndSec={trimEnd}
-                            timelineSec={livePreviewSpec?.totalSec ?? previewVideoSpec.totalSec}
-                            disabled={!session.background_url}
-                            onChange={onChangeBrollTrim}
-                            onCommit={onCommitBrollTrim}
-                          />
-                          <div className="flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              disabled={!session.background_url}
-                              onClick={() => void onFitBlocksToBroll()}
-                              className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-amber-100 hover:bg-amber-500/20 disabled:opacity-30"
-                            >
-                              Fit all beats to clip
-                            </button>
-                            <button
-                              type="button"
-                              disabled={!session.background_url}
-                              onClick={() => void onCommitTiming(segId, autoDur)}
-                              className="rounded-lg border border-app-divider px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-app-fg-muted hover:border-amber-500/40 hover:text-app-fg disabled:opacity-30"
-                            >
-                              Auto-time selected beat
-                            </button>
-                          </div>
-                          {timelineOver ? (
-                            <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-[10px] leading-relaxed text-amber-100">
-                              Beats are {((livePreviewSpec?.totalSec ?? previewVideoSpec.totalSec) - effDur).toFixed(1)}s longer than the active clip window. Use Fit all beats to clip or shorten selected beats from the preview timeline.
-                            </p>
-                          ) : null}
-                        </>
-                      ) : null}
-
-                      <div className="rounded-md border border-app-divider/50 bg-app-chip-bg/20 px-2 py-1.5">
-                        <div className="flex items-baseline justify-between gap-2">
-                          <span className="text-[10px] font-bold text-amber-200">{label}</span>
+                      {timelineOver ? (
+                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2">
+                          <p className="text-[10px] leading-relaxed text-amber-100">
+                            Text beats are {(timelineSec - effDur!).toFixed(1)}s longer than the clip window.
+                          </p>
                           <button
                             type="button"
-                            disabled={!session.background_url || Math.abs(autoDur - savedDur) < 0.05}
-                            onClick={() => void onCommitTiming(segId, autoDur)}
-                            className="rounded-sm border border-app-divider/60 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-app-fg-muted hover:border-amber-500/40 hover:text-app-fg disabled:opacity-30"
-                            title={`Auto-fit from word count (~${autoDur.toFixed(1)}s)`}
+                            disabled={timingDisabled}
+                            onClick={() => void onFitBlocksToBroll()}
+                            className="shrink-0 rounded-lg border border-amber-500/50 bg-amber-500/20 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-50 hover:bg-amber-500/30 disabled:opacity-30"
                           >
-                            Auto {autoDur.toFixed(1)}s
+                            Fix timing
                           </button>
                         </div>
-                        <p className="mt-0.5 truncate text-[10px] italic text-app-fg-subtle">{excerpt}</p>
-                      </div>
-                      {selectedLayer ? (
-                        <div className="space-y-2 rounded-md border border-app-divider/50 bg-app-chip-bg/15 p-2">
-                          <div className="flex items-center justify-between gap-2">
-                            <p className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">
-                              Beat text
-                              <HelpHint label="Beat text">
-                                Read-only here. Edit beat text in Step 1 (On-screen text) so it stays in sync with the script and caption.
-                              </HelpHint>
+                      ) : null}
+
+                      {/* Card Inspector (Properties of selected element) */}
+                      <div className="rounded-xl border border-app-divider/50 bg-app-chip-bg/20 p-3 space-y-2.5">
+                        <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-app-divider/20 pb-2">
+                          <div className="min-w-0">
+                            <p className="text-[9px] font-bold uppercase tracking-wide text-app-fg-subtle">
+                              Selected text card
                             </p>
+                            <p className="mt-0.5 text-xs font-black text-amber-300">{label}</p>
+                          </div>
+                          <span className="rounded bg-app-chip-bg/50 px-2 py-0.5 text-xs font-bold tabular-nums text-app-fg">
+                            {layerDur}s
+                          </span>
+                        </div>
+                        <p className="text-[11px] italic leading-relaxed text-app-fg-muted bg-black/15 p-2 rounded-lg truncate" title={excerpt}>
+                          "{excerpt}"
+                        </p>
+                        
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                          <div className="space-y-0.5">
+                            <p className="text-[8px] font-bold uppercase tracking-wider text-app-fg-subtle">Reading Speed recommendation</p>
+                            <p className="text-[10px] font-semibold text-app-fg-muted">{autoDur.toFixed(1)}s</p>
+                          </div>
+                          
+                          <div className="flex items-center gap-2">
+                            <SaveStatusPill inFlight={specInFlight} />
                             <button
                               type="button"
-                              disabled={!session.background_url || textDraft.length >= 6}
-                              onClick={() => void onAddTextLayer()}
-                              className="inline-flex items-center gap-1 rounded-sm border border-app-divider/60 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-app-fg-muted hover:border-amber-500/40 hover:text-app-fg disabled:opacity-30"
-                              title="Add a new beat after the selected one (edit its text in Step 1)"
+                              disabled={timingDisabled || Math.abs(autoDur - savedDur) < 0.05}
+                              onClick={() => void onCommitTiming(segId, autoDur)}
+                              className="rounded border border-app-divider/80 bg-app-chip-bg/30 px-2 py-1 text-[10px] font-bold text-app-fg-muted hover:border-amber-500/50 hover:text-amber-200 transition disabled:opacity-30"
+                              title={`Auto-fit from word count (~${autoDur.toFixed(1)}s)`}
                             >
-                              <Plus className="h-3 w-3" /> Add beat
+                              Auto duration
                             </button>
-                          </div>
-                          {/* Read-only preview of the beat text. The previous
-                              editable textarea created a dual-source-of-truth
-                              with Step 1 — same data, two surfaces, contradictory
-                              permissions for the hook. Removed in May 2026. */}
-                          <p
-                            className="glass-inset w-full rounded-lg px-2 py-1.5 text-[11px] text-app-fg-muted"
-                            title={layerTextDraft || "(empty)"}
-                          >
-                            {layerTextDraft || (
-                              <span className="text-app-fg-subtle">
-                                (empty — set the text in Step 1)
-                              </span>
-                            )}
-                            {layerCtaDraft ? (
-                              <span className="ml-2 rounded-sm bg-amber-500/15 px-1 py-px text-[8px] font-bold uppercase tracking-wide text-amber-300">
-                                CTA
-                              </span>
-                            ) : null}
-                          </p>
-                          <p className="text-[10px] text-app-fg-subtle">
-                            Runs from{" "}
-                            <span className="font-semibold tabular-nums text-app-fg">
-                              {selectedLayer.startSec.toFixed(1)}s
-                            </span>{" "}
-                            to{" "}
-                            <span className="font-semibold tabular-nums text-app-fg">
-                              {selectedLayer.endSec.toFixed(1)}s
-                            </span>
-                            . Exact start/end fields live in Advanced.
-                          </p>
-                          <div className="flex flex-wrap items-center justify-end gap-2">
-                            <SaveStatusPill inFlight={specInFlight} />
-                            {selectedLayer.id !== "hook" ? (
+                            {selectedLayer && selectedLayer.id !== "hook" ? (
                               <button
                                 type="button"
-                                disabled={!session.background_url}
+                                disabled={timingDisabled}
                                 onClick={() => void onDeleteSelectedLayer()}
-                                className="rounded-sm border border-red-500/30 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-red-300 hover:bg-red-500/10 disabled:opacity-30"
+                                className="rounded border border-red-500/30 bg-red-500/5 px-2.5 py-1 text-[10px] font-bold text-red-300 hover:bg-red-500/10 hover:text-red-200 transition disabled:opacity-30"
                               >
-                                Delete beat
+                                Delete
                               </button>
                             ) : null}
                           </div>
                         </div>
-                      ) : null}
-                      <LayoutSlider
-                        label="Duration"
-                        leftHint={`${range.min.toFixed(1)}s`}
-                        rightHint={`${durationMax.toFixed(1)}s`}
-                        min={range.min}
-                        max={durationMax}
-                        step={0.1}
-                        value={sliderVal}
-                        disabled={!session.background_url}
-                        formatValue={(v) => `${v.toFixed(1)}s`}
-                        onChange={(v) => setTimingDraft({ id: segId, durationSec: Math.min(durationMax, v) })}
-                        onCommit={(v) => void onCommitTiming(segId, Math.min(durationMax, v))}
-                      />
-                      {usableBackgroundSec != null ? (
-                        <p className="text-[9px] leading-relaxed text-app-fg-subtle">
-                          Max is capped to the usable clip length ({usableBackgroundSec.toFixed(1)}s) so a beat can’t run longer than the source.
-                        </p>
-                      ) : (
-                        <p className="text-[9px] leading-relaxed text-app-fg-subtle">
-                          Static backgrounds use a 20s editorial cap to avoid accidental long dead-air segments.
-                        </p>
-                      )}
-                      <details className="rounded-lg border border-app-divider/50 bg-app-chip-bg/10 px-2 py-1.5">
-                        <summary className="cursor-pointer select-none text-[9px] font-bold uppercase tracking-wide text-app-fg-muted marker:text-app-fg-subtle">
-                          Advanced timing
-                        </summary>
-                        <div className="mt-2 space-y-2 border-t border-app-divider/30 pt-2">
-                          {videoBg && sourceDur != null ? (
-                            <div className="space-y-2 rounded-md border border-app-divider/40 bg-app-chip-bg/15 p-2">
-                              <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">
-                                Exact clip range
-                              </p>
-                              <div className="grid grid-cols-2 gap-2">
-                                <label className="text-[9px] font-bold uppercase tracking-wide text-app-fg-muted">
-                                  In
-                                  <input
-                                    key={`clip-in-${trimStart}`}
-                                    type="number"
-                                    min={0}
-                                    max={Math.max(0, sourceDur - 0.5)}
-                                    step={0.1}
-                                    defaultValue={trimStart.toFixed(1)}
-                                    disabled={!session.background_url}
-                                    onBlur={(e) => {
-                                      const v = Number(e.currentTarget.value);
-                                      if (Number.isFinite(v)) void onCommitBrollTrim(v, trimEnd);
-                                    }}
-                                    className="glass-inset mt-1 w-full rounded-md px-2 py-1 text-[11px] font-semibold tabular-nums text-app-fg disabled:opacity-50"
-                                  />
-                                </label>
-                                <label className="text-[9px] font-bold uppercase tracking-wide text-app-fg-muted">
-                                  Out
-                                  <input
-                                    key={`clip-out-${trimEnd}`}
-                                    type="number"
-                                    min={trimStart + 0.5}
-                                    max={sourceDur}
-                                    step={0.1}
-                                    defaultValue={trimEnd.toFixed(1)}
-                                    disabled={!session.background_url}
-                                    onBlur={(e) => {
-                                      const v = Number(e.currentTarget.value);
-                                      if (Number.isFinite(v)) void onCommitBrollTrim(trimStart, v);
-                                    }}
-                                    className="glass-inset mt-1 w-full rounded-md px-2 py-1 text-[11px] font-semibold tabular-nums text-app-fg disabled:opacity-50"
-                                  />
-                                </label>
-                              </div>
-                              <button
-                                type="button"
-                                disabled={!session.background_url || (trimStart <= 0 && videoBg.trimEndSec == null)}
-                                onClick={() => {
-                                  setBrollTrimDraft(null);
-                                  void onCommitVideoSpecOps([
-                                    { op: "replace", path: "/background/trimStartSec", value: 0 },
-                                    { op: "replace", path: "/background/trimEndSec", value: null },
-                                  ]);
-                                }}
-                                className="text-[9px] font-semibold text-app-fg-muted underline decoration-app-divider underline-offset-2 hover:text-app-fg disabled:opacity-30"
-                              >
-                                Use full clip
-                              </button>
-                            </div>
-                          ) : null}
-                          {selectedLayer ? (
-                            <div className="space-y-2 rounded-md border border-app-divider/40 bg-app-chip-bg/15 p-2">
-                              <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">
-                                Exact selected beat
-                              </p>
-                              <div className="grid grid-cols-2 gap-2">
-                                <label className="text-[9px] font-bold uppercase tracking-wide text-app-fg-muted">
-                                  Appears
-                                  <input
-                                    key={`${selectedLayer.id}-start-${selectedLayer.startSec}`}
-                                    type="number"
-                                    min={0}
-                                    step={0.1}
-                                    defaultValue={selectedLayer.startSec.toFixed(1)}
-                                    disabled={!session.background_url || selectedLayer.id === "hook"}
-                                    onBlur={(e) => {
-                                      const v = Number(e.currentTarget.value);
-                                      if (Number.isFinite(v)) void onCommitLayerTiming(selectedLayer.id, { startSec: v });
-                                    }}
-                                    className="glass-inset mt-1 w-full rounded-md px-2 py-1 text-[11px] font-semibold tabular-nums text-app-fg disabled:opacity-50"
-                                  />
-                                </label>
-                                <label className="text-[9px] font-bold uppercase tracking-wide text-app-fg-muted">
-                                  Disappears
-                                  <input
-                                    key={`${selectedLayer.id}-end-${selectedLayer.endSec}`}
-                                    type="number"
-                                    min={0.5}
-                                    step={0.1}
-                                    defaultValue={selectedLayer.endSec.toFixed(1)}
-                                    disabled={!session.background_url}
-                                    onBlur={(e) => {
-                                      const v = Number(e.currentTarget.value);
-                                      if (Number.isFinite(v)) void onCommitLayerTiming(selectedLayer.id, { endSec: v });
-                                    }}
-                                    className="glass-inset mt-1 w-full rounded-md px-2 py-1 text-[11px] font-semibold tabular-nums text-app-fg disabled:opacity-50"
-                                  />
-                                </label>
-                              </div>
-                            </div>
-                          ) : null}
-                      {(() => {
-                        const chrono = [...previewVideoSpec.blocks].sort(
-                          (a, b) => a.startSec - b.startSec,
-                        );
-                        if (chrono.length === 0) return null;
-                        const livePauses = livePreviewSpec?.pausesSec ?? [];
-                        const rows = chrono.map((_, i) => ({
-                          idx: i,
-                          before: i === 0 ? "Hook" : `B${i}`,
-                          after: `B${i + 1}`,
-                          sec:
-                            pauseDraft?.idx === i
-                              ? pauseDraft.sec
-                              : Math.min(5, Math.max(0, livePauses[i] ?? 0)),
-                        }));
-                        const row = rows.find((r) => r.idx === selectedGapIdx) ?? rows[0]!;
-                        const anyNonZero = rows.some((r) => r.sec > 0.05);
-                        return (
-                          <div className="rounded-md border border-app-divider/40 bg-app-chip-bg/15 p-2">
-                            <div className="mb-1.5 flex items-center justify-between gap-2">
-                              <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">
-                                Gap
-                              </p>
-                              <button
-                                type="button"
-                                disabled={!session.background_url || !anyNonZero}
-                                onClick={() => {
-                                  setPauseDraft(null);
-                                  void Promise.all(rows.map((r) => onCommitPauseBeforeBeat(r.idx, 0)));
-                                }}
-                                className="text-[9px] font-semibold uppercase tracking-wide text-app-fg-subtle hover:text-app-fg disabled:opacity-30"
-                                title="Reset every gap to 0s"
-                              >
-                                Clear all
-                              </button>
-                            </div>
-                            <div className="mb-2 flex flex-wrap items-end gap-2">
-                              <div className="min-w-0 flex-1">
-                                <AppSelect
-                                  ariaLabel="Which gap between beats to edit"
-                                  value={String(selectedGapIdx)}
-                                  disabled={!session.background_url}
-                                  onChange={(v) => {
-                                    setPauseDraft(null);
-                                    setSelectedGapIdx(Number(v));
-                                  }}
-                                  options={rows.map((r) => ({
-                                    value: String(r.idx),
-                                    label: `${r.before} → ${r.after} · ${r.sec.toFixed(1)}s`,
-                                  }))}
-                                  className="w-full"
-                                  triggerClassName="min-w-0 w-full py-1.5 text-[10px] font-semibold"
-                                  dense
-                                  menuAbove
-                                />
-                              </div>
-                              <button
-                                type="button"
-                                disabled={!session.background_url || row.sec <= 0.05}
-                                onClick={() => {
-                                  setPauseDraft(null);
-                                  void onCommitPauseBeforeBeat(row.idx, 0);
-                                }}
-                                className="shrink-0 rounded-sm border border-app-divider/60 px-1.5 py-1 text-[9px] font-semibold uppercase tracking-wide text-app-fg-muted hover:border-amber-500/40 hover:text-app-fg disabled:opacity-30"
-                                title="This gap → 0s"
-                              >
-                                0
-                              </button>
-                            </div>
-                            <LayoutSlider
-                              label={`Silence (${row.before} → ${row.after})`}
-                              title="Quiet time on the timeline. Amber dashed band on the strip."
-                              leftHint="None"
-                              rightHint="5s"
-                              min={0}
-                              max={5}
-                              step={0.1}
-                              value={row.sec}
-                              disabled={!session.background_url}
-                              formatValue={(v) => `${v.toFixed(1)}s`}
-                              onChange={(v) => setPauseDraft({ idx: row.idx, sec: v })}
-                              onCommit={(v) => void onCommitPauseBeforeBeat(row.idx, v)}
-                            />
-                          </div>
-                        );
-                      })()}
-                        </div>
-                      </details>
+                      </div>
                     </div>
                   );
                 })()}

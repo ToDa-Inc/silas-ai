@@ -1,7 +1,7 @@
 import type { Operation } from "fast-json-patch";
 import { effectiveBackgroundDuration, type VideoSpec } from "./video-spec";
 
-const MIN_LAYER_SEC = 0.05;
+const MIN_LAYER_SEC = 0.4;
 const DEFAULT_LAYER_GAP_SEC = 0.1;
 
 export type VideoLayerRow = {

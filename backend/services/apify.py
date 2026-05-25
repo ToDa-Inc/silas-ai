@@ -145,8 +145,10 @@ SEARCH_ACTOR = "DrF9mzPPEuVizVF4l"
 # Official Store actor (username~name). Legacy ID xMc5Ga1oCONPmWJIa can 403 for some tokens.
 # Override with env APIFY_REEL_ACTOR if needed (see Settings).
 REEL_ACTOR = "apify~instagram-reel-scraper"
-# Sasky — topic/hashtag-style reel search → usernames (docs/VIRAL-DISCOVERY-SPEC.md)
-KEYWORD_REEL_ACTOR = "4QFjEpnGE1PNEnQF2"
+# Sasky — keyword search → post/reel URLs. Was split into a dedicated reel actor
+# (4QFjEpnGE1PNEnQF2) but that actor was deprecated 2026-05. Both now point to the
+# same sasky posts actor which shares the identical input schema (keywords, limit, date).
+KEYWORD_REEL_ACTOR = "YXnfZzUD44eWaNEXM"
 # Sasky — keyword search → post/reel URLs (same input schema as reel keyword actor)
 KEYWORD_POSTS_ACTOR = "YXnfZzUD44eWaNEXM"
 INSTAGRAM_SCRAPER = "apify~instagram-scraper"

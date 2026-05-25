@@ -1,9 +1,12 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from "react";
+import { ClipTrimStrip, LayerTimingStrip } from "@/components/editors/shared/TimingStrips";
+import { createRafCoalescer } from "@/lib/raf-coalesce";
+import { playerSpecRenderKey } from "@/lib/player-spec";
 import { DEFAULT_LAYOUT, type VideoSpec } from "@/lib/video-spec";
-import { buildLayerRows, type VideoLayerRow } from "@/lib/video-spec-layer-timeline";
+import { buildLayerRows } from "@/lib/video-spec-layer-timeline";
 import Renderer from "@/remotion-spec/Renderer";
 
 const Player = dynamic(
@@ -19,11 +22,6 @@ const FPS = 30;
 const COMP_W = 1080;
 const COMP_H = 1920;
 const ENTRANCE_DURATION_SEC = 0.45;
-
-/** Hit width for each layer edge handle. */
-const LAYER_HANDLE_PX = 12;
-/** Ignore sub-pixel jitter as non-drags. */
-const DRAG_THRESHOLD_PX = 3;
 
 function clamp01(x: number): number {
   return Math.max(0, Math.min(1, x));
@@ -41,31 +39,36 @@ type PlayerHandle = {
 /** Space would insert text, activate a control, or otherwise must not toggle the preview. */
 function isSpaceReservedByUi(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
-  return Boolean(
-    target.closest(
-      [
-        "input",
-        "textarea",
-        "select",
-        "button",
-        "a[href]",
-        "summary",
-        '[contenteditable="true"]',
-        '[role="button"]',
-        '[role="link"]',
-        '[role="menuitem"]',
-        '[role="checkbox"]',
-        '[role="radio"]',
-        '[role="combobox"]',
-        '[role="slider"]',
-        '[role="textbox"]',
-      ].join(", "),
-    ),
-  );
+  
+  const tagName = target.tagName.toLowerCase();
+  if (tagName === "textarea" || target.getAttribute("contenteditable") === "true") {
+    return true;
+  }
+  if (tagName === "input") {
+    const type = target.getAttribute("type") || "text";
+    const nonTextInputTypes = ["button", "submit", "checkbox", "radio", "image", "reset", "range"];
+    return !nonTextInputTypes.includes(type);
+  }
+  if (target.closest('[role="textbox"]')) {
+    return true;
+  }
+  
+  return false;
 }
 
+export type VideoClipTrimProps = {
+  sourceDurationSec: number;
+  trimStartSec: number;
+  trimEndSec: number;
+  onChange: (start: number, end: number) => void;
+  onCommit: (start: number, end: number) => void;
+};
+
 type Props = {
+  /** Full spec for timeline strips (may change often during drags). */
   spec: VideoSpec | null;
+  /** Stable spec for Remotion Player — same object identity when render key unchanged. */
+  playerSpec?: VideoSpec | null;
   safeZone?: boolean;
   layoutGuides?: boolean;
   width?: number;
@@ -73,10 +76,13 @@ type Props = {
   onSelectSegment?: (id: string) => void;
   onResizeLayerTimingDraft?: (id: string, timing: { startSec?: number; endSec?: number }) => void;
   onResizeLayerTimingCommit?: (id: string, timing: { startSec?: number; endSec?: number }) => void;
+  clipTrim?: VideoClipTrimProps | null;
+  timingDisabled?: boolean;
 };
 
 function VideoSpecPreviewBase({
   spec,
+  playerSpec: playerSpecProp = null,
   safeZone = false,
   layoutGuides = false,
   width = 280,
@@ -84,19 +90,20 @@ function VideoSpecPreviewBase({
   onSelectSegment,
   onResizeLayerTimingDraft,
   onResizeLayerTimingCommit,
+  clipTrim = null,
+  timingDisabled = false,
 }: Props) {
   const playerRef = useRef<PlayerHandle | null>(null);
-  const stripRef = useRef<HTMLDivElement | null>(null);
+  const renderSpec = playerSpecProp ?? spec;
 
-  /** Same seconds basis as ruler + layer bars (not ceil(frameCount)-1). */
   const timelineSec = useMemo(
     () => Math.max(0.001, spec?.totalSec ?? 8),
     [spec?.totalSec],
   );
 
   const durationInFrames = useMemo(
-    () => Math.max(1, Math.ceil(timelineSec * FPS)),
-    [timelineSec],
+    () => Math.max(1, Math.ceil(Math.max(0.001, renderSpec?.totalSec ?? timelineSec) * FPS)),
+    [renderSpec?.totalSec, timelineSec],
   );
 
   const initialFrame = useMemo(
@@ -104,19 +111,21 @@ function VideoSpecPreviewBase({
     [durationInFrames],
   );
 
-  /** Playhead on the edit strip — native Player controls handle playback UI. */
   const [currentFrame, setCurrentFrame] = useState(initialFrame);
+  const scrubbingRef = useRef(false);
 
   useEffect(() => {
     let stopped = false;
     let raf = 0;
     const readFrame = () => {
+      if (scrubbingRef.current) return;
       const f = playerRef.current?.getCurrentFrame?.();
       if (typeof f === "number" && Number.isFinite(f)) {
         setCurrentFrame(Math.max(0, Math.min(durationInFrames - 1, f)));
       }
     };
     const onFrame = (...args: unknown[]) => {
+      if (scrubbingRef.current) return;
       const ev = args[0] as { frame?: number; detail?: { frame?: number } } | undefined;
       const f = typeof ev?.frame === "number" ? ev.frame : ev?.detail?.frame;
       if (typeof f === "number") setCurrentFrame(Math.max(0, Math.min(durationInFrames - 1, f)));
@@ -137,9 +146,8 @@ function VideoSpecPreviewBase({
     };
   }, [durationInFrames, initialFrame]);
 
-  /** Space scrolls the document when focus is not inside the Player; Remotion does not receive the key. */
   useEffect(() => {
-    if (!spec) return;
+    if (!renderSpec) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.code !== "Space") return;
       if (e.repeat) return;
@@ -149,93 +157,50 @@ function VideoSpecPreviewBase({
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [spec]);
+  }, [renderSpec]);
 
   const layers = useMemo(() => (spec ? buildLayerRows(spec) : []), [spec]);
 
-  const rulerMarks = useMemo(() => {
-    if (!spec) return [];
-    const total = timelineSec;
-    const count = Math.min(7, Math.max(3, Math.floor(total) + 1));
-    return Array.from({ length: count }, (_, i) => {
-      const sec = count === 1 ? 0 : (total / (count - 1)) * i;
-      return { sec, leftPct: (sec / total) * 100 };
-    });
-  }, [spec, timelineSec]);
-
-  /** Layer edge drag: left handle edits startSec, right handle edits endSec. */
-  const dragStateRef = useRef<{
-    layer: VideoLayerRow;
-    edge: "start" | "end";
-    startClientX: number;
-    pixelsPerSec: number;
-    moved: boolean;
-    lastTiming: { startSec?: number; endSec?: number };
-  } | null>(null);
-
-  const dragJustEndedRef = useRef(false);
-
-  const onLayerEdgeResizeStart = useCallback(
-    (e: ReactPointerEvent<HTMLButtonElement>, layer: VideoLayerRow, edge: "start" | "end") => {
-      const stripEl = stripRef.current;
-      if (!stripEl || !spec) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const stripRect = stripEl.getBoundingClientRect();
-      const pxPerSec = stripRect.width / timelineSec;
-      dragStateRef.current = {
-        layer,
-        edge,
-        startClientX: e.clientX,
-        pixelsPerSec: pxPerSec,
-        moved: false,
-        lastTiming: edge === "start" ? { startSec: layer.startSec } : { endSec: layer.endSec },
-      };
-      const onMove = (mv: PointerEvent) => {
-        const st = dragStateRef.current;
-        if (!st) return;
-        const deltaPx = mv.clientX - st.startClientX;
-        if (!st.moved && Math.abs(deltaPx) >= DRAG_THRESHOLD_PX) st.moved = true;
-        if (!st.moved) return;
-        const deltaSec = deltaPx / st.pixelsPerSec;
-        const next =
-          st.edge === "start"
-            ? { startSec: Math.round((st.layer.startSec + deltaSec) * 10) / 10 }
-            : { endSec: Math.round((st.layer.endSec + deltaSec) * 10) / 10 };
-        if (next.startSec !== st.lastTiming.startSec || next.endSec !== st.lastTiming.endSec) {
-          st.lastTiming = next;
-          onResizeLayerTimingDraft?.(st.layer.id, next);
-        }
-      };
-      const onUp = () => {
-        document.removeEventListener("pointermove", onMove);
-        document.removeEventListener("pointerup", onUp);
-        document.removeEventListener("pointercancel", onUp);
-        const st = dragStateRef.current;
-        dragStateRef.current = null;
-        if (!st) return;
-        if (st.moved) {
-          dragJustEndedRef.current = true;
-          window.setTimeout(() => {
-            dragJustEndedRef.current = false;
-          }, 50);
-          onResizeLayerTimingCommit?.(st.layer.id, st.lastTiming);
-        }
-      };
-      document.addEventListener("pointermove", onMove);
-      document.addEventListener("pointerup", onUp);
-      document.addEventListener("pointercancel", onUp);
-    },
-    [onResizeLayerTimingDraft, onResizeLayerTimingCommit, spec, timelineSec],
-  );
-
-  /** Align with ruler/layer `leftPct` (sec / totalSec), not frame-index / (frames-1). */
   const playheadPct = useMemo(() => {
+    const total = Math.max(0.001, timelineSec);
     const sec = currentFrame / FPS;
-    return clamp01(sec / timelineSec) * 100;
+    return clamp01(sec / total) * 100;
   }, [currentFrame, timelineSec]);
 
-  if (!spec) {
+  const seekToSec = useCallback(
+    (sec: number) => {
+      const f = Math.max(0, Math.min(durationInFrames - 1, Math.round(sec * FPS)));
+      setCurrentFrame(f);
+      playerRef.current?.seekTo?.(f);
+    },
+    [durationInFrames],
+  );
+
+  const seekToSecRaf = useMemo(() => createRafCoalescer(seekToSec), [seekToSec]);
+
+  const onScrubPlayhead = useCallback(
+    (sec: number) => {
+      scrubbingRef.current = true;
+      seekToSecRaf(sec);
+    },
+    [seekToSecRaf],
+  );
+
+  useEffect(() => {
+    const endScrub = () => {
+      scrubbingRef.current = false;
+    };
+    window.addEventListener("pointerup", endScrub);
+    window.addEventListener("pointercancel", endScrub);
+    return () => {
+      window.removeEventListener("pointerup", endScrub);
+      window.removeEventListener("pointercancel", endScrub);
+    };
+  }, []);
+
+  const showTimeline = layers.length > 0 || clipTrim != null;
+
+  if (!spec || !renderSpec) {
     return (
       <div
         style={{ width, aspectRatio: "9 / 16" }}
@@ -247,20 +212,13 @@ function VideoSpecPreviewBase({
     );
   }
 
-  const seekToSec = (sec: number) => {
-    const f = Math.max(0, Math.min(durationInFrames - 1, Math.round(sec * FPS)));
-    playerRef.current?.seekTo?.(f);
-  };
-
   return (
     <div className="flex flex-col gap-2" style={{ width }}>
       <div className="relative overflow-hidden rounded-xl border border-app-divider/60 bg-black shadow-lg shadow-black/40 ring-1 ring-white/5 transition-opacity duration-150">
-        {/* Native controls: scrub, volume, fullscreen — user expectation. Memoized
-         *  inputProps + optimistic UI elsewhere keep buffering flashes rare. */}
         <Player
           ref={playerRef as React.Ref<unknown> as React.Ref<never>}
           component={RendererLoose}
-          inputProps={spec as unknown as Record<string, unknown>}
+          inputProps={renderSpec as unknown as Record<string, unknown>}
           durationInFrames={durationInFrames}
           compositionWidth={COMP_W}
           compositionHeight={COMP_H}
@@ -286,7 +244,7 @@ function VideoSpecPreviewBase({
           </svg>
         ) : null}
         {layoutGuides ? (() => {
-          const layout = spec.layout ?? DEFAULT_LAYOUT;
+          const layout = renderSpec.layout ?? DEFAULT_LAYOUT;
           const padX = layout.sidePadding * COMP_W;
           const anchorY = COMP_H / 2 + layout.verticalOffset * COMP_H;
           return (
@@ -303,105 +261,39 @@ function VideoSpecPreviewBase({
           );
         })() : null}
       </div>
-      {layers.length > 0 ? (
-        <div className="space-y-1.5">
-          <div
-            ref={stripRef}
-            className="relative overflow-hidden rounded-lg border border-app-divider/60 bg-app-chip-bg/25 p-2"
-            title={`${timelineSec.toFixed(1)}s total · click a layer · drag left/right handles to set when text appears and disappears`}
-          >
-            <div className="relative mb-1 h-4 border-b border-app-divider/40">
-              {rulerMarks.map((m) => (
-                <span
-                  key={m.sec.toFixed(2)}
-                  className="absolute top-0 h-full border-l border-white/15 pl-0.5 text-[8px] font-semibold tabular-nums text-app-fg-subtle"
-                  style={{ left: `${m.leftPct}%` }}
-                >
-                  {m.sec.toFixed(m.sec >= 10 ? 0 : 1)}s
-                </span>
-              ))}
-            </div>
-            <div className="space-y-1">
-              {layers.map((s) => {
-                const isSelected = selectedSegmentId === s.id;
-                const canDragStart = s.kind !== "hook";
-                return (
-                  <div key={s.id} className="relative h-8 rounded-md bg-black/15">
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        if (dragJustEndedRef.current) {
-                          e.preventDefault();
-                          return;
-                        }
-                        onSelectSegment?.(s.id);
-                        seekToSec(s.startSec + ENTRANCE_DURATION_SEC);
-                      }}
-                      style={{ left: `${s.leftPct}%`, width: `max(24px, calc(${s.widthPct}% - 2px))` }}
-                      className={`absolute top-1 bottom-1 overflow-hidden whitespace-nowrap rounded-md px-1.5 text-left leading-none transition ${
-                        isSelected ? "z-10 ring-2 ring-amber-300 ring-offset-1 ring-offset-app-chip-bg/40" : "z-0"
-                      } ${
-                        s.isCTA
-                          ? "bg-amber-500/55 text-amber-50 hover:bg-amber-500/70"
-                          : s.kind === "hook"
-                            ? "bg-violet-500/45 text-violet-50 hover:bg-violet-500/60"
-                            : "bg-fuchsia-500/45 text-fuchsia-50 hover:bg-fuchsia-500/60"
-                      }`}
-                      title={`${s.label} · ${s.startSec.toFixed(1)}s → ${s.endSec.toFixed(1)}s`}
-                    >
-                      <div className="pointer-events-none flex h-full items-center gap-1.5">
-                        <span className="shrink-0 text-[8.5px] font-black uppercase tracking-wide">{s.label}</span>
-                        <span className="min-w-0 truncate text-[9px] font-semibold opacity-90">{s.text}</span>
-                        <span className="ml-auto shrink-0 text-[8.5px] font-bold tabular-nums opacity-80">
-                          {s.startSec.toFixed(1)}→{s.endSec.toFixed(1)}s
-                        </span>
-                      </div>
-                    </button>
-                    {canDragStart && onResizeLayerTimingDraft && onResizeLayerTimingCommit ? (
-                      <button
-                        type="button"
-                        aria-label={`Set start for ${s.label}`}
-                        title="Drag to change when this text appears"
-                        onPointerDown={(e) => onLayerEdgeResizeStart(e, s, "start")}
-                        className="group absolute top-1 bottom-1 z-20 cursor-ew-resize rounded-l-md bg-transparent p-0 outline-none hover:bg-white/10 active:bg-white/20"
-                        style={{ left: `calc(${s.leftPct}% - ${LAYER_HANDLE_PX / 2}px)`, width: LAYER_HANDLE_PX }}
-                      >
-                        <span className="mx-auto block h-full w-0.5 rounded-full bg-white/40 group-hover:bg-white/90" />
-                      </button>
-                    ) : null}
-                    {onResizeLayerTimingDraft && onResizeLayerTimingCommit ? (
-                      <button
-                        type="button"
-                        aria-label={`Set end for ${s.label}`}
-                        title="Drag to change when this text disappears"
-                        onPointerDown={(e) => onLayerEdgeResizeStart(e, s, "end")}
-                        className="group absolute top-1 bottom-1 z-20 cursor-ew-resize rounded-r-md bg-transparent p-0 outline-none hover:bg-white/10 active:bg-white/20"
-                        style={{
-                          left: `calc(${s.leftPct + s.widthPct}% - ${LAYER_HANDLE_PX / 2}px)`,
-                          width: LAYER_HANDLE_PX,
-                        }}
-                      >
-                        <span className="mx-auto block h-full w-0.5 rounded-full bg-white/40 group-hover:bg-white/90" />
-                      </button>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-            <span
-              aria-hidden
-              className="pointer-events-none absolute top-2 bottom-2 z-30 w-0.5 bg-white/90 shadow-[0_0_4px_rgba(255,255,255,0.6)]"
-              style={{ left: `${playheadPct}%`, transform: "translateX(-1px)" }}
+
+      {showTimeline ? (
+        <div className="space-y-2">
+          {clipTrim ? (
+            <ClipTrimStrip
+              sourceDurationSec={clipTrim.sourceDurationSec}
+              trimStartSec={clipTrim.trimStartSec}
+              trimEndSec={clipTrim.trimEndSec}
+              timelineSec={timelineSec}
+              disabled={timingDisabled}
+              onChange={clipTrim.onChange}
+              onCommit={clipTrim.onCommit}
+              compact
             />
-          </div>
-          <div className="flex justify-end">
-            <span
-              className="rounded-sm bg-app-chip-bg/50 px-1.5 py-px text-[9px] font-bold tabular-nums text-app-fg-muted"
-              title={`${layers.length} layer${layers.length === 1 ? "" : "s"} · drag each bar edge to trim timing`}
-            >
-              {timelineSec.toFixed(1)}s
-            </span>
-          </div>
+          ) : null}
+          {layers.length > 0 ? (
+            <LayerTimingStrip
+              layers={layers}
+              timelineSec={timelineSec}
+              selectedSegmentId={selectedSegmentId}
+              disabled={timingDisabled}
+              compact
+              playheadPct={playheadPct}
+              onScrubPlayhead={onScrubPlayhead}
+              onSelectSegment={(id) => {
+                onSelectSegment?.(id);
+                const layer = layers.find((l) => l.id === id);
+                if (layer) seekToSec(layer.startSec + ENTRANCE_DURATION_SEC);
+              }}
+              onResizeLayerTimingDraft={onResizeLayerTimingDraft}
+              onResizeLayerTimingCommit={onResizeLayerTimingCommit}
+            />
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -411,19 +303,36 @@ function VideoSpecPreviewBase({
 function specsEqual(prev: VideoSpec | null, next: VideoSpec | null): boolean {
   if (prev === next) return true;
   if (!prev || !next) return false;
-  return JSON.stringify(prev) === JSON.stringify(next);
+  return playerSpecRenderKey(prev) === playerSpecRenderKey(next);
+}
+
+function clipTrimEqual(a: VideoClipTrimProps | null | undefined, b: VideoClipTrimProps | null | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b) return a === b;
+  return (
+    a.sourceDurationSec === b.sourceDurationSec &&
+    a.trimStartSec === b.trimStartSec &&
+    a.trimEndSec === b.trimEndSec &&
+    a.onChange === b.onChange &&
+    a.onCommit === b.onCommit
+  );
 }
 
 export const VideoSpecPreview = memo(VideoSpecPreviewBase, (prev, next) => {
+  const prevPlayer = prev.playerSpec ?? prev.spec;
+  const nextPlayer = next.playerSpec ?? next.spec;
   return (
     prev.width === next.width &&
     prev.safeZone === next.safeZone &&
     prev.layoutGuides === next.layoutGuides &&
     prev.selectedSegmentId === next.selectedSegmentId &&
+    prev.timingDisabled === next.timingDisabled &&
     prev.onSelectSegment === next.onSelectSegment &&
     prev.onResizeLayerTimingDraft === next.onResizeLayerTimingDraft &&
     prev.onResizeLayerTimingCommit === next.onResizeLayerTimingCommit &&
-    specsEqual(prev.spec, next.spec)
+    clipTrimEqual(prev.clipTrim, next.clipTrim) &&
+    specsEqual(prev.spec, next.spec) &&
+    specsEqual(prevPlayer, nextPlayer)
   );
 });
 VideoSpecPreview.displayName = "VideoSpecPreview";
