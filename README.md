@@ -112,6 +112,8 @@ That runs **API + dashboard** only. **Queued scrapes and other `background_jobs`
 npm run dev:full
 ```
 
+(Tip: do **not** type a space after the colon — `npm run dev: full` fails. Shortcut without colons: `npm run start-dev`.)
+
 That runs **API + dashboard + worker** in one terminal. Or add a second terminal: `npm run dev:worker` (equivalent to `cd backend && python3 worker.py`) while `dev:all` is already running.
 
 The repo has **multiple** entry points, so the root `package.json` uses **named** scripts only:
@@ -121,7 +123,7 @@ The repo has **multiple** entry points, so the root `package.json` uses **named*
 | **FastAPI** (`backend/`, port **8787**) | `npm run dev:api` (after `npm install` at root for `concurrently`, plus backend venv + deps) |
 | **Dashboard + API together** | `npm run dev:all` |
 | **Background worker** (scrapes / `background_jobs`) | `npm run dev:worker` — not included in `dev:all` |
-| **API + dashboard + worker** | `npm run dev:full` |
+| **API + dashboard + worker** | `npm run dev:full` or `npm run start-dev` |
 | **Next.js dashboard only** | `npm run dashboard` (or `cd content-machine && npm run dev` — same thing; **no API**) |
 | **B-roll Remotion studio** | `npm run broll:studio` (after `npm install --prefix video-production/broll-caption-editor`) |
 | **Pipeline CLI** | `npm run scrape`, `npm run analyze`, etc. |

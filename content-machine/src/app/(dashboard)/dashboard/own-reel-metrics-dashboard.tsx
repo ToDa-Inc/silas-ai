@@ -347,7 +347,7 @@ function ThumbnailTooltip({
   return (
     <div style={containerStyle}>
       <div style={labelStyle}>{rowT ? formatTooltipWhen(rowT) : ""}</div>
-      <div className="flex flex-col gap-1.5">
+      <div className="flex flex-col gap-1.5 overflow-y-auto max-h-[250px] pr-1.5 [scrollbar-width:thin]">
         {payload
           .filter((p) => p.value != null && p.value !== "")
           .map((p) => {
@@ -654,6 +654,7 @@ export function OwnReelMetricsDashboard({ clientSlug, orgSlug, focusReelId }: Pr
     boxShadow: isDark
       ? "0 12px 40px rgba(0,0,0,0.55)"
       : "0 4px 20px rgba(0,0,0,0.08)",
+    maxWidth: 300,
   };
 
   const tooltipLabelStyle: CSSProperties = {
@@ -1039,6 +1040,8 @@ export function OwnReelMetricsDashboard({ clientSlug, orgSlug, focusReelId }: Pr
                     {...yAxisScaleProps}
                   />
                   <Tooltip
+                    wrapperStyle={{ pointerEvents: "auto" }}
+                    position={{ x: 72, y: 10 }}
                     content={
                       <ThumbnailTooltip
                         series={series}
@@ -1114,6 +1117,8 @@ export function OwnReelMetricsDashboard({ clientSlug, orgSlug, focusReelId }: Pr
                     {...yAxisScaleProps}
                   />
                   <Tooltip
+                    wrapperStyle={{ pointerEvents: "auto" }}
+                    position={{ x: 72, y: 10 }}
                     content={
                       <ThumbnailTooltip
                         series={series}

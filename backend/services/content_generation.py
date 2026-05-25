@@ -340,7 +340,9 @@ def _format_carousel_template_block(selected_carousel_template: Optional[Dict[st
         lines.append(f"description: {desc}")
     lines.append(
         "Template reference slides define visual style (backgrounds) and optional slide roles. "
-        "The user picks how many slides to generate (3–10); backgrounds repeat in order if needed."
+        "The user selects the target slide count (3-10). The generated carousel will always map its first slide "
+        "to the Cover slide, its last slide to the CTA slide, and intermediate slides will cycle through the "
+        "body/intermediate styles of the template to maintain structural coherence."
     )
     for slide in slides[:10]:
         idx = int(slide.get("idx") or 0)
@@ -2431,7 +2433,9 @@ def run_carousel_slide_texts(
         "TEMPLATE GUIDANCE: Use the CAROUSEL_TEMPLATE as a base style and story pattern. "
         "If the requested output has more slides than the template, extend the pattern "
         "naturally. If it has fewer slides, condense it. Always obey the requested output "
-        "slide count below.\n\n"
+        "slide count below. Keep in mind that Cover and CTA layouts do not repeat: the first "
+        "slide will be formatted as the Cover, the last slide as the CTA, and only the body "
+        "slides will repeat/cycle.\n\n"
         if template_block
         else ""
     )

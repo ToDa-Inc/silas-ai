@@ -960,6 +960,67 @@ def _template_slides_from_row(row: Dict[str, Any]) -> List[Dict[str, Any]]:
     return slides[:10]
 
 
+def _resolve_template_slide_for_idx(
+    idx: int, total: int, template_slides: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    if not template_slides:
+        return {}
+
+    # 1. First slide (Cover)
+    if idx == 0:
+        for s in template_slides:
+            if str(s.get("role") or "").strip().lower() == "cover":
+                return s
+        return template_slides[0]
+
+    # 2. Last slide (CTA)
+    if total > 1 and idx == total - 1:
+        for s in reversed(template_slides):
+            if str(s.get("role") or "").strip().lower() == "cta":
+                return s
+        return template_slides[-1]
+
+    # 3. Intermediate slides (0 < idx < total - 1)
+    # Find cover and cta to exclude
+    cover_to_exclude = None
+    for s in template_slides:
+        if str(s.get("role") or "").strip().lower() == "cover":
+            cover_to_exclude = s
+            break
+    if cover_to_exclude is None:
+        cover_to_exclude = template_slides[0]
+
+    cta_to_exclude = None
+    if len(template_slides) > 1:
+        for s in reversed(template_slides):
+            if str(s.get("role") or "").strip().lower() == "cta":
+                cta_to_exclude = s
+                break
+        if cta_to_exclude is None:
+            cta_to_exclude = template_slides[-1]
+
+    # Candidates are slides that are not cover or cta
+    candidates = []
+    for s in template_slides:
+        if s is not cover_to_exclude and s is not cta_to_exclude:
+            candidates.append(s)
+
+    # If candidates is empty (e.g. template of size 2 where one is cover and one is cta),
+    # then fallback to excluding only cover
+    if not candidates:
+        for s in template_slides:
+            if s is not cover_to_exclude:
+                candidates.append(s)
+
+    # If still empty (e.g. template of size 1), fallback to all slides
+    if not candidates:
+        candidates = template_slides
+
+    # Cycle through body candidates
+    body_idx = (idx - 1) % len(candidates)
+    return candidates[body_idx]
+
+
 def carousel_slide_count_effective(row: Dict[str, Any], requested_count: int) -> int:
     """Prefer ``generation_sessions.carousel_slide_count``; else clamp ``requested_count`` to 3–10."""
     raw = row.get("carousel_slide_count")
@@ -1052,12 +1113,11 @@ def build_carousel_slides_payload(
         else ""
     )
     slides: List[Dict[str, Any]] = []
-    n_tpl = len(template_slides)
     for i, text in enumerate(texts):
-        if uses_template_images and n_tpl > 0:
-            template_slide = template_slides[i % n_tpl]
+        if uses_template_images:
+            template_slide = _resolve_template_slide_for_idx(i, len(texts), template_slides)
         else:
-            template_slide = template_slides[i] if i < len(template_slides) else {}
+            template_slide = {}
         slide_role = _carousel_slide_role_for_idx(i, len(texts), template_slide)
         text_box_dict = _merge_carousel_text_box_dict(slide_role, None, None)
         background_style_dict = _merge_carousel_background_style_dict(None, None)
@@ -1196,14 +1256,17 @@ def regenerate_carousel_slide(
 
     style = (body.prompt or "").strip()
     template_slides = _template_slides_from_row(row)
-    template_slide = template_slides[target_idx] if target_idx < len(template_slides) else {}
+    if template_slides:
+        template_slide = _resolve_template_slide_for_idx(target_idx, len(slides), template_slides)
+    else:
+        template_slide = {}
     slide_role = _carousel_slide_role_for_idx(target_idx, len(slides), template_slide)
     visual_prompt = _visual_prompt_for_template_slide(template_slide)
     sel_tpl = row.get("selected_carousel_template")
     template_id_str = (
         str(sel_tpl.get("id") or "").strip() if isinstance(sel_tpl, dict) else ""
     )
-    uses_saved_template_slide = bool(template_slides) and target_idx < len(template_slides)
+    uses_saved_template_slide = bool(template_slides)
 
     prev_target = next(s for s in slides if _slide_idx(s) == target_idx)
     layout_for_render: Any = None
