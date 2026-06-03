@@ -240,6 +240,73 @@ _SECTION_END_PATS = [
     r"^-{3,}\s*$",
 ]
 
+_CTA_MARKER_RE = re.compile(r"\s*\[CTA\]\s*$", re.IGNORECASE)
+
+
+def _parse_on_screen_text_bullets(block: Optional[str]) -> List[Dict[str, Any]]:
+    """Parse ON-SCREEN TEXT bullets into [{text, is_cta}, ...]."""
+    if not block:
+        return []
+    cleaned = _clean_block(block)
+    if not cleaned or cleaned.strip().lower() == "none":
+        return []
+    items: List[Dict[str, Any]] = []
+    for line in cleaned.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        m = re.match(r"^[-*]\s+(.+)$", line)
+        if not m:
+            continue
+        body = m.group(1).strip()
+        is_cta = bool(_CTA_MARKER_RE.search(body))
+        text = _CTA_MARKER_RE.sub("", body).strip()
+        if text:
+            items.append({"text": text, "is_cta": is_cta})
+    return items
+
+
+def _parse_spoken_transcript_block(block: Optional[str]) -> str:
+    if not block:
+        return ""
+    cleaned = _clean_block(block)
+    # Strip stray markdown emphasis the model sometimes wraps around the section.
+    stripped = re.sub(r"[*_`#>\s]+", " ", cleaned).strip().lower()
+    if (
+        not stripped
+        or stripped.startswith("none")
+        or stripped in {"n/a", "silent", "music only", "no speech", "no voiceover"}
+    ):
+        return ""
+    return cleaned
+
+
+def _extract_verbatim_capture(text: str) -> Optional[Dict[str, Any]]:
+    """Extract verbatim on-screen text + spoken transcript from Silas analysis output."""
+    raw = text or ""
+    if not re.search(r"VERBATIM\s+SOURCE\s+CAPTURE", raw, re.IGNORECASE):
+        return None
+
+    on_screen_block = _extract_section(
+        raw,
+        r"ON-SCREEN\s+TEXT\s*(?:\([^)]*\))?\s*:",
+        [r"^\s*SPOKEN\s+TRANSCRIPT\s*"],
+    )
+    spoken_block = _extract_section(
+        raw,
+        r"SPOKEN\s+TRANSCRIPT\s*(?:\([^)]*\))?\s*:",
+        [r"^={3,}\s*$", r"\Z"],
+    )
+    on_screen = _parse_on_screen_text_bullets(on_screen_block)
+    spoken = _parse_spoken_transcript_block(spoken_block)
+    if not on_screen and not spoken:
+        return None
+    return {
+        "on_screen_text": on_screen,
+        "spoken_transcript": spoken,
+        "source_has_on_screen_cta": any(bool(x.get("is_cta")) for x in on_screen),
+    }
+
 
 # ---------------------------------------------------------------------------
 # Main parser
@@ -337,7 +404,11 @@ def parse_silas_analysis_text(text: str) -> Dict[str, Any]:
     suggested_raw = _extract_section(
         raw,
         r"SUGGESTED\s+ADAPTATION\s*:",
-        [r"^={3,}\s*$", r"^-{3,}\s*$"],
+        [
+            r"^\s*VERBATIM\s+SOURCE\s+CAPTURE\s*",
+            r"^={3,}\s*$",
+            r"^-{3,}\s*$",
+        ],
     )
 
     # Emotional trigger: extract from Relatability evidence (section 3 in v2, section 2 in v1)
@@ -370,6 +441,8 @@ def parse_silas_analysis_text(text: str) -> Dict[str, Any]:
         full_analysis_json=partial_fa,
     )
 
+    verbatim_capture = _extract_verbatim_capture(raw)
+
     return {
         # DB column values (backward compatible)
         "total_score": score_data["total_score"],
@@ -389,4 +462,5 @@ def parse_silas_analysis_text(text: str) -> Dict[str, Any]:
         "suggested_adaptations": suggested_adaptations,
         "structured_summary": structured_summary,
         "normalized_format": normalized_format,
+        "verbatim_capture": verbatim_capture,
     }

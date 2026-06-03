@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-PROMPT_VERSION = "silas_v2_4_caption_8k_2026_04_27"
+PROMPT_VERSION = "silas_v2_6_verbatim_segmentation_2026_06_03"
 
 # ---------------------------------------------------------------------------
 # Weight map: criterion → multiplier applied to the 1-10 raw score.
@@ -255,6 +255,25 @@ WHY THIS WORKS (or doesn't):
 
 SUGGESTED ADAPTATION:
 [One specific, concrete idea for how the client (described in niche context above) could adapt this concept for their audience. Include a sample hook line if possible.]
+
+═══════════════════════════════════════════
+VERBATIM SOURCE CAPTURE (for exact recreation — do NOT translate or paraphrase here)
+═══════════════════════════════════════════
+CRITICAL: Only fill ON-SCREEN TEXT from what you actually SEE in the attached video frames.
+If this analysis is text-only (no video attached), write ON-SCREEN TEXT: none and SPOKEN TRANSCRIPT: none.
+Do NOT copy, infer, or summarize on-screen text from the post caption — caption text is NOT on-screen text.
+
+ON-SCREEN TEXT (verbatim, in display order — one block per line, exactly as shown, original language):
+- [block 1]
+- [block 2]
+SEGMENTATION RULES (critical):
+- Each visually separate text group is its OWN bullet. Treat a blank-line gap, a clear vertical space between groups, a separate text box, or text that appears at a different moment as a SEPARATE block — even if the groups read as one continuous sentence. Do NOT merge two on-screen groups into one bullet.
+- Lines that only wrap because the box is narrow (the same group shown as several stacked lines) stay together as ONE bullet.
+- Example: a hook with "...become \"difficult\"..." sitting above a gap and then "and it ruined how I see..." below is TWO bullets, not one.
+(If a block is a call-to-action, append "  [CTA]" at the end of that line. If there is NO on-screen text, write "none".)
+
+SPOKEN TRANSCRIPT (verbatim voiceover/dialogue, original language; write "none" if silent):
+[transcript]
 """
 
 

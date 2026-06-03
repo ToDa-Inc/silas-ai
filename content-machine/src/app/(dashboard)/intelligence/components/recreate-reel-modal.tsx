@@ -272,6 +272,7 @@ export function RecreateReelModal({
   disabledHint,
 }: Props) {
   const [extraInstruction, setExtraInstruction] = useState("");
+  const [recreateMode, setRecreateMode] = useState<"one_to_one" | "adapt">("one_to_one");
   const [formatChoice, setFormatChoice] = useState<RecreateFormatChoice | null>(null);
   const [busy, setBusy] = useState(false);
   const [phase, setPhase] = useState<string | null>(null);
@@ -299,6 +300,7 @@ export function RecreateReelModal({
   useEffect(() => {
     if (!open) {
       setExtraInstruction("");
+      setRecreateMode("one_to_one");
       setFormatChoice(null);
       setMsg(null);
       setPhase(null);
@@ -467,7 +469,11 @@ export function RecreateReelModal({
       const res = await generationStart(clientSlug, orgSlug, {
         source_type: "url_adapt",
         url,
-        extra_instruction: extraInstruction.trim() || undefined,
+        recreate_mode: recreateMode,
+        // In strict 1:1 mode the on-screen text is copied verbatim and only translated,
+        // so any extra focus would defeat the purpose — only send it when adapting.
+        extra_instruction:
+          recreateMode === "adapt" ? extraInstruction.trim() || undefined : undefined,
         format_key: formatChoice,
         selected_carousel_template: selectedCarouselTemplate ?? undefined,
         selected_cover_template: selectedCoverTemplate ?? undefined,
@@ -518,8 +524,9 @@ export function RecreateReelModal({
               Adapt this reel for your client
             </h2>
             <p className="mt-1 text-[11px] leading-relaxed text-app-fg-subtle">
-              Same idea as the original reel, rebuilt for your client. Choose the type of post you want, then pick an
-              angle in Generate. Carousels get their slides after you choose an angle.
+              {recreateMode === "one_to_one"
+                ? "Faithful 1:1 recreation: the same on-screen text as the original, translated for your client. Choose the post type, then jump straight to the studio."
+                : "Same idea as the original reel, rebuilt for your client. Choose the type of post you want, then pick an angle in Generate."}
             </p>
           </div>
           <button
@@ -586,6 +593,49 @@ export function RecreateReelModal({
 
         {!sessionId ? (
           <>
+            <div className="mt-4">
+              <p className="mb-1.5 block text-xs font-semibold text-app-fg">How should we recreate it?</p>
+              <div className="grid grid-cols-2 gap-1.5" role="radiogroup" aria-label="Recreation mode">
+                {([
+                  {
+                    key: "one_to_one" as const,
+                    label: "1:1 copy",
+                    hint: "Copy the original on-screen text exactly, just translated. Skips angle selection.",
+                  },
+                  {
+                    key: "adapt" as const,
+                    label: "Adapt",
+                    hint: "Rework the idea into new angles for your client. You'll pick an angle next.",
+                  },
+                ]).map(({ key, label, hint }) => {
+                  const active = recreateMode === key;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      title={hint}
+                      disabled={busy}
+                      onClick={() => setRecreateMode(key)}
+                      className={`rounded-lg border px-2.5 py-2 text-left text-[11px] font-semibold transition-colors disabled:opacity-50 ${
+                        active
+                          ? "border-amber-500/55 bg-amber-500/10 text-app-fg"
+                          : "border-zinc-200/90 bg-white text-zinc-700 hover:border-zinc-300 dark:border-white/10 dark:bg-zinc-900/60 dark:text-app-fg-muted dark:hover:border-white/20"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-1.5 text-[10px] leading-relaxed text-app-fg-subtle">
+                {recreateMode === "one_to_one"
+                  ? "Faithful recreation: the same on-screen text as the original, translated to your client's language. No angle questions."
+                  : "Reframe the source idea into angle options tailored to your client."}
+              </p>
+            </div>
+
             <div className="mt-4">
               <p className="mb-1.5 block text-xs font-semibold text-app-fg">
                 Recreate as <span className="font-normal text-app-fg-muted">(required)</span>
@@ -687,18 +737,22 @@ export function RecreateReelModal({
               </div>
             )}
 
-            <label htmlFor="recreate-extra" className="mt-4 block text-xs font-semibold text-app-fg">
-              Extra focus <span className="font-normal text-app-fg-muted">(optional)</span>
-            </label>
-            <textarea
-              id="recreate-extra"
-              rows={3}
-              value={extraInstruction}
-              onChange={(e) => setExtraInstruction(e.target.value)}
-              disabled={busy}
-              placeholder="e.g. Stronger German workplace framing, or keep the list format but change the topic…"
-              className="mt-1.5 w-full resize-y rounded-xl border border-zinc-200/90 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 disabled:opacity-60 dark:border-white/10 dark:bg-zinc-900/80 dark:text-app-fg dark:placeholder:text-app-fg-faint"
-            />
+            {recreateMode === "adapt" ? (
+              <>
+                <label htmlFor="recreate-extra" className="mt-4 block text-xs font-semibold text-app-fg">
+                  Extra focus <span className="font-normal text-app-fg-muted">(optional)</span>
+                </label>
+                <textarea
+                  id="recreate-extra"
+                  rows={3}
+                  value={extraInstruction}
+                  onChange={(e) => setExtraInstruction(e.target.value)}
+                  disabled={busy}
+                  placeholder="e.g. Stronger German workplace framing, or keep the list format but change the topic…"
+                  className="mt-1.5 w-full resize-y rounded-xl border border-zinc-200/90 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 disabled:opacity-60 dark:border-white/10 dark:bg-zinc-900/80 dark:text-app-fg dark:placeholder:text-app-fg-faint"
+                />
+              </>
+            ) : null}
 
             <button
               type="button"
@@ -711,14 +765,20 @@ export function RecreateReelModal({
                 ? "Creating session…"
                 : !formatChoice
                 ? "Pick a target format above"
+                : recreateMode === "one_to_one"
+                ? "Create 1:1 copy"
                 : "Start adaptation"}
             </button>
           </>
         ) : (
           <div className="mt-4 space-y-3 rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-4">
-            <p className="text-sm font-semibold text-app-fg">Angles ready</p>
+            <p className="text-sm font-semibold text-app-fg">
+              {recreateMode === "one_to_one" ? "1:1 copy ready" : "Angles ready"}
+            </p>
             <p className="text-xs text-app-fg-muted">
-              Open Generate to pick an angle, then get script and captions for your client.
+              {recreateMode === "one_to_one"
+                ? "Open the studio to review the translated on-screen text and render."
+                : "Open Generate to pick an angle, then get script and captions for your client."}
             </p>
             {postUrl ? (
               <p className="truncate font-mono text-[10px] text-app-fg-muted" title={postUrl}>

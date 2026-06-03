@@ -168,6 +168,14 @@ class GenerationStartBody(BaseModel):
         le=10,
         description="Carousel length (3–10). Stored on the session; template refs cycle if count > references.",
     )
+    recreate_mode: Optional[Literal["one_to_one", "adapt"]] = Field(
+        None,
+        description=(
+            "url_adapt only. 'one_to_one' skips angle generation/selection and packages a strict 1:1 "
+            "blueprint recreation (verbatim on-screen text translated to the client's language) directly, "
+            "landing the session on content_ready. 'adapt' (or null) keeps the angle-selection flow."
+        ),
+    )
 
 
 class GenerationRecommendFormatBody(BaseModel):
@@ -184,6 +192,11 @@ class AutoVideoIdeaOut(BaseModel):
 
 class GenerationChooseAngleBody(BaseModel):
     angle_index: int = Field(..., ge=0, le=9)
+    extra_instruction: Optional[str] = Field(
+        None,
+        max_length=2000,
+        description="Optional customization when user picks Anpassen instead of strict 1:1 recreation.",
+    )
 
 
 class GenerationRegenerateBody(BaseModel):
