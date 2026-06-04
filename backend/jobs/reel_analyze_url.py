@@ -123,6 +123,23 @@ def instagram_reel_url_is_valid(url: str) -> bool:
 # ── persistence ──────────────────────────────────────────────────────────────
 
 
+def _background_job_exists(supabase, job_id: Optional[str]) -> bool:
+    """True when job_id is a real background_jobs row (FK target for scrape_job_id)."""
+    if not job_id:
+        return False
+    try:
+        r = (
+            supabase.table("background_jobs")
+            .select("id")
+            .eq("id", job_id)
+            .limit(1)
+            .execute()
+        )
+        return bool(r.data)
+    except Exception:
+        return False
+
+
 def _upsert_scraped_reel_for_url_paste(
     supabase,
     *,
@@ -146,7 +163,7 @@ def _upsert_scraped_reel_for_url_paste(
 
     existing_res = (
         supabase.table("scraped_reels")
-        .select("id, competitor_id")
+        .select("id, competitor_id, scrape_job_id")
         .eq("client_id", client_id)
         .eq("post_url", url_key)
         .limit(1)
@@ -156,11 +173,20 @@ def _upsert_scraped_reel_for_url_paste(
     reel_pk = str(existing["id"]) if existing else generate_reel_id()
     preserve_competitor = existing.get("competitor_id") if existing else None
 
+    # scrape_job_id is a FK to background_jobs. Synchronous analyses (e.g. url_adapt
+    # invoked from the router) pass a fabricated job id that has no background_jobs row,
+    # which would violate the FK and abort the whole upsert (losing the analysis). Only
+    # set it when it's a real job; otherwise preserve the existing value (or null).
+    if _background_job_exists(supabase, job_id):
+        effective_job_id = job_id
+    else:
+        effective_job_id = existing.get("scrape_job_id") if existing else None
+
     row = {
         "id": reel_pk,
         "client_id": client_id,
         "competitor_id": preserve_competitor,
-        "scrape_job_id": job_id,
+        "scrape_job_id": effective_job_id,
         "post_url": url_key,
         "thumbnail_url": str(thumb) if thumb else None,
         "account_username": owner,
@@ -243,6 +269,32 @@ def _upsert_reel_analysis(
 
     if isinstance(media_provenance, dict) and media_provenance:
         full_analysis_json["media_provenance"] = media_provenance
+
+    # Verbatim on-screen text is only trustworthy when the model watched the video.
+    if video_analyzed:
+        vc = parsed.get("verbatim_capture")
+        if isinstance(vc, dict) and (vc.get("on_screen_text") or vc.get("spoken_transcript")):
+            full_analysis_json["verbatim_capture"] = vc
+        else:
+            try:
+                prior_res = (
+                    supabase.table("reel_analyses")
+                    .select("full_analysis_json")
+                    .eq("client_id", client_id)
+                    .eq("post_url", url_key)
+                    .limit(1)
+                    .execute()
+                )
+                if prior_res.data:
+                    prior_fa = prior_res.data[0].get("full_analysis_json")
+                    if isinstance(prior_fa, dict):
+                        prior_vc = prior_fa.get("verbatim_capture")
+                        if isinstance(prior_vc, dict) and (
+                            prior_vc.get("on_screen_text") or prior_vc.get("spoken_transcript")
+                        ):
+                            full_analysis_json["verbatim_capture"] = prior_vc
+            except Exception:
+                pass
 
     nf = parsed.get("normalized_format")
     if isinstance(nf, str) and nf.strip():
@@ -557,12 +609,13 @@ def _execute_reel_analyze_url_core(
             except Exception:
                 pass
 
-        try:
-            supabase.table("scraped_reels").update({"scrape_job_id": analysis_job_id}).eq(
-                "id", reel_row_id
-            ).execute()
-        except Exception:
-            pass
+        if _background_job_exists(supabase, analysis_job_id):
+            try:
+                supabase.table("scraped_reels").update(
+                    {"scrape_job_id": analysis_job_id}
+                ).eq("id", reel_row_id).execute()
+            except Exception:
+                pass
         analysis_id: Optional[str] = None
         persist_error: Optional[str] = None
         try:

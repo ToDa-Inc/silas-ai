@@ -257,7 +257,7 @@ def analyze_reel_silas(
     payload: dict[str, Any] = {
         "model": model,
         "messages": messages,
-        "max_tokens": 2000,
+        "max_tokens": 4000,
         "temperature": 0.2,
     }
     r = _post_chat_completions_with_optional_fallback(
@@ -391,7 +391,7 @@ def analyze_post_silas(
     payload: dict[str, Any] = {
         "model": model,
         "messages": messages,
-        "max_tokens": 2000,
+        "max_tokens": 4000,
         "temperature": 0.2,
     }
     r = _post_chat_completions_with_optional_fallback(

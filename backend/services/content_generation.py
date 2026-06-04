@@ -26,16 +26,66 @@ _SYSTEM_JSON = (
 )
 
 
-def _talking_head_script_package_bullet(*, german_client: bool) -> str:
+_BLUEPRINT_ANGLE_NOTE = (
+    "\nBLUEPRINT_ANGLE — STRICT 1-TO-1 GERMAN TRANSLATION:\n"
+    "CHOSEN_ANGLE_JSON is the direct-translation slot. This is NOT a rewrite or adaptation — "
+    "it is a faithful German translation of the source reel.\n"
+    "RULES (non-negotiable):\n"
+    "- Translate every beat (hook, build-up, reframe/insight, CTA) as close to the original as possible.\n"
+    "- Keep the same hook opening sentence, same core story, same concrete examples, same numbers, "
+    "same structure, same beat length.\n"
+    "- Only change: the language (German), and any proper nouns/place names that are literally "
+    "untranslatable — replace those with the nearest German-language equivalent.\n"
+    "- Do NOT improve the hook, do NOT add client-specific ICP framing, do NOT change the topic arc.\n"
+    "- The result must be recognizable as the same reel by someone who watched the original.\n"
+    "- text_blocks OVERRIDE: for text_overlay / b_roll_reel formats, generate EXACTLY as many "
+    "on-screen blocks as the source had (see the text_blocks rules section). "
+    "SELECTED_CTA must NOT add an extra block that was not in the source — only swap the destination "
+    "of an existing CTA block if one was present in the source.\n"
+)
+
+
+def _is_blueprint_angle(chosen_angle: Dict[str, Any]) -> bool:
+    return str(chosen_angle.get("angle_role") or "").strip().lower() == "blueprint"
+
+
+def _blueprint_angle_note(
+    chosen_angle: Dict[str, Any],
+    *,
+    adapt_single_reference_reel: bool,
+    customization_feedback: Optional[str] = None,
+) -> str:
+    if not adapt_single_reference_reel or not _is_blueprint_angle(chosen_angle):
+        return ""
+    if customization_feedback and customization_feedback.strip():
+        return (
+            "\nBLUEPRINT_ANGLE — CUSTOMIZED ADAPTATION:\n"
+            "The user chose to adapt this recreation (see FEEDBACK_FROM_HUMAN). "
+            "Keep the source reel's format, hook mechanism, and narrative spine, but apply their "
+            "requested changes. Output natural German; align with CLIENT_CONTEXT / ICP where the "
+            "feedback asks for it.\n"
+        )
+    return _BLUEPRINT_ANGLE_NOTE
+
+
+def _talking_head_script_package_bullet(*, german_client: bool, blueprint_angle: bool = False) -> str:
     """Silas talking-head script brief. Human-readable spec: docs/TALKING_HEAD_PROMPT.md — keep in sync."""
     de_extra = ""
     if german_client:
-        de_extra = (
-            "For OUTPUT LANGUAGE German: do not translate word-for-word from any English in the inputs — "
-            "ADAPT so it feels originally written in German. Natural spoken German (DE/AT/CH professional); "
-            "calm authority; slightly provocative where it fits; no fluff, no AI tone. "
-            "Replace cultural references, English-thought phrasing, and anything that sounds translated.\n"
-        )
+        if blueprint_angle:
+            de_extra = (
+                "For OUTPUT LANGUAGE German (BLUEPRINT / 1-to-1 recreation): translate the source reel faithfully — "
+                "same hook, same story beats, same examples and numbers. Natural spoken German (DE/AT/CH professional); "
+                "do not rewrite for ICP or client voice beyond unavoidable localization. "
+                "CTAs must use native German phrasing (e.g. „Schreib mir KEYWORD in die Kommentare\", Link in der Bio).\n"
+            )
+        else:
+            de_extra = (
+                "For OUTPUT LANGUAGE German: do not translate word-for-word from any English in the inputs — "
+                "ADAPT so it feels originally written in German. Natural spoken German (DE/AT/CH professional); "
+                "calm authority; slightly provocative where it fits; no fluff, no AI tone. "
+                "Replace cultural references, English-thought phrasing, and anything that sounds translated.\n"
+            )
     return (
         "\nTALKING_HEAD_SCRIPT (non-negotiable — Silas talking-head brief; see docs/TALKING_HEAD_PROMPT.md):\n"
         "- This reel is face-to-camera the whole time. The script is what the creator speaks aloud.\n"
@@ -68,7 +118,17 @@ def _lang_instruction(language: str) -> str:
     if low in ("de", "german", "deutsch"):
         return (
             "OUTPUT LANGUAGE: German (Deutsch). All user-facing copy must be natural, idiomatic German "
-            "for the creator's audience (DE/AT/CH professional tone)."
+            "for the creator's audience (DE/AT/CH professional tone).\n"
+            "GERMAN CTA RULES (non-negotiable):\n"
+            "- CTAs must use natural German call-to-action phrasing — never translated English patterns.\n"
+            "- Preferred German CTA patterns: \"Schreib mir [KEYWORD] in die Kommentare\", "
+            "\"Link in der Bio\", \"Schau dir das mal an\", \"Meld dich bei mir\", "
+            "\"Hol dir [Resource] — schreib [KEYWORD] in die Kommentare\".\n"
+            "- Never use literal translations of English CTAs like \"Kommentiere jetzt\" (wrong), "
+            "\"Klick den Link\" (wrong) — these sound unnatural in German.\n"
+            "- Comment-keyword CTAs: use German quotation marks like „KEYWORD“ (e.g. „GUIDE“ or „CHECKLISTE“).\n"
+            "- All CTA copy in scripts (## CTA section) and captions must pass a native-speaker test: "
+            "would a German Instagram creator write exactly this?"
         )
     return "OUTPUT LANGUAGE: English unless the client briefs explicitly require another language."
 
@@ -79,13 +139,18 @@ def _is_german_client(client_row: Dict[str, Any]) -> bool:
 
 
 _GERMANIZER_SCRIPT_SYSTEM = (
-    "You are a native German editor for social Reel scripts. Output only the rewritten text — "
-    "no preamble, no markdown fences, no explanations."
+    "You are a native German editor for social media Reel scripts. "
+    "You have deep knowledge of how German Instagram creators write and speak — including how "
+    "they phrase CTAs natively (e.g. „Schreib mir KEYWORD in die Kommentare\", "
+    "\"Link in der Bio\", \"Meld dich\"). "
+    "Output only the rewritten text — no preamble, no markdown fences, no explanations."
 )
 
 _GERMANIZER_CAPTION_TEXT_SYSTEM = (
-    "You are a native German editor for Instagram caption copy. Output only the rewritten caption — "
-    "no preamble, no markdown fences, no explanations."
+    "You are a native German editor for Instagram caption copy. "
+    "You have deep knowledge of how German Instagram creators write CTAs natively "
+    "(e.g. „Schreib mir KEYWORD in die Kommentare\", \"Link in der Bio\", \"Meld dich\"). "
+    "Output only the rewritten caption — no preamble, no markdown fences, no explanations."
 )
 
 _GERMANIZER_JSON_SYSTEM = (
@@ -117,7 +182,9 @@ def _apply_german_natural_polish(
                     "- Keep every ## markdown heading line exactly as-is; only rewrite the body under each section.\n"
                     "- No hyphen crutches or colon suspense openers; avoid stiff list structures.\n"
                     "- Use natural connectors (und, aber, doch, also, eben); keep punchy rhythm where the original had it.\n"
-                    "- Preserve meaning, structure, and teaching content.\n\n"
+                    "- Preserve meaning, structure, and teaching content.\n"
+                    "- ## CTA section: use native German Instagram CTA phrasing only "
+                    "(e.g. „Schreib mir KEYWORD in die Kommentare\", Link in der Bio) — never translated English patterns.\n\n"
                     "<german_text>\n"
                     + script[:95_000]
                     + "\n</german_text>"
@@ -143,7 +210,9 @@ def _apply_german_natural_polish(
                     "Rewrite this German Instagram caption so it sounds natural and native — not AI or translated.\n\n"
                     "Rules:\n"
                     "- Preserve line breaks where they help readability.\n"
-                    "- No hyphen crutches or colon suspense openers.\n\n"
+                    "- No hyphen crutches or colon suspense openers.\n"
+                    "- Final CTA: native German only (e.g. „Schreib mir KEYWORD in die Kommentare\", "
+                    "Link in der Bio) — never literal English-to-German CTA translations.\n\n"
                     "<caption>\n"
                     + cap[:20_000]
                     + "\n</caption>"
@@ -275,7 +344,10 @@ _CTA_TYPE_GUIDANCE = {
 }
 
 
-def _format_selected_cta_block(selected_cta: Optional[Dict[str, Any]]) -> str:
+def _format_selected_cta_block(
+    selected_cta: Optional[Dict[str, Any]],
+    language: str = "en",
+) -> str:
     """Render the user-picked CTA as a strict prompt block.
 
     The block tells the LLM to adapt the caption final CTA, the script ``## CTA``
@@ -314,6 +386,14 @@ def _format_selected_cta_block(selected_cta: Optional[Dict[str, Any]]) -> str:
         "For comment-keyword CTAs, preserve the exact keyword but render quotation "
         'marks in the output language: German uses „KEYWORD“; otherwise use "KEYWORD".'
     )
+    if (language or "").strip().lower() in ("de", "german", "deutsch"):
+        lines.append(
+            "GERMAN CTA PHRASING: Use native German patterns only. "
+            "Comment CTAs: „KEYWORD“ in die Kommentare schreiben. "
+            "Link CTAs: Link in der Bio / Link unten. "
+            "Booking: Trag dich ein / Meld dich. "
+            "Never use translated English CTA structures."
+        )
     return "\n".join(lines)
 
 
@@ -389,7 +469,10 @@ def _pack_client_row_for_llm(
             "\n=== NICHE_BENCHMARKS (from tracked competitors) ===\n"
             + json.dumps(nb, ensure_ascii=False, default=str)[:4000]
         )
-    cta_block = _format_selected_cta_block(selected_cta)
+    cta_block = _format_selected_cta_block(
+        selected_cta,
+        language=str(client_row.get("language") or "en"),
+    )
     if cta_block:
         parts.append(cta_block)
     return "\n".join(parts)
@@ -436,7 +519,106 @@ def build_source_reference_for_patterns(packed: Dict[str, Any]) -> Optional[Dict
     sugg = packed.get("suggested_adaptations")
     if isinstance(sugg, list) and sugg:
         ref["suggested_adaptations"] = sugg
+    vc = packed.get("verbatim_capture")
+    if isinstance(vc, dict) and (vc.get("on_screen_text") or vc.get("spoken_transcript")):
+        ref["verbatim_capture"] = vc
     return ref if ref else None
+
+
+def _verbatim_capture_from_patterns(
+    synthesized_patterns: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    if not isinstance(synthesized_patterns, dict):
+        return None
+    sr = synthesized_patterns.get("source_reference")
+    if not isinstance(sr, dict):
+        return None
+    vc = sr.get("verbatim_capture")
+    if isinstance(vc, dict) and (vc.get("on_screen_text") or vc.get("spoken_transcript")):
+        return vc
+    return None
+
+
+def _source_verbatim_json_block(verbatim_capture: Optional[Dict[str, Any]]) -> str:
+    if not verbatim_capture:
+        return ""
+    return (
+        "\nSOURCE_VERBATIM_JSON (exact source reel copy — translate only; do not invent):\n"
+        + json.dumps(verbatim_capture, ensure_ascii=False)[:24_000]
+        + "\n\n"
+    )
+
+
+_VERBATIM_ON_SCREEN_TEXT_MAX = 500  # matches VideoSpecBlock.text max in video_spec_defaults
+
+
+def _enforce_verbatim_text_blocks(
+    text_blocks: Optional[List[Dict[str, Any]]],
+    verbatim_capture: Optional[Dict[str, Any]],
+) -> Optional[List[Dict[str, Any]]]:
+    """Align LLM text_blocks to verbatim source count, isCTA flags, and full line length."""
+    if not verbatim_capture:
+        return text_blocks
+    source = verbatim_capture.get("on_screen_text")
+    if not isinstance(source, list) or not source:
+        return text_blocks
+    n = len(source)
+    tb = list(text_blocks or [])
+    if len(tb) > n:
+        tb = tb[:n]
+    out: List[Dict[str, Any]] = []
+    for i, src in enumerate(source):
+        if i >= len(tb):
+            break
+        if not isinstance(src, dict):
+            continue
+        text = str(tb[i].get("text") or "").strip()[:_VERBATIM_ON_SCREEN_TEXT_MAX]
+        if not text:
+            continue
+        out.append({"text": text, "isCTA": bool(src.get("is_cta"))})
+    return out if out else text_blocks
+
+
+def _verbatim_capture_beats_slice(verbatim_capture: Dict[str, Any]) -> Dict[str, Any]:
+    """verbatim_capture with on_screen_text = source lines 2..N (hook is line 1)."""
+    vc = dict(verbatim_capture)
+    src = vc.get("on_screen_text")
+    if not isinstance(src, list):
+        vc["on_screen_text"] = []
+        vc["source_has_on_screen_cta"] = False
+        return vc
+    beats = src[1:] if len(src) > 1 else []
+    vc["on_screen_text"] = beats
+    vc["source_has_on_screen_cta"] = any(bool(x.get("is_cta")) for x in beats)
+    return vc
+
+
+def _apply_verbatim_hook_blocks_split(
+    *,
+    raw_text_blocks: Any,
+    raw_hooks: Any,
+    verbatim_capture: Dict[str, Any],
+) -> tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
+    """Blueprint verbatim: line 1 -> hooks[0], lines 2..N -> text_blocks only.
+
+    Renderer shows hook overlay + block overlays; duplicating line 1 in both caused
+    3 on-screen lines for a 2-line source reel.
+    """
+    aligned = _enforce_verbatim_text_blocks(raw_text_blocks, verbatim_capture)
+    if not aligned:
+        return _normalize_hooks(raw_hooks) or [], None
+
+    hook_text = aligned[0]["text"]
+    beats = aligned[1:] if len(aligned) > 1 else None
+
+    hooks_out: List[Dict[str, Any]] = [{"text": hook_text}]
+    existing = _normalize_hooks(raw_hooks) or []
+    for h in existing:
+        t = str(h.get("text") or "").strip()
+        if t and t != hook_text and len(hooks_out) < 5:
+            hooks_out.append({"text": t})
+
+    return hooks_out, beats
 
 
 def merge_source_reference_into_patterns(
@@ -478,6 +660,9 @@ def compact_analysis_for_prompt(
     cap_src = _caption_text_from_reel_meta(reel_meta)
     if cap_src:
         out["source_caption"] = cap_src
+    vc = fa.get("verbatim_capture")
+    if isinstance(vc, dict) and (vc.get("on_screen_text") or vc.get("spoken_transcript")):
+        out["verbatim_capture"] = vc
     if reel_meta:
         out["performance"] = {
             "views": reel_meta.get("views"),
@@ -597,14 +782,14 @@ def run_angle_generation(
         task = (
             "TASK: PATTERNS_JSON was built from ONE source reel (competitor URL or pasted script) we are adapting. "
             "Return exactly 5 angles in ORDER — order is mandatory:\n\n"
-            "ANGLE 1 (array index 0) — FAITHFUL BLUEPRINT / direct adaptation:\n"
-            "- This is the \"recreate this reel\" option: keep the same format class, hook mechanism, beat structure, "
-            "pacing, topic arc, and payoff as the source implied by hook_patterns, tension_mechanisms, "
-            "value_delivery_formats, and format_insights. Do not invent a different video concept.\n"
-            "- Only swap what must change for the client: language, names, setting, and concrete examples so they "
-            "fit GENERATION_BRIEF, VOICE_BRIEF, and ICP. The viewer should recognize it as the same recipe as the "
-            "source.\n"
-            "- Title should read like a direct adaptation (e.g. start with \"Blueprint:\" or \"Direct adaptation —\").\n\n"
+            "ANGLE 1 (array index 0) — FAITHFUL BLUEPRINT / 1-to-1 German translation:\n"
+            "- This is the default \"recreate this reel\" option: same format class, hook mechanism, beat structure, "
+            "pacing, topic arc, payoff, and concrete examples as the source (hook_patterns, tension_mechanisms, "
+            "value_delivery_formats, format_insights). Do not invent a different video concept.\n"
+            "- Only swap what must change: output language (German), and untranslatable proper nouns. "
+            "Do NOT reframe for ICP, do NOT change examples or the hook for client fit.\n"
+            "- The viewer who saw the original must recognize this as the same reel in German.\n"
+            "- Title should read like a direct translation (e.g. start with \"Blueprint:\" or \"1:1 —\").\n\n"
             "ANGLES 2–5 (indices 1–4) — VARIANTS / same recipe, different execution:\n"
             "- Stay in the same format family and same \"job\" for the viewer as the source reel, but you MAY change "
             "the concrete situation, add a twist, or emphasize a different beat from PATTERNS_JSON while still "
@@ -711,8 +896,77 @@ def _wants_text_blocks(source_format_key: Optional[str]) -> bool:
     return key in _TEXT_BLOCK_FORMAT_KEYS
 
 
-def _text_overlay_rules_block() -> str:
-    """On-screen text_blocks + visual_style rules (shared by full package + scoped regen)."""
+def _text_overlay_rules_block(
+    *,
+    blueprint_strict: bool = False,
+    has_verbatim_on_screen: bool = False,
+    verbatim_beats_only: bool = False,
+) -> str:
+    """On-screen text_blocks + visual_style rules (shared by full package + scoped regen).
+
+    When ``blueprint_strict=True`` (1-to-1 blueprint recreation), the instructions
+    tell the LLM to TRANSLATE the source on-screen text rather than generate new beats.
+    """
+    if blueprint_strict and has_verbatim_on_screen and verbatim_beats_only:
+        return (
+            "\ntext_blocks (on-screen BEATS only — BLUEPRINT 1:1, hook already set):\n"
+            "The reel HOOK overlay already shows source line 1. SOURCE_VERBATIM_JSON.on_screen_text "
+            "lists ONLY source lines 2..N.\n"
+            "Output EXACTLY one text_blocks item per entry — faithful full German translation of each "
+            "line (complete sentences allowed; do not shorten).\n"
+            "Do NOT add, remove, merge, or split blocks. Do NOT repeat line 1.\n"
+            "- isCTA must mirror each entry's is_cta exactly.\n"
+            "- Emojis only if the source entry had them.\n"
+            "\n"
+            "visual_style (layout + motion):\n"
+            "- templateId / themeId / blockAnimations / layout: derive from PATTERNS_JSON.format_insights.\n"
+            "- blockAnimations: exactly one entry per text_blocks item.\n"
+        )
+    if blueprint_strict and has_verbatim_on_screen:
+        return (
+            "\ntext_blocks (on-screen overlays — BLUEPRINT 1:1 from SOURCE_VERBATIM_JSON):\n"
+            "SOURCE_VERBATIM_JSON.on_screen_text is the exact source. Output EXACTLY one text_blocks "
+            "item per entry, in the same order, each a faithful full German translation of that entry's "
+            "`text` field (complete sentences; do not shorten or paraphrase).\n"
+            "Do NOT add, remove, merge, or split blocks. Do NOT invent lines not in SOURCE_VERBATIM_JSON.\n"
+            "- isCTA must mirror each entry's is_cta exactly.\n"
+            "- If source_has_on_screen_cta is false, every isCTA=false.\n"
+            "- The system assigns line 1 to the hook overlay automatically after generation; still "
+            "include all N lines in text_blocks so translations stay aligned.\n"
+            "- Emojis only if the source entry had them.\n"
+            "\n"
+            "visual_style (layout + motion):\n"
+            "- templateId / themeId / blockAnimations / layout: derive from PATTERNS_JSON.format_insights.\n"
+            "- blockAnimations: exactly one entry per text_blocks item.\n"
+        )
+    if blueprint_strict:
+        return (
+            "\ntext_blocks (on-screen overlays — BLUEPRINT 1:1 COPY):\n"
+            "ABSOLUTE RULE: Copy ONLY what appeared on screen in the source reel — translated into German.\n"
+            "DO NOT add extra beats, do NOT invent tension lines, do NOT add a CTA that was not in the source.\n"
+            "\n"
+            "HOW TO COUNT:\n"
+            "- Look at PATTERNS_JSON.hook_patterns and source_reference for the on-screen text the source used.\n"
+            "- Generate EXACTLY that many items — no more, no less.\n"
+            "- If the source had 2 items on screen, output 2. If it had 1, output 1. If it had 5, output 5.\n"
+            "- If you cannot determine the exact count from PATTERNS_JSON, use the number of distinct\n"
+            "  hook_pattern / on-screen beat entries (NOT a default of 4).\n"
+            "\n"
+            "HOW TO TRANSLATE:\n"
+            "- Translate each on-screen line as closely as possible — same meaning, same punch, natural German.\n"
+            "- Max 7 words per item. No full sentences required.\n"
+            "- Emojis only if the source had them in the same position.\n"
+            "\n"
+            "CTA RULE (HARD):\n"
+            "- isCTA must be true ONLY for an item that was a CTA in the source.\n"
+            "- If the source had NO on-screen CTA, all items get isCTA=false — do NOT add one.\n"
+            "- If the source DID have an on-screen CTA, translate its style into German and keep the same\n"
+            "  CTA mechanism in German (native phrasing). Do NOT add SELECTED_CTA unless it was in the source.\n"
+            "\n"
+            "visual_style (layout + motion):\n"
+            "- templateId / themeId / blockAnimations / layout: derive from PATTERNS_JSON.format_insights.\n"
+            "- blockAnimations: exactly one entry per text_blocks item.\n"
+        )
     return (
         "\ntext_blocks (on-screen overlays inside the reel — NOT the talking-head script):\n"
         "These are the only words the viewer sees on screen. The renderer plays them in\n"
@@ -807,10 +1061,22 @@ def _regen_reference_bundle(
     adapt_single_reference_reel: bool,
     synthesized_patterns: Dict[str, Any],
     chosen_angle: Dict[str, Any],
+    customization_feedback: Optional[str] = None,
 ) -> tuple[str, str, str, str]:
     """Shared adaptation notes for regenerate prompts (mirrors run_content_package)."""
+    is_blueprint = _is_blueprint_angle(chosen_angle)
+    strict_blueprint = is_blueprint and not (
+        customization_feedback and customization_feedback.strip()
+    )
     adapt_block = ""
     if adapt_single_reference_reel:
+        icp_line = (
+            "- Preserve the core idea or payoff; translate language and localize only what must change "
+            "for German output — do not reframe for ICP when angle_role is blueprint.\n"
+            if strict_blueprint
+            else "- Preserve the core idea or payoff the viewer gets from the source reel; replace settings, "
+            "examples, names, and language so everything fits this client's ICP and CLIENT_CONTEXT.\n"
+        )
         adapt_block = (
             "\nREFERENCE_REEL_ADAPTATION (non-negotiable):\n"
             "PATTERNS_JSON comes from a single source reel or pasted script. Treat it as a blueprint of THAT video, not a "
@@ -818,8 +1084,7 @@ def _regen_reference_bundle(
             "- Keep the same format class and beat structure implied by format_insights and hook_patterns "
             "(e.g. text-on-B-roll cadence vs talking-head sections). Do not switch to a different production "
             "format unless the patterns clearly describe that format.\n"
-            "- Preserve the core idea or payoff the viewer gets from the source reel; replace settings, "
-            "examples, names, and language so everything fits this client's ICP and CLIENT_CONTEXT.\n"
+            f"{icp_line}"
             "- Hooks, script, caption, and text_blocks must all feel like the same adapted reel, not a new "
             "unrelated concept.\n\n"
         )
@@ -836,22 +1101,27 @@ def _regen_reference_bundle(
     if isinstance(synthesized_patterns, dict):
         sr1 = synthesized_patterns.get("source_reference")
         if isinstance(sr1, dict) and str(sr1.get("source_caption") or "").strip():
-            caption_src_tail = (
-                " When PATTERNS_JSON.source_reference.source_caption is present, ground caption_body in that text "
-                "and in source_reference fields (why_it_worked, caption_structure, replicable_elements, "
-                "suggested_adaptations): preserve the strategic role the original caption played (e.g. expanded "
-                "teaching, examples, framework, CTA style) while rewriting fully for this client's ICP, language, "
-                "voice, and OFFER_DOCUMENTATION. Do not copy phrasing. Do not add facts, numbers, promises, or "
-                "specifics unless they appear in source_reference, CLIENT_CONTEXT, CHOSEN_ANGLE_JSON, or the script "
-                "you generate for this package."
-            )
-    blueprint_note = ""
-    if adapt_single_reference_reel and str(chosen_angle.get("angle_role") or "").strip().lower() == "blueprint":
-        blueprint_note = (
-            "\nBLUEPRINT_ANGLE: CHOSEN_ANGLE_JSON is the faithful-remake slot. Maximize fidelity to the source "
-            "reel's structure, hook type, narrative arc, tension → payoff, and CTA mechanism in PATTERNS_JSON. "
-            "Do not drift to a different topic or format; only localize and ICP-fit the same blueprint.\n"
-        )
+            if strict_blueprint:
+                caption_src_tail = (
+                    " When PATTERNS_JSON.source_reference.source_caption is present, translate that caption "
+                    "faithfully into German: same structure, same teaching beats, same CTA mechanism — natural "
+                    "German phrasing only. Do not add facts, numbers, or promises not in source_reference."
+                )
+            else:
+                caption_src_tail = (
+                    " When PATTERNS_JSON.source_reference.source_caption is present, ground caption_body in that text "
+                    "and in source_reference fields (why_it_worked, caption_structure, replicable_elements, "
+                    "suggested_adaptations): preserve the strategic role the original caption played (e.g. expanded "
+                    "teaching, examples, framework, CTA style) while rewriting fully for this client's ICP, language, "
+                    "voice, and OFFER_DOCUMENTATION. Do not copy phrasing. Do not add facts, numbers, promises, or "
+                    "specifics unless they appear in source_reference, CLIENT_CONTEXT, CHOSEN_ANGLE_JSON, or the script "
+                    "you generate for this package."
+                )
+    blueprint_note = _blueprint_angle_note(
+        chosen_angle,
+        adapt_single_reference_reel=adapt_single_reference_reel,
+        customization_feedback=customization_feedback,
+    )
     return adapt_block, ref_note, blueprint_note, caption_src_tail
 
 
@@ -1319,11 +1589,11 @@ def run_carousel_copy_package(
                 "\nSOURCE_REFERENCE: When source_reference.source_caption exists, align caption strategy "
                 "(without copying phrasing) with that caption's role.\n"
             )
-    blueprint_note = ""
-    if adapt_single_reference_reel and str(chosen_angle.get("angle_role") or "").strip().lower() == "blueprint":
-        blueprint_note = (
-            "\nBLUEPRINT_ANGLE: Maximize fidelity to CHOSEN_ANGLE_JSON — same narrative spine as the source blueprint.\n"
-        )
+    blueprint_note = _blueprint_angle_note(
+        chosen_angle,
+        adapt_single_reference_reel=adapt_single_reference_reel,
+        customization_feedback=feedback,
+    )
     caption_src_tail = ""
     if isinstance(synthesized_patterns, dict):
         sr1 = synthesized_patterns.get("source_reference")
@@ -1374,6 +1644,35 @@ def run_carousel_copy_package(
     return _apply_german_natural_polish(settings, client_row, out, mode="full")
 
 
+def _caption_rule_block(*, strict_blueprint: bool, caption_src_tail: str) -> str:
+    """Return the caption_body rule line for run_content_package."""
+    if strict_blueprint:
+        return (
+            "- caption_body: Faithful German translation of the source caption. Preserve the same structure, "
+            "beats, teaching content, and CTA mechanism as the original — do not add ICP framing or new insights. "
+            "Only swap language and untranslatable proper nouns. "
+            f"Final CTA: use native German phrasing with SELECTED_CTA destination if present.{caption_src_tail}\n"
+        )
+    return (
+        "- caption_body: High-converting IG caption in the output language. Do NOT repeat or summarize "
+        "the Reel script — deepen the message with new psychological insight and perspective. "
+        "Write for one specific reader (ICP): every sentence should feel personally relevant; "
+        "avoid generic coaching filler. Structure (use line breaks between beats): "
+        "(1) Hook — pattern-interrupt, relatable situation; "
+        "(2) Escalation — tension, reader feels seen; "
+        "(3) Reframe / insight — the aha; "
+        "(4) Consequence — why it matters if ignored; "
+        "(5) Authority transition — solution direction without over-explaining; "
+        "(6) CTA — clear action aligned with SELECTED_CTA (use its destination + traffic_goal; "
+        "match type guidance — e.g. native link push for website, value-of-subscribing line for newsletter, "
+        "comment keyword for lead_magnet, with German quotation marks like \u201eKEYWORD\u201c in German output). "
+        "Fall back to OFFER_DOCUMENTATION-driven wording only when "
+        "no SELECTED_CTA block is present. "
+        "Tone: direct, emotionally precise, psychologically sharp; slight provocation where it fits; "
+        f"1\u20133 emojis max if natural. Final check: would this stop a scroll and make the ICP feel understood?{caption_src_tail}\n"
+    )
+
+
 def run_content_package(
     settings: Settings,
     *,
@@ -1414,54 +1713,56 @@ def run_content_package(
             "  }"
         )
     json_shape += "\n}\n"
-    tb_rules = _text_overlay_rules_block() if _wants_text_blocks(source_format_key) else ""
-    adapt_block = ""
-    if adapt_single_reference_reel:
-        adapt_block = (
-            "\nREFERENCE_REEL_ADAPTATION (non-negotiable):\n"
-            "PATTERNS_JSON comes from a single source reel or pasted script. Treat it as a blueprint of THAT video, not a "
-            "generic style guide.\n"
-            "- Keep the same format class and beat structure implied by format_insights and hook_patterns "
-            "(e.g. text-on-B-roll cadence vs talking-head sections). Do not switch to a different production "
-            "format unless the patterns clearly describe that format.\n"
-            "- Preserve the core idea or payoff the viewer gets from the source reel; replace settings, "
-            "examples, names, and language so everything fits this client's ICP and CLIENT_CONTEXT.\n"
-            "- Hooks, script, caption, and text_blocks must all feel like the same adapted reel, not a new "
-            "unrelated concept.\n\n"
+    is_blueprint = _is_blueprint_angle(chosen_angle)
+    strict_blueprint = is_blueprint and adapt_single_reference_reel and not (feedback and feedback.strip())
+    verbatim_capture = _verbatim_capture_from_patterns(synthesized_patterns)
+    has_verbatim_on_screen = bool(
+        isinstance(verbatim_capture, dict)
+        and isinstance(verbatim_capture.get("on_screen_text"), list)
+        and verbatim_capture.get("on_screen_text")
+    )
+    spoken_verbatim = (
+        str(verbatim_capture.get("spoken_transcript") or "").strip()
+        if isinstance(verbatim_capture, dict)
+        else ""
+    )
+    adapt_block, ref_note, blueprint_note, caption_src_tail = _regen_reference_bundle(
+        adapt_single_reference_reel=adapt_single_reference_reel,
+        synthesized_patterns=synthesized_patterns,
+        chosen_angle=chosen_angle,
+        customization_feedback=feedback,
+    )
+    tb_rules = (
+        _text_overlay_rules_block(
+            blueprint_strict=strict_blueprint,
+            has_verbatim_on_screen=has_verbatim_on_screen,
         )
-    ref_note = ""
-    if adapt_single_reference_reel and isinstance(synthesized_patterns, dict):
-        sr0 = synthesized_patterns.get("source_reference")
-        if isinstance(sr0, dict) and str(sr0.get("source_caption") or "").strip():
-            ref_note = (
-                "\nSOURCE_REFERENCE: PATTERNS_JSON includes `source_reference` with the scraped template caption "
-                "and stored analysis excerpts. The blueprint is the combined on-reel content plus caption — preserve "
-                "the same viewer payoff and information depth when adapting.\n"
-            )
-    caption_src_tail = ""
-    if isinstance(synthesized_patterns, dict):
-        sr1 = synthesized_patterns.get("source_reference")
-        if isinstance(sr1, dict) and str(sr1.get("source_caption") or "").strip():
-            caption_src_tail = (
-                " When PATTERNS_JSON.source_reference.source_caption is present, ground caption_body in that text "
-                "and in source_reference fields (why_it_worked, caption_structure, replicable_elements, "
-                "suggested_adaptations): preserve the strategic role the original caption played (e.g. expanded "
-                "teaching, examples, framework, CTA style) while rewriting fully for this client's ICP, language, "
-                "voice, and OFFER_DOCUMENTATION. Do not copy phrasing. Do not add facts, numbers, promises, or "
-                "specifics unless they appear in source_reference, CLIENT_CONTEXT, CHOSEN_ANGLE_JSON, or the script "
-                "you generate for this package."
-            )
-    blueprint_note = ""
-    if adapt_single_reference_reel and str(chosen_angle.get("angle_role") or "").strip().lower() == "blueprint":
-        blueprint_note = (
-            "\nBLUEPRINT_ANGLE: CHOSEN_ANGLE_JSON is the faithful-remake slot. Maximize fidelity to the source "
-            "reel's structure, hook type, narrative arc, tension → payoff, and CTA mechanism in PATTERNS_JSON. "
-            "Do not drift to a different topic or format; only localize and ICP-fit the same blueprint.\n"
-        )
+        if _wants_text_blocks(source_format_key)
+        else ""
+    )
+    verbatim_block = (
+        _source_verbatim_json_block(verbatim_capture) if strict_blueprint and verbatim_capture else ""
+    )
+    cta_for_ctx = None if strict_blueprint else selected_cta
     fk = canonicalize_stored_format_key(source_format_key or "") or (source_format_key or "").strip()
     is_talking_head = fk == "talking_head"
     if is_talking_head:
-        script_bullet = _talking_head_script_package_bullet(german_client=_is_german_client(client_row))
+        script_bullet = _talking_head_script_package_bullet(
+            german_client=_is_german_client(client_row),
+            blueprint_angle=strict_blueprint,
+        )
+        if strict_blueprint and spoken_verbatim:
+            script_bullet = (
+                "- script: Faithful German translation of SOURCE_VERBATIM_JSON.spoken_transcript. "
+                "Preserve the same spoken structure, beats, examples, and CTA placement as the source. "
+                "Natural spoken German (DE/AT/CH professional). Use markdown ## Hook, ## Build-up, ## Reframe, "
+                "## Clarity, ## CTA only where the transcript clearly maps to those beats.\n"
+            )
+    elif strict_blueprint and spoken_verbatim:
+        script_bullet = (
+            "- script: Faithful German translation of SOURCE_VERBATIM_JSON.spoken_transcript when present; "
+            "otherwise minimal voice-over aligned with the on-screen text. Do not invent new beats.\n"
+        )
     else:
         script_bullet = (
             "- script: Use the optimal format and duration implied by PATTERNS_JSON.format_insights "
@@ -1471,7 +1772,7 @@ def run_content_package(
             "## Hook, ## Situation, ## Insight 1, ## Insight 2, ## Insight 3, ## Conclusion, ## CTA.\n"
         )
     if is_talking_head:
-        hard_script_rules = (
+        hard_script_rules = "" if strict_blueprint else (
             "HARD RULES FOR THE SPOKEN SCRIPT (non-negotiable):\n"
             "1. ## Reframe and ## Clarity together MUST include at least one sentence the viewer can say out loud "
             "in a real situation tomorrow. Not an explanation of a technique — the actual words. "
@@ -1491,7 +1792,7 @@ def run_content_package(
             "Generic motivational lines that could end any video are not acceptable.\n\n"
         )
     else:
-        hard_script_rules = (
+        hard_script_rules = "" if strict_blueprint else (
             "HARD RULES FOR SCRIPT INSIGHTS (non-negotiable):\n"
             "1. Every insight MUST include at least one sentence the viewer can say out loud "
             "in a real situation tomorrow. Not an explanation of a technique — the actual words. "
@@ -1522,25 +1823,11 @@ def run_content_package(
         "(direct question, insight/tension, concrete say-out-loud line). Each hook is the FIRST line "
         "spoken/shown in the reel and must work on its own. No tiers, no labels.\n"
         f"{script_bullet}"
-        "- caption_body: High-converting IG caption in the output language. Do NOT repeat or summarize "
-        "the Reel script — deepen the message with new psychological insight and perspective. "
-        "Write for one specific reader (ICP): every sentence should feel personally relevant; "
-        "avoid generic coaching filler. Structure (use line breaks between beats): "
-        "(1) Hook — pattern-interrupt, relatable situation; "
-        "(2) Escalation — tension, reader feels seen; "
-        "(3) Reframe / insight — the aha; "
-        "(4) Consequence — why it matters if ignored; "
-        "(5) Authority transition — solution direction without over-explaining; "
-        "(6) CTA — clear action aligned with SELECTED_CTA (use its destination + traffic_goal; "
-        "match type guidance — e.g. native link push for website, value-of-subscribing line for newsletter, "
-        "comment keyword for lead_magnet, with German quotation marks like „KEYWORD“ in German output). "
-        "Fall back to OFFER_DOCUMENTATION-driven wording only when "
-        "no SELECTED_CTA block is present. "
-        "Tone: direct, emotionally precise, psychologically sharp; slight provocation where it fits; "
-        f"1–3 emojis max if natural. Final check: would this stop a scroll and make the ICP feel understood?{caption_src_tail}\n"
+        f"{_caption_rule_block(strict_blueprint=strict_blueprint, caption_src_tail=caption_src_tail)}"
         "- hashtags: at most 5 entries, niche-relevant; align with NICHE_BENCHMARKS and PATTERNS_JSON when available.\n\n"
         f"{hard_script_rules}"
-        f"CLIENT_CONTEXT:\n{_pack_client_row_for_llm(client_row, selected_cta)[:100_000]}\n\n"
+        f"CLIENT_CONTEXT:\n{_pack_client_row_for_llm(client_row, cta_for_ctx)[:100_000]}\n\n"
+        f"{verbatim_block}"
         f"PATTERNS_JSON:\n{json.dumps(synthesized_patterns, ensure_ascii=False)[:52_000]}\n\n"
         f"CHOSEN_ANGLE_JSON:\n{json.dumps(chosen_angle, ensure_ascii=False)[:8000]}\n"
         f"{prev_note}{fb}"
@@ -1564,7 +1851,16 @@ def run_content_package(
         "story_variants": [],
     }
     if _wants_text_blocks(source_format_key):
-        out["text_blocks"] = _normalize_text_blocks(data.get("text_blocks"))
+        if strict_blueprint and verbatim_capture:
+            hooks_out, beat_blocks = _apply_verbatim_hook_blocks_split(
+                raw_text_blocks=data.get("text_blocks"),
+                raw_hooks=data.get("hooks"),
+                verbatim_capture=verbatim_capture,
+            )
+            out["hooks"] = hooks_out
+            out["text_blocks"] = beat_blocks
+        else:
+            out["text_blocks"] = _normalize_text_blocks(data.get("text_blocks"))
         if out["text_blocks"]:
             out["visual_style"] = _normalize_visual_style(
                 data.get("visual_style"),
@@ -1600,11 +1896,11 @@ def _carousel_regen_adapt_bundle(
                 "\nSOURCE_REFERENCE: When source_reference.source_caption exists, align caption strategy "
                 "(without copying phrasing) with that caption's role.\n"
             )
-    blueprint_note = ""
-    if adapt_single_reference_reel and str(chosen_angle.get("angle_role") or "").strip().lower() == "blueprint":
-        blueprint_note = (
-            "\nBLUEPRINT_ANGLE: Maximize fidelity to CHOSEN_ANGLE_JSON — same narrative spine as the source blueprint.\n"
-        )
+    blueprint_note = _blueprint_angle_note(
+        chosen_angle,
+        adapt_single_reference_reel=adapt_single_reference_reel,
+        customization_feedback=None,
+    )
     caption_src_tail = ""
     if isinstance(synthesized_patterns, dict):
         sr1 = synthesized_patterns.get("source_reference")
@@ -1946,8 +2242,42 @@ def _run_regenerate_text_blocks_narrow(
         adapt_single_reference_reel=adapt_single_reference_reel,
         synthesized_patterns=synthesized_patterns,
         chosen_angle=chosen_angle,
+        customization_feedback=feedback,
     )
     _ = _ct
+    is_blueprint = _is_blueprint_angle(chosen_angle)
+    strict_blueprint = (
+        is_blueprint
+        and adapt_single_reference_reel
+        and not (feedback and feedback.strip())
+    )
+    verbatim_capture = _verbatim_capture_from_patterns(synthesized_patterns)
+    verbatim_beats = (
+        _verbatim_capture_beats_slice(verbatim_capture)
+        if isinstance(verbatim_capture, dict)
+        else None
+    )
+    has_verbatim_on_screen = bool(
+        isinstance(verbatim_beats, dict)
+        and isinstance(verbatim_beats.get("on_screen_text"), list)
+        and verbatim_beats.get("on_screen_text")
+    )
+    has_verbatim_full = bool(
+        isinstance(verbatim_capture, dict)
+        and isinstance(verbatim_capture.get("on_screen_text"), list)
+        and verbatim_capture.get("on_screen_text")
+    )
+    if strict_blueprint and verbatim_beats and has_verbatim_on_screen:
+        verbatim_for_prompt = verbatim_beats
+        verbatim_block = _source_verbatim_json_block(verbatim_beats)
+    elif strict_blueprint and verbatim_capture:
+        verbatim_for_prompt = verbatim_capture
+        verbatim_block = _source_verbatim_json_block(verbatim_capture)
+    else:
+        verbatim_for_prompt = None
+        verbatim_block = ""
+    _ = verbatim_for_prompt
+    cta_for_ctx = None if strict_blueprint else selected_cta
     fb = _regen_feedback_block(feedback)
     prev_obj: Dict[str, Any] = {"text_blocks": current_text_blocks}
     if current_visual_style is not None:
@@ -1956,7 +2286,11 @@ def _run_regenerate_text_blocks_narrow(
         "\n\nPREVIOUS_VERSION (text_blocks + visual_style — revise if feedback says so):\n"
         + json.dumps(prev_obj, ensure_ascii=False)[:32_000]
     )
-    tb_rules = _text_overlay_rules_block()
+    tb_rules = _text_overlay_rules_block(
+        blueprint_strict=strict_blueprint,
+        has_verbatim_on_screen=has_verbatim_full if strict_blueprint else has_verbatim_on_screen,
+        verbatim_beats_only=bool(strict_blueprint and has_verbatim_on_screen),
+    )
     script_hint = (
         "\n\nCONTEXT_SCRIPT (do not rewrite — stay coherent with this reel):\n"
         + (current_script or "").strip()[:8000]
@@ -1984,7 +2318,8 @@ def _run_regenerate_text_blocks_narrow(
         f"{adapt_block}{ref_note}{blueprint_note}"
         f"{script_hint}"
         f"{prev_note}{fb}"
-        f"CLIENT_CONTEXT:\n{_pack_client_row_for_llm(client_row, selected_cta)[:100_000]}\n\n"
+        f"CLIENT_CONTEXT:\n{_pack_client_row_for_llm(client_row, cta_for_ctx)[:100_000]}\n\n"
+        f"{verbatim_block}"
         f"PATTERNS_JSON:\n{json.dumps(synthesized_patterns, ensure_ascii=False)[:52_000]}\n\n"
         f"CHOSEN_ANGLE_JSON:\n{json.dumps(chosen_angle, ensure_ascii=False)[:8000]}\n"
     )
@@ -1996,7 +2331,13 @@ def _run_regenerate_text_blocks_narrow(
         max_tokens=8192,
         temperature=0.45,
     )
-    tb = _normalize_text_blocks(data.get("text_blocks"))
+    if strict_blueprint and verbatim_beats and has_verbatim_on_screen:
+        tb = _enforce_verbatim_text_blocks(data.get("text_blocks"), verbatim_beats)
+    elif strict_blueprint and verbatim_capture:
+        # Source had only one on-screen line (hook); beats regen yields none.
+        tb = None
+    else:
+        tb = _normalize_text_blocks(data.get("text_blocks"))
     if tb:
         vs = _normalize_visual_style(
             data.get("visual_style"),
@@ -2418,7 +2759,10 @@ def run_carousel_slide_texts(
     )
 
     fb = f"\n\nFEEDBACK_FROM_HUMAN:\n{feedback.strip()[:2000]}\n" if feedback and feedback.strip() else ""
-    cta_block = _format_selected_cta_block(selected_cta)
+    cta_block = _format_selected_cta_block(
+        selected_cta,
+        language=str(client_row.get("language") or "en"),
+    )
     cta_block_for_user = (
         f"\n{cta_block}\n\nThe final slide MUST point at this destination + traffic_goal in a "
         "platform-native way (link in bio, comment keyword, etc.); never paste raw URLs. "

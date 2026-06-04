@@ -880,30 +880,30 @@ function BlueprintBadge() {
           What &ldquo;Blueprint&rdquo; means
         </p>
         <p className="mb-2.5 text-zinc-300">
-          This angle keeps the source reel&apos;s structure — and rewrites everything else in your
-          client&apos;s voice.
+          Default recreation: faithful 1-to-1 translation into German — same hook, story, examples, and
+          structure as the source. Use <span className="font-medium text-zinc-200">Anpassen</span> only if
+          you want to adapt it to your client&apos;s voice or ICP.
         </p>
         <div className="grid grid-cols-2 gap-x-3">
           <div>
             <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-300/80">
-              Preserved
+              Preserved (1:1)
             </p>
             <ul className="space-y-0.5 text-zinc-300">
               <li>Format &amp; beats</li>
-              <li>Hook mechanism</li>
-              <li>Topic arc</li>
-              <li>Payoff / CTA</li>
+              <li>Hook &amp; story</li>
+              <li>Examples &amp; numbers</li>
+              <li>CTA mechanism</li>
             </ul>
           </div>
           <div>
             <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300/80">
-              Swapped
+              Changed
             </p>
             <ul className="space-y-0.5 text-zinc-300">
-              <li>Language</li>
-              <li>Names &amp; setting</li>
-              <li>Concrete examples</li>
-              <li>Voice (Client DNA)</li>
+              <li>Language → German</li>
+              <li>Untranslatable names only</li>
+              <li>Native German CTAs</li>
             </ul>
           </div>
         </div>
@@ -954,6 +954,8 @@ export default function GeneratePage() {
   const [formatPreset, setFormatPreset] = useState<FormatPreset>("auto");
   /** Target production format for "Recreate a reel" — required explicit choice. */
   const [recreateFormat, setRecreateFormat] = useState<RecreateFormatChoice | null>(null);
+  /** "Recreate a reel" mode: strict 1:1 copy (skips angles) vs adapt into angles. Defaults to 1:1. */
+  const [recreateMode, setRecreateMode] = useState<"one_to_one" | "adapt">("one_to_one");
   const [extraInstruction, setExtraInstruction] = useState("");
   const [focusNoteOpen, setFocusNoteOpen] = useState(false);
   const [formatDigests, setFormatDigests] = useState<FormatDigestSummary[]>([]);
@@ -984,6 +986,9 @@ export default function GeneratePage() {
   const [deleteSessionBusy, setDeleteSessionBusy] = useState(false);
   /** Index of angle being submitted (content generation); other angle cards stay visible but dimmed. */
   const [choosingAngleIndex, setChoosingAngleIndex] = useState<number | null>(null);
+  /** Blueprint card: expanded Anpassen panel (angle index). */
+  const [blueprintAnpassenIndex, setBlueprintAnpassenIndex] = useState<number | null>(null);
+  const [blueprintAdaptInstruction, setBlueprintAdaptInstruction] = useState("");
   const [patternsOpen, setPatternsOpen] = useState(false);
   const [clientSlug, setClientSlug] = useState("");
   const [orgSlug, setOrgSlug] = useState("");
@@ -1393,7 +1398,10 @@ export default function GeneratePage() {
         body = {
           source_type: "url_adapt",
           url: raw,
-          extra_instruction: extra,
+          recreate_mode: recreateMode,
+          // Strict 1:1 copies the original on-screen text verbatim (just translated),
+          // so extra focus only applies when adapting into angles.
+          extra_instruction: recreateMode === "adapt" ? extra : undefined,
           format_key: recreateFormat,
         };
       } else if (raw.length > 0) {
@@ -1517,9 +1525,11 @@ export default function GeneratePage() {
       }
       currentSessionIdRef.current = res.data.id;
       setSession(res.data);
-      setStep("angles");
+      // 1:1 recreate packages content on /start (no angles), so land directly in the studio.
+      const landedWithPackage = sessionHasPackage(res.data);
+      setStep(landedWithPackage ? "create" : "angles");
       router.replace(generateSessionHref(res.data.id), { scroll: false });
-      show("Angles ready — pick one.", "success");
+      show(landedWithPackage ? "1:1 copy ready." : "Angles ready — pick one.", "success");
       const lr = await generationListSessions(ctx.clientSlug, ctx.orgSlug, 15);
       if (lr.ok) setSessions(lr.data);
     } finally {
@@ -1534,6 +1544,7 @@ export default function GeneratePage() {
     formatPreset,
     mode,
     recreateFormat,
+    recreateMode,
     refreshContext,
     router,
     selectedCtaId,
@@ -1544,11 +1555,19 @@ export default function GeneratePage() {
   ]);
 
   const onChooseAngle = useCallback(
-    async (index: number) => {
+    async (index: number, extraInstruction?: string) => {
       if (!session || !clientSlug || !orgSlug) return;
       setChoosingAngleIndex(index);
+      setBlueprintAnpassenIndex(null);
       try {
-        const res = await generationChooseAngle(clientSlug, orgSlug, session.id, index);
+        const trimmed = extraInstruction?.trim();
+        const res = await generationChooseAngle(
+          clientSlug,
+          orgSlug,
+          session.id,
+          index,
+          trimmed ? { extra_instruction: trimmed } : undefined,
+        );
         if (!res.ok) {
           show(res.error, "error");
           return;
@@ -1792,9 +1811,19 @@ export default function GeneratePage() {
                       </p>
                     ) : (
                       <p className="mt-2 text-[11px] leading-relaxed text-app-fg-muted">
-                        We&apos;ll study the reel, pull out what worked, then suggest a{" "}
-                        <span className="font-medium text-app-fg-secondary">Blueprint</span> angle (same
-                        structure and idea, your client&apos;s voice) plus variants in the format you pick below.
+                        {recreateMode === "one_to_one" ? (
+                          <>
+                            We&apos;ll read the reel&apos;s on-screen text and recreate it{" "}
+                            <span className="font-medium text-app-fg-secondary">1:1</span>, translated to your
+                            client&apos;s language — no angle questions.
+                          </>
+                        ) : (
+                          <>
+                            We&apos;ll study the reel, pull out what worked, then suggest a{" "}
+                            <span className="font-medium text-app-fg-secondary">Blueprint</span> angle (same
+                            structure and idea, your client&apos;s voice) plus variants in the format you pick below.
+                          </>
+                        )}
                       </p>
                     )}
                     {composerInput.trim() && isLikelyInstagramReelUrl(composerInput.trim()) ? (
@@ -1851,6 +1880,44 @@ export default function GeneratePage() {
                         )}
                       </>
                     ) : null}
+                  </div>
+
+                  <div>
+                    <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-app-fg-subtle">
+                      How should we recreate it?
+                    </p>
+                    <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Recreation mode">
+                      {(
+                        [
+                          { key: "one_to_one" as const, label: "1:1 copy", hint: "Copy the original on-screen text exactly, just translated. Skips angle selection." },
+                          { key: "adapt" as const, label: "Adapt", hint: "Rework the idea into new angles for your client. You'll pick an angle next." },
+                        ]
+                      ).map(({ key, label, hint }) => {
+                        const active = recreateMode === key;
+                        return (
+                          <button
+                            key={key}
+                            type="button"
+                            role="radio"
+                            aria-checked={active}
+                            title={hint}
+                            onClick={() => setRecreateMode(key)}
+                            className={`rounded-xl border px-3 py-2 text-left text-xs font-semibold transition-colors ${
+                              active
+                                ? "border-amber-500/55 bg-amber-500/10 text-app-fg"
+                                : "border-app-divider bg-app-chip-bg/20 text-app-fg-muted hover:border-amber-500/30"
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="mt-2 text-[11px] leading-relaxed text-app-fg-muted">
+                      {recreateMode === "one_to_one"
+                        ? "Faithful recreation: the same on-screen text as the original, translated to your client's language. No angle questions — straight to the studio."
+                        : "Reframe the source idea into angle options tailored to your client."}
+                    </p>
                   </div>
 
                   <div>
@@ -2005,8 +2072,9 @@ export default function GeneratePage() {
                 </>
               )}
 
-              {/* Optional focus note — collapsed by default to keep the page calm */}
-              {focusNoteOpen ? (
+              {/* Optional focus note — collapsed by default to keep the page calm.
+                  Hidden for strict 1:1 recreation since on-screen text is copied verbatim. */}
+              {mode === "recreate" && recreateMode === "one_to_one" ? null : focusNoteOpen ? (
                 <div>
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <label htmlFor="gen-extra" className="text-sm font-semibold text-app-fg">
@@ -2056,9 +2124,13 @@ export default function GeneratePage() {
                     <Sparkles className="size-4" />
                   )}
                   {loading
-                    ? "Preparing angles…"
+                    ? mode === "recreate" && recreateMode === "one_to_one"
+                      ? "Creating 1:1 copy…"
+                      : "Preparing angles…"
                     : mode === "recreate" && !recreateFormat
                     ? "Pick a target format"
+                    : mode === "recreate" && recreateMode === "one_to_one"
+                    ? "Create 1:1 copy"
                     : "Generate angles"}
                 </button>
                 {mode === "recreate" ? (
@@ -2154,9 +2226,10 @@ export default function GeneratePage() {
           <h2 className="text-sm font-semibold text-app-fg">Pick an angle</h2>
           {sessionUsesBlueprintFirstAngle(session) ? (
             <p className="max-w-2xl text-xs leading-relaxed text-app-fg-muted">
-              The <span className="font-semibold text-app-fg-secondary">first angle</span> is the direct
-              blueprint — same structure and topic arc as your source, rewritten in your client&apos;s voice.
-              The others are same-format variants you can use if you want a twist.
+              The <span className="font-semibold text-app-fg-secondary">first angle</span> recreates the
+              source 1-to-1 in German — same hook, story, and structure. Use{" "}
+              <span className="font-semibold text-app-fg-secondary">Anpassen</span> only if you want it
+              adapted to your client&apos;s voice. Other angles are same-format variants with a twist.
             </p>
           ) : null}
           <div className="grid gap-3 md:grid-cols-2">
@@ -2165,12 +2238,17 @@ export default function GeneratePage() {
               const isPicked = choosingAngleIndex === i;
               const dimSibling = choosing && !isPicked;
               const blueprint = angleIsBlueprint(raw, i, session);
+              const blueprintRecreateUi =
+                blueprint && sessionUsesBlueprintFirstAngle(session);
+              const anpassenOpen = blueprintAnpassenIndex === i;
               return (
                 <div
                   key={i}
                   className={`glass flex flex-col gap-2 rounded-2xl p-5 transition-opacity ${
                     dimSibling ? "pointer-events-none opacity-40" : ""
-                  } ${isPicked && choosing ? "ring-2 ring-amber-500/45" : ""}`}
+                  } ${isPicked && choosing ? "ring-2 ring-amber-500/45" : ""} ${
+                    blueprintRecreateUi ? "ring-1 ring-emerald-500/25" : ""
+                  }`}
                 >
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="text-sm font-semibold text-app-fg">{str(raw.title)}</p>
@@ -2181,21 +2259,82 @@ export default function GeneratePage() {
                     <span className="font-medium text-app-fg-muted">Hook: </span>
                     {str(raw.draft_hook)}
                   </p>
-                  <button
-                    type="button"
-                    disabled={choosing}
-                    onClick={() => void onChooseAngle(i)}
-                    className="mt-2 inline-flex items-center justify-center gap-2 rounded-lg bg-amber-500/15 py-2 text-xs font-bold text-app-on-amber-title hover:bg-amber-500/25 disabled:opacity-70"
-                  >
-                    {isPicked && choosing ? (
-                      <>
-                        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
-                        Generating…
-                      </>
-                    ) : (
-                      "Use this angle"
-                    )}
-                  </button>
+                  {blueprintRecreateUi ? (
+                    <div className="mt-2 flex flex-col gap-2">
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={choosing}
+                          onClick={() => void onChooseAngle(i)}
+                          className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-emerald-500/20 py-2 text-xs font-bold text-emerald-200 hover:bg-emerald-500/30 disabled:opacity-70 min-w-[8rem]"
+                        >
+                          {isPicked && choosing && !anpassenOpen ? (
+                            <>
+                              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+                              Generating…
+                            </>
+                          ) : (
+                            "1:1 auf Deutsch"
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={choosing}
+                          onClick={() =>
+                            setBlueprintAnpassenIndex((prev) => (prev === i ? null : i))
+                          }
+                          className="inline-flex items-center justify-center rounded-lg border border-app-divider bg-app-surface/40 px-3 py-2 text-xs font-semibold text-app-fg-muted hover:bg-app-surface/70 hover:text-app-fg disabled:opacity-70"
+                        >
+                          {anpassenOpen ? "Anpassen ▲" : "Anpassen"}
+                        </button>
+                      </div>
+                      {anpassenOpen ? (
+                        <div className="flex flex-col gap-2 rounded-xl border border-app-divider/80 bg-app-surface/30 p-3">
+                          <label className="text-[11px] font-medium text-app-fg-muted">
+                            Was möchtest du anpassen?
+                          </label>
+                          <textarea
+                            value={blueprintAdaptInstruction}
+                            onChange={(e) => setBlueprintAdaptInstruction(e.target.value)}
+                            placeholder="z. B. stärker auf Führungskräfte im Mittelstand ausrichten, CTA auf Lead-Magnet X…"
+                            rows={3}
+                            className="w-full resize-y rounded-lg border border-app-divider bg-app-bg/60 px-3 py-2 text-xs text-app-fg placeholder:text-app-fg-subtle focus:outline-none focus:ring-1 focus:ring-amber-500/40"
+                          />
+                          <button
+                            type="button"
+                            disabled={choosing || !blueprintAdaptInstruction.trim()}
+                            onClick={() => void onChooseAngle(i, blueprintAdaptInstruction)}
+                            className="inline-flex items-center justify-center gap-2 rounded-lg bg-amber-500/15 py-2 text-xs font-bold text-app-on-amber-title hover:bg-amber-500/25 disabled:opacity-50"
+                          >
+                            {isPicked && choosing ? (
+                              <>
+                                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+                                Generating…
+                              </>
+                            ) : (
+                              "Mit Anpassungen generieren"
+                            )}
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={choosing}
+                      onClick={() => void onChooseAngle(i)}
+                      className="mt-2 inline-flex items-center justify-center gap-2 rounded-lg bg-amber-500/15 py-2 text-xs font-bold text-app-on-amber-title hover:bg-amber-500/25 disabled:opacity-70"
+                    >
+                      {isPicked && choosing ? (
+                        <>
+                          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+                          Generating…
+                        </>
+                      ) : (
+                        "Use this angle"
+                      )}
+                    </button>
+                  )}
                 </div>
               );
             })}

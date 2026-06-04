@@ -38,6 +38,7 @@ from models.generation import (
 from services.content_generation import (
     GENERATION_PROMPT_VERSION,
     ALLOWED_AUTO_IDEA_FORMATS,
+    _is_blueprint_angle,
     compact_analysis_for_prompt,
     angles_from_session_row,
     fetch_reel_analyses_for_generation,
@@ -181,6 +182,130 @@ def _load_analysis_with_meta(
     else:
         r["_reel_meta"] = None
     return r
+
+
+def _patterns_have_verbatim(patterns: Dict[str, Any]) -> bool:
+    if not isinstance(patterns, dict):
+        return False
+    sr = patterns.get("source_reference")
+    if not isinstance(sr, dict):
+        return False
+    vc = sr.get("verbatim_capture")
+    return isinstance(vc, dict) and bool(
+        vc.get("on_screen_text") or vc.get("spoken_transcript")
+    )
+
+
+def _analysis_video_analyzed(fa: Dict[str, Any]) -> bool:
+    """True when analysis was produced from actual video frames, not caption-only."""
+    prov = fa.get("media_provenance")
+    if isinstance(prov, dict) and prov.get("video_analyzed") is not None:
+        return bool(prov.get("video_analyzed"))
+    return bool(fa.get("video_analyzed"))
+
+
+def _verbatim_from_analysis_row(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not isinstance(row, dict):
+        return None
+    fa = row.get("full_analysis_json")
+    if not isinstance(fa, dict):
+        return None
+    if not _analysis_video_analyzed(fa):
+        return None
+    vc = fa.get("verbatim_capture")
+    if isinstance(vc, dict) and (vc.get("on_screen_text") or vc.get("spoken_transcript")):
+        return vc
+    return None
+
+
+def _ensure_verbatim_in_patterns(
+    supabase: Client,
+    settings: Settings,
+    *,
+    client_id: str,
+    session_row: Dict[str, Any],
+    patterns: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Re-hydrate verbatim_capture into a session's stored patterns for 1:1 blueprint.
+
+    Sessions created before verbatim capture existed (or before the source reel was
+    re-analyzed) have no `source_reference.verbatim_capture`. Choose-angle / regenerate
+    read the stored patterns, so without this the 1:1 path falls back to invented beats.
+    This pulls verbatim from reel_analyses (and triggers a one-time video re-analysis when
+    the stored analysis predates capture and Apify is available).
+    """
+    if not isinstance(patterns, dict):
+        return patterns
+    if str(session_row.get("source_type") or "").strip() != "url_adapt":
+        return patterns
+    if _patterns_have_verbatim(patterns):
+        return patterns
+
+    analysis_row: Optional[Dict[str, Any]] = None
+    ids = session_row.get("source_analysis_ids")
+    first_id = None
+    if isinstance(ids, list):
+        first_id = next((str(x).strip() for x in ids if str(x).strip()), None)
+    if first_id:
+        try:
+            res = (
+                supabase.table("reel_analyses")
+                .select(_ANALYSIS_SEL)
+                .eq("client_id", client_id)
+                .eq("id", first_id)
+                .limit(1)
+                .execute()
+            )
+            if res.data:
+                analysis_row = dict(res.data[0])
+        except Exception:
+            analysis_row = None
+
+    src_url = str(session_row.get("source_url") or "").strip()
+    url_key = canonical_instagram_post_url(src_url) if src_url else ""
+    if analysis_row is None and url_key:
+        analysis_row = _load_analysis_with_meta(supabase, client_id, url_key)
+
+    vc = _verbatim_from_analysis_row(analysis_row)
+
+    # Stored analysis predates verbatim capture — re-watch the video once if we can.
+    if vc is None and url_key and settings.apify_api_token:
+        try:
+            _execute_reel_analyze_url_core(
+                settings,
+                supabase,
+                client_id=client_id,
+                analysis_job_id=generate_job_id(),
+                reel_url=url_key,
+                analysis_source="generate_choose_verbatim_backfill",
+                niche_context=_niche_context_for_reel_analysis(supabase, client_id),
+                skip_apify=False,
+            )
+            analysis_row = _load_analysis_with_meta(supabase, client_id, url_key)
+            vc = _verbatim_from_analysis_row(analysis_row)
+        except ReelAnalyzeTerminalError as e:
+            logger.warning("verbatim re-hydrate skipped for %s: %s", url_key, e.code)
+        except Exception:
+            logger.exception("verbatim re-hydrate failed for %s", url_key)
+
+    if vc is None:
+        return patterns
+
+    out = dict(patterns)
+    sr = out.get("source_reference")
+    sr = dict(sr) if isinstance(sr, dict) else {}
+    sr["verbatim_capture"] = vc
+    out["source_reference"] = sr
+
+    # Persist back so future regenerations on this session stay 1:1.
+    try:
+        supabase.table("generation_sessions").update(
+            {"synthesized_patterns": out, "updated_at": _now_iso()}
+        ).eq("id", str(session_row.get("id"))).execute()
+    except Exception:
+        logger.exception("failed to persist re-hydrated verbatim patterns")
+
+    return out
 
 
 def _fetch_competitor_hints(supabase: Client, client_id: str, limit: int = 22) -> str:
@@ -456,6 +581,33 @@ def generation_start(
                 one = _load_analysis_with_meta(supabase, client_id, url_key)
             if not one:
                 raise HTTPException(status_code=400, detail="Could not load analysis for this URL")
+            fa0 = one.get("full_analysis_json")
+            vc0 = fa0.get("verbatim_capture") if isinstance(fa0, dict) else None
+            va0 = _analysis_video_analyzed(fa0) if isinstance(fa0, dict) else False
+            needs_verbatim = not (
+                va0
+                and isinstance(vc0, dict)
+                and vc0.get("on_screen_text")
+            )
+            if needs_verbatim and settings.apify_api_token:
+                try:
+                    _execute_reel_analyze_url_core(
+                        settings,
+                        supabase,
+                        client_id=client_id,
+                        analysis_job_id=generate_job_id(),
+                        reel_url=raw_u,
+                        analysis_source="generate_url_adapt_verbatim_backfill",
+                        niche_context=_niche_context_for_reel_analysis(supabase, client_id),
+                        skip_apify=False,
+                    )
+                    one = _load_analysis_with_meta(supabase, client_id, url_key)
+                except ReelAnalyzeTerminalError as e:
+                    logger.warning(
+                        "verbatim backfill skipped for %s: %s", url_key, e.code
+                    )
+            if not one:
+                raise HTTPException(status_code=400, detail="Could not load analysis for this URL")
             packed = compact_analysis_for_prompt(one, reel_meta=one.get("_reel_meta"))
             patterns = run_adaptation_synthesis(
                 settings,
@@ -466,20 +618,26 @@ def generation_start(
             if not isinstance(patterns, dict):
                 patterns = {}
             patterns = merge_source_reference_into_patterns(patterns, packed)
-            extra_adapt = (
-                body.extra_instruction.strip()
-                if body.extra_instruction and body.extra_instruction.strip()
-                else None
-            )
-            angles = run_angle_generation(
-                settings,
-                client_row=client_row,
-                synthesized_patterns=patterns,
-                extra_instruction=extra_adapt,
-                adapt_single_reference_reel=True,
-                target_format_key=user_target_fk,
-                selected_cta=cta_payload,
-            )
+            if body.recreate_mode == "one_to_one":
+                # Strict 1:1 recreation: skip angle generation/selection entirely. We
+                # package the blueprint directly after insert (see one_to_one branch below),
+                # so a single synthetic blueprint angle is enough to drive the verbatim copy.
+                angles = [_synthetic_blueprint_angle()]
+            else:
+                extra_adapt = (
+                    body.extra_instruction.strip()
+                    if body.extra_instruction and body.extra_instruction.strip()
+                    else None
+                )
+                angles = run_angle_generation(
+                    settings,
+                    client_row=client_row,
+                    synthesized_patterns=patterns,
+                    extra_instruction=extra_adapt,
+                    adapt_single_reference_reel=True,
+                    target_format_key=user_target_fk,
+                    selected_cta=cta_payload,
+                )
             if one.get("id"):
                 analysis_ids.append(str(one["id"]))
             if one.get("reel_id"):
@@ -572,7 +730,8 @@ def generation_start(
         logger.exception("generation start failed")
         raise HTTPException(status_code=502, detail=str(e)) from e
 
-    if len(angles) < 3:
+    one_to_one_recreate = st == "url_adapt" and body.recreate_mode == "one_to_one"
+    if not one_to_one_recreate and len(angles) < 3:
         raise HTTPException(
             status_code=502,
             detail="Model returned too few angles; retry or adjust inputs.",
@@ -644,36 +803,69 @@ def generation_start(
         ) from e
     if not ins.data:
         raise HTTPException(status_code=500, detail="Insert failed")
+
+    if one_to_one_recreate:
+        # Skip the angle-selection step: package the strict 1:1 blueprint right away so the
+        # session lands on content_ready and the UI opens directly in the studio.
+        inserted = dict(ins.data[0])
+        try:
+            return _finalize_session_package(
+                supabase,
+                settings,
+                client_id=client_id,
+                session_id=sid,
+                row=inserted,
+                client_row=client_row,
+                angle_index=0,
+                chosen_angle=angles[0],
+                patterns=patterns,
+                feedback=None,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.exception("one_to_one recreate packaging failed")
+            raise HTTPException(status_code=502, detail=str(e)) from e
+
     return _row_to_out(ins.data[0])
 
 
-@router.post(
-    "/clients/{slug}/generate/sessions/{session_id}/choose-angle",
-    response_model=GenerationSessionOut,
-)
-def generation_choose_angle(
-    slug: str,
+def _synthetic_blueprint_angle() -> Dict[str, Any]:
+    """Minimal blueprint angle for the one_to_one recreate path (no angle generation).
+
+    `run_content_package` only reads optional angle fields (title/situation/...); the strict
+    1:1 output is driven by `verbatim_capture`, so an empty-ish blueprint angle is sufficient.
+    `angle_role == "blueprint"` is what triggers strict_blueprint downstream.
+    """
+    return {
+        "title": "1:1 recreation",
+        "angle_role": "blueprint",
+        "situation": "",
+        "emotional_trigger": "",
+        "draft_hook": "",
+        "mechanism_note": "",
+    }
+
+
+def _finalize_session_package(
+    supabase: Client,
+    settings: Settings,
+    *,
+    client_id: str,
     session_id: str,
-    body: GenerationChooseAngleBody,
-    client_id: Annotated[str, Depends(resolve_client_id)],
-    supabase: Annotated[Client, Depends(get_supabase)],
-    settings: Annotated[Settings, Depends(get_settings)],
+    row: Dict[str, Any],
+    client_row: Dict[str, Any],
+    angle_index: int,
+    chosen_angle: Dict[str, Any],
+    patterns: Dict[str, Any],
+    feedback: Optional[str],
 ) -> dict:
-    _ = slug
-    if not settings.openrouter_api_key:
-        raise HTTPException(status_code=503, detail="OPENROUTER_API_KEY not configured")
+    """Package the chosen angle into final content and persist it (status content_ready).
 
-    row = _load_session(supabase, client_id, session_id)
-    angles = angles_from_session_row(row)
-    if not angles:
-        raise HTTPException(status_code=400, detail="Session has no angles")
-    if body.angle_index < 0 or body.angle_index >= len(angles):
-        raise HTTPException(status_code=400, detail="angle_index out of range")
-
-    client_row = _load_client_for_generation(supabase, client_id)
-    patterns = row.get("synthesized_patterns") if isinstance(row.get("synthesized_patterns"), dict) else {}
-    chosen = angles[body.angle_index]
-
+    Shared by choose-angle (angle picked in UI) and the one_to_one recreate path on /start
+    (synthetic blueprint angle, no angle selection). Handles carousel vs video formats,
+    cover options, the finalize/video spec, and returns the serialized session row.
+    """
     raw_fk = str(row.get("source_format_key") or "").strip()
     fk = canonicalize_stored_format_key(raw_fk) or raw_fk or None
     selected_cta = row.get("selected_cta") if isinstance(row.get("selected_cta"), dict) else None
@@ -685,19 +877,20 @@ def generation_choose_angle(
                 settings,
                 client_row=client_row,
                 synthesized_patterns=patterns,
-                chosen_angle=chosen,
+                chosen_angle=chosen_angle,
+                feedback=feedback,
                 adapt_single_reference_reel=_session_adapts_single_reference_reel(row),
                 selected_cta=selected_cta,
             )
         except Exception as e:
-            logger.exception("generation choose-angle failed (carousel copy)")
+            logger.exception("session package failed (carousel copy)")
             raise HTTPException(status_code=502, detail=str(e)) from e
 
         from models.generation import GenerateCarouselSlidesBody
         from routers.creation import build_carousel_slides_payload, carousel_slide_count_effective
 
         temp_row = dict(row)
-        temp_row["chosen_angle_index"] = body.angle_index
+        temp_row["chosen_angle_index"] = angle_index
         temp_row["hooks"] = copy_pkg["hooks"]
         cc = carousel_slide_count_effective(temp_row, 6)
         try:
@@ -710,7 +903,7 @@ def generation_choose_angle(
                 body=GenerateCarouselSlidesBody(count=cc, style=None),
             )
         except Exception as e:
-            logger.exception("generation choose-angle failed (carousel slides)")
+            logger.exception("session package failed (carousel slides)")
             raise HTTPException(status_code=502, detail=str(e)) from e
 
         script_outline = "\n\n".join(
@@ -721,7 +914,7 @@ def generation_choose_angle(
 
         now = _now_iso()
         patch = {
-            "chosen_angle_index": body.angle_index,
+            "chosen_angle_index": angle_index,
             "hooks": copy_pkg["hooks"],
             "script": script_outline or None,
             "caption_body": copy_pkg["caption_body"],
@@ -752,13 +945,14 @@ def generation_choose_angle(
             settings,
             client_row=client_row,
             synthesized_patterns=patterns,
-            chosen_angle=chosen,
+            chosen_angle=chosen_angle,
+            feedback=feedback,
             source_format_key=fk,
             adapt_single_reference_reel=_session_adapts_single_reference_reel(row),
             selected_cta=selected_cta,
         )
     except Exception as e:
-        logger.exception("generation choose-angle failed")
+        logger.exception("session package failed")
         raise HTTPException(status_code=502, detail=str(e)) from e
 
     cover_options: List[str] = []
@@ -766,7 +960,7 @@ def generation_choose_angle(
         cover_options = run_cover_text_options(
             settings,
             client_row=client_row,
-            chosen_angle=chosen,
+            chosen_angle=chosen_angle,
             hooks=package["hooks"],
             script=package["script"],
             text_blocks=package.get("text_blocks"),
@@ -777,7 +971,7 @@ def generation_choose_angle(
 
     now = _now_iso()
     patch = {
-        "chosen_angle_index": body.angle_index,
+        "chosen_angle_index": angle_index,
         "hooks": package["hooks"],
         "script": package["script"],
         "caption_body": package["caption_body"],
@@ -804,6 +998,56 @@ def generation_choose_angle(
         updated_at_iso=_now_iso(),
     )
     return _row_to_out(_load_session(supabase, client_id, session_id))
+
+
+@router.post(
+    "/clients/{slug}/generate/sessions/{session_id}/choose-angle",
+    response_model=GenerationSessionOut,
+)
+def generation_choose_angle(
+    slug: str,
+    session_id: str,
+    body: GenerationChooseAngleBody,
+    client_id: Annotated[str, Depends(resolve_client_id)],
+    supabase: Annotated[Client, Depends(get_supabase)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict:
+    _ = slug
+    if not settings.openrouter_api_key:
+        raise HTTPException(status_code=503, detail="OPENROUTER_API_KEY not configured")
+
+    row = _load_session(supabase, client_id, session_id)
+    angles = angles_from_session_row(row)
+    if not angles:
+        raise HTTPException(status_code=400, detail="Session has no angles")
+    if body.angle_index < 0 or body.angle_index >= len(angles):
+        raise HTTPException(status_code=400, detail="angle_index out of range")
+
+    client_row = _load_client_for_generation(supabase, client_id)
+    patterns = row.get("synthesized_patterns") if isinstance(row.get("synthesized_patterns"), dict) else {}
+    chosen = angles[body.angle_index]
+    choose_feedback = (
+        body.extra_instruction.strip()
+        if body.extra_instruction and body.extra_instruction.strip()
+        else None
+    )
+    if not choose_feedback and _is_blueprint_angle(chosen):
+        patterns = _ensure_verbatim_in_patterns(
+            supabase, settings, client_id=client_id, session_row=row, patterns=patterns
+        )
+
+    return _finalize_session_package(
+        supabase,
+        settings,
+        client_id=client_id,
+        session_id=session_id,
+        row=row,
+        client_row=client_row,
+        angle_index=body.angle_index,
+        chosen_angle=chosen,
+        patterns=patterns,
+        feedback=choose_feedback,
+    )
 
 
 @router.post(
@@ -890,6 +1134,10 @@ def generation_regenerate(
 
     patterns = row.get("synthesized_patterns") if isinstance(row.get("synthesized_patterns"), dict) else {}
     client_row = _load_client_for_generation(supabase, client_id)
+    if not (body.feedback and body.feedback.strip()) and _is_blueprint_angle(chosen):
+        patterns = _ensure_verbatim_in_patterns(
+            supabase, settings, client_id=client_id, session_row=row, patterns=patterns
+        )
 
     hooks = row.get("hooks") if isinstance(row.get("hooks"), list) else []
     hooks = [h for h in hooks if isinstance(h, dict)]

@@ -1377,6 +1377,7 @@ export async function generationStart(
     selected_carousel_template?: SelectedCarouselTemplatePayload;
     selected_cover_template?: SelectedCoverTemplatePayload;
     carousel_slide_count?: number;
+    recreate_mode?: "one_to_one" | "adapt";
   },
 ): Promise<{ ok: true; data: GenerationSession } | { ok: false; error: string }> {
   const base = getContentApiBase();
@@ -1405,16 +1406,20 @@ export async function generationChooseAngle(
   orgSlug: string,
   sessionId: string,
   angleIndex: number,
+  options?: { extra_instruction?: string },
 ): Promise<{ ok: true; data: GenerationSession } | { ok: false; error: string }> {
   const base = getContentApiBase();
   const headers = await clientApiHeaders({ orgSlug });
+  const body: { angle_index: number; extra_instruction?: string } = { angle_index: angleIndex };
+  const extra = options?.extra_instruction?.trim();
+  if (extra) body.extra_instruction = extra;
   try {
     const res = await contentApiFetch(
       `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/generate/sessions/${encodeURIComponent(sessionId)}/choose-angle`,
       {
         method: "POST",
         headers: { ...headers, "Content-Type": "application/json" },
-        body: JSON.stringify({ angle_index: angleIndex }),
+        body: JSON.stringify(body),
       },
     );
     const json = (await res.json().catch(() => ({}))) as GenerationSession & { detail?: unknown };
