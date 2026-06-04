@@ -74,9 +74,9 @@ Optional: `backend/.env` or `config/.env` for overrides (see load order in root 
 
 ## Scheduled scraping (GitHub Actions / cron)
 
-Three responsibilities, three schedules (see `.github/workflows/cron-*.yml`):
+One daily workflow runs all three POSTs **in parallel** in the same run: `.github/workflows/cron-daily-pipeline.yml` (default **14:30 Asia/Makassar**). Individual routes can still be triggered via `workflow_dispatch` on `cron-sync-all.yml`, `cron-niche-discovery.yml`, and `cron-scraped-reels-refresh.yml`.
 
-| Cron | Route | Role |
+| Step | Route | Role |
 |------|--------|------|
 | **sync-all** | `POST /api/v1/cron/sync-all` | Daily **discovery**: `profile_scrape` for the client’s own handle + each competitor (`2 days`, capped results). No baseline, no niche keyword job. |
 

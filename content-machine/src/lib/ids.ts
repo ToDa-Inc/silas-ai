@@ -40,6 +40,10 @@ export function newBaselineId(): string {
   return generateKey(8, "cbl_");
 }
 
+export function newOnboardingStateId(): string {
+  return generateKey(8, "obs_");
+}
+
 /** FastAPI `X-Api-Key` — same shape as `backend/core/id_generator.generate_key(8)` (no prefix). */
 export function newProfileApiKey(): string {
   return generateKey(8, "");

@@ -1,7 +1,8 @@
 # Auto-profile from Instagram (spec)
 
-**Status:** specification — not implemented  
-**Last updated:** 2026-03-24
+**Status:** implemented (`backend/jobs/client_auto_profile.py`, worker job type `client_auto_profile`)  
+**Onboarding:** queued by `onboarding_pipeline` with `merge_with_existing: true` so quiz answers are not wiped.  
+**Last updated:** 2026-05-25
 
 ## Problem
 

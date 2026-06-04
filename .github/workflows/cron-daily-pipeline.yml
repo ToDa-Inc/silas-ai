@@ -1,0 +1,157 @@
+# Daily pipeline: sync-all + niche discovery + scraped-reels-refresh in one scheduled run.
+# All three jobs start together when this workflow is triggered (parallel jobs, no needs:).
+#
+# Secrets (Settings → Secrets and variables → Actions):
+#   CRON_SECRET — required
+#   SYNC_ALL_URL — required; base for sync-all; niche + refresh paths derived from it
+#   NICHE_DISCOVERY_CRON_URL — optional override for niche POST
+#   SCRAPED_REELS_REFRESH_URL — optional override for refresh POST
+#
+# Schedules only run from the repository default branch.
+# GitHub may delay schedule triggers under load; all three still fire in the same run.
+
+name: Cron daily pipeline
+
+on:
+  schedule:
+    - cron: "30 14 * * *"
+      timezone: Asia/Makassar
+  workflow_dispatch:
+
+jobs:
+  sync-all:
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST sync-all
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SYNC_ALL_URL: ${{ secrets.SYNC_ALL_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CRON_SECRET:-}" ] || [ -z "${SYNC_ALL_URL:-}" ]; then
+            echo "::error::Set Actions secrets CRON_SECRET and SYNC_ALL_URL"
+            exit 1
+          fi
+          curl -fsS --max-time 300 -X POST "$SYNC_ALL_URL" \
+            -H "X-Cron-Secret: ${CRON_SECRET}" \
+            -H "Content-Type: application/json" \
+            -w "\nHTTP %{http_code}\n"
+
+  niche-discovery:
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST keyword-reel-similarity
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          NICHE_DISCOVERY_CRON_URL: ${{ secrets.NICHE_DISCOVERY_CRON_URL }}
+          SYNC_ALL_URL: ${{ secrets.SYNC_ALL_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${CRON_SECRET:-}" ]; then
+            echo "::error::Set Actions secret CRON_SECRET"
+            exit 1
+          fi
+
+          _sync_base="${SYNC_ALL_URL:-}"
+          _sync_base="${_sync_base%/}"
+          _derived_keyword="${_sync_base%/sync-all}/keyword-reel-similarity"
+          _derived_api_niche="${_sync_base%/sync-all}/niche-discovery"
+
+          POST_URL="${NICHE_DISCOVERY_CRON_URL:-}"
+          if [ -z "$POST_URL" ]; then
+            if [ -n "${SYNC_ALL_URL:-}" ]; then
+              POST_URL="$_derived_keyword"
+              echo "::notice::NICHE_DISCOVERY_CRON_URL empty — using ${POST_URL}"
+            else
+              echo "::error::Set NICHE_DISCOVERY_CRON_URL, or set SYNC_ALL_URL so the niche path can be derived from sync-all."
+              exit 1
+            fi
+          fi
+
+          case "$POST_URL" in
+            *keyword-reel-similarity*|*niche-discovery*) ;;
+            *)
+              echo "::error::NICHE_DISCOVERY_CRON_URL must include keyword-reel-similarity or niche-discovery (not just the Railway host)."
+              exit 1
+              ;;
+          esac
+
+          body_file="$(mktemp)"
+          do_post() {
+            local url="$1"
+            curl -sS --max-time 600 -o "$body_file" -w "%{http_code}" -X POST "$url" \
+              -H "X-Cron-Secret: ${CRON_SECRET}" \
+              -H "Content-Type: application/json"
+          }
+
+          declare -a candidates=()
+          candidates+=("$POST_URL")
+          if [[ "${SYNC_ALL_URL:-}" == *sync-all* ]]; then
+            candidates+=("$_derived_keyword")
+            candidates+=("$_derived_api_niche")
+          fi
+
+          mapfile -t uniq < <(printf '%s\n' "${candidates[@]}" | awk 'NF && !seen[$0]++')
+
+          code="000"
+          n="${#uniq[@]}"
+          i=0
+          for url in "${uniq[@]}"; do
+            i=$((i + 1))
+            echo "::notice::Niche cron attempt ${i}/${n}"
+            code="$(do_post "$url")"
+            cat "$body_file"
+            echo ""
+            echo "HTTP ${code}"
+            if [ "$code" = "200" ]; then
+              break
+            fi
+          done
+
+          rm -f "$body_file"
+
+          if [ "$code" != "200" ]; then
+            echo "::error::All candidate URLs returned non-200 (last HTTP ${code})."
+            exit 1
+          fi
+
+  scraped-reels-refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST scraped-reels-refresh
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SCRAPED_REELS_REFRESH_URL: ${{ secrets.SCRAPED_REELS_REFRESH_URL }}
+          SYNC_ALL_URL: ${{ secrets.SYNC_ALL_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${CRON_SECRET:-}" ]; then
+            echo "::error::Set Actions secret CRON_SECRET"
+            exit 1
+          fi
+
+          POST_URL="${SCRAPED_REELS_REFRESH_URL:-}"
+          if [ -z "$POST_URL" ]; then
+            if [ -z "${SYNC_ALL_URL:-}" ]; then
+              echo "::error::Set SCRAPED_REELS_REFRESH_URL or SYNC_ALL_URL"
+              exit 1
+            fi
+            _base="${SYNC_ALL_URL%/}"
+            POST_URL="${_base%/sync-all}/scraped-reels-refresh"
+            echo "::notice::SCRAPED_REELS_REFRESH_URL empty — using ${POST_URL}"
+          fi
+
+          case "$POST_URL" in
+            *scraped-reels-refresh*) ;;
+            *)
+              echo "::error::URL must include scraped-reels-refresh (got host-only?)"
+              exit 1
+              ;;
+          esac
+
+          curl -fsS --max-time 600 -X POST "$POST_URL" \
+            -H "X-Cron-Secret: ${CRON_SECRET}" \
+            -H "Content-Type: application/json" \
+            -w "\nHTTP %{http_code}\n"

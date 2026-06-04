@@ -1,18 +1,10 @@
-# Triggers POST /api/v1/cron/sync-all — daily own + competitor profile discovery only
-# (2-day lookback, results cap). Baseline and niche keyword discovery are separate crons.
+# POST /api/v1/cron/sync-all — manual only. Daily schedule: cron-daily-pipeline.yml (runs with niche + refresh).
 #
-# Required repo secrets (Settings → Secrets and variables → Actions):
-#   SYNC_ALL_URL  — full URL, e.g. https://silas-content-system-production.up.railway.app/api/v1/cron/sync-all
-#   CRON_SECRET   — same value as CRON_SECRET on the API service
-#
-# Schedules only run from the repository’s default branch.
+# Secrets: CRON_SECRET, SYNC_ALL_URL
 
 name: Cron sync-all
 
 on:
-  schedule:
-    # Once daily at 05:00 UTC — see cron-scraped-reels-refresh.yml for daily metrics refresh
-    - cron: "0 5 * * *"
   workflow_dispatch:
 
 jobs:

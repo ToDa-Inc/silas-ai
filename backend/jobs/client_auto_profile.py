@@ -180,25 +180,42 @@ def run_client_auto_profile(settings: Settings, job: Dict[str, Any]) -> None:
         seeds = []
     seeds = [str(s).strip().lstrip("@") for s in seeds if str(s).strip()][:15]
 
-    products = dict(client.get("products") or {})
-    products["competitor_seeds"] = seeds
-    products["auto_profile"] = {
-        "content_style": ai.get("content_style"),
-        "confidence": ai.get("confidence"),
-        "job_id": job_id,
-        "at": datetime.now(timezone.utc).isoformat(),
-    }
-
     lang = _map_language(str(ai.get("primary_language") or ""), str(client.get("language") or "de"))
+    payload = job.get("payload") or {}
+    merge_existing = bool(payload.get("merge_with_existing"))
 
-    supabase.table("clients").update(
-        {
+    if merge_existing:
+        from services.onboarding_auto_profile_merge import merge_auto_profile_into_client
+
+        patch = merge_auto_profile_into_client(
+            existing_niche_config=client.get("niche_config"),
+            existing_icp=client.get("icp"),
+            existing_products=client.get("products"),
+            inferred_niches=niches,
+            inferred_icp=new_icp,
+            inferred_seeds=seeds,
+            inferred_lang=lang,
+            content_style=ai.get("content_style"),
+            confidence=ai.get("confidence"),
+            job_id=job_id,
+        )
+    else:
+        products = dict(client.get("products") or {})
+        products["competitor_seeds"] = seeds
+        products["auto_profile"] = {
+            "content_style": ai.get("content_style"),
+            "confidence": ai.get("confidence"),
+            "job_id": job_id,
+            "at": datetime.now(timezone.utc).isoformat(),
+        }
+        patch = {
             "niche_config": niches,
             "icp": new_icp,
             "products": products,
             "language": lang,
         }
-    ).eq("id", client_id).execute()
+
+    supabase.table("clients").update(patch).eq("id", client_id).execute()
 
     try:
         from services.client_dna_compile import maybe_recompile_client_dna

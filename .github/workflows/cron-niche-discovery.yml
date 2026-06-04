@@ -13,13 +13,11 @@
 #
 # On 404, the job tries every distinct candidate URL (secret + derived paths) until one returns 200.
 #
-# Schedules only run from the repository’s default branch.
+# Daily schedule: cron-daily-pipeline.yml (runs with sync-all + scraped-reels-refresh).
 
 name: Cron niche discovery
 
 on:
-  schedule:
-    - cron: "0 6 * * *"
   workflow_dispatch:
 
 jobs:

@@ -1,7 +1,7 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { DashboardShell } from "@/components/dashboard/dashboard-shell";
-import { getCachedServerApiContext } from "@/lib/api";
+import { fetchOnboardingStatus, getCachedServerApiContext } from "@/lib/api";
 import { createClient } from "@/lib/supabase/server";
 
 export default async function DashboardLayout({
@@ -17,6 +17,17 @@ export default async function DashboardLayout({
   }
   if (ctx.user && !ctx.tenancy) {
     redirect("/onboarding");
+  }
+  if (ctx.user && ctx.tenancy && ctx.clientSlug) {
+    const onboarding = await fetchOnboardingStatus();
+    if (
+      onboarding.ok &&
+      onboarding.data &&
+      onboarding.data.status !== "completed" &&
+      onboarding.data.current_step !== "done"
+    ) {
+      redirect("/onboarding");
+    }
   }
   let clients: { slug: string; name: string }[] = ctx.workspaceClients ?? [];
 

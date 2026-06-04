@@ -364,6 +364,52 @@ export async function fetchCompetitors(): Promise<{
   }
 }
 
+export type OnboardingStatusRow = {
+  id: string;
+  client_id: string;
+  status: "in_progress" | "completed" | "abandoned";
+  current_step: string;
+  completed_steps: string[];
+  quiz_answers: Record<string, unknown>;
+  pipeline_progress: Record<string, unknown>;
+  job_ids: Record<string, unknown>;
+  selected_reel_id: string | null;
+  selected_analysis_id: string | null;
+  selected_generation_session_id: string | null;
+  action_plan: Record<string, unknown> | null;
+  last_error: string | null;
+  aha_completed_at: string | null;
+  aha_complete: boolean;
+};
+
+export async function fetchOnboardingStatus(): Promise<{
+  ok: boolean;
+  data: OnboardingStatusRow | null;
+  error?: string;
+}> {
+  const base = getContentApiBase();
+  try {
+    const { headers, clientSlug } = await getCachedServerApiContext();
+    if (!clientSlug) {
+      return { ok: false, data: null, error: "No active client" };
+    }
+    const res = await fetch(
+      `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/onboarding/status`,
+      { headers: { ...headers }, cache: "no-store" },
+    );
+    if (!res.ok) {
+      return { ok: false, data: null, error: `${res.status} ${await res.text()}` };
+    }
+    return { ok: true, data: (await res.json()) as OnboardingStatusRow };
+  } catch (e) {
+    return {
+      ok: false,
+      data: null,
+      error: e instanceof Error ? e.message : "fetch failed",
+    };
+  }
+}
+
 export async function fetchClient(): Promise<{
   ok: boolean;
   data: ClientRow | null;

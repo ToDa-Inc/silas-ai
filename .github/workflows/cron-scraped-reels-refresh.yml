@@ -7,14 +7,11 @@
 #   SCRAPED_REELS_REFRESH_URL — optional full POST URL …/api/v1/cron/scraped-reels-refresh
 #   SYNC_ALL_URL — if SCRAPED_REELS_REFRESH_URL is unset, path is derived from sync-all.
 #
-# Schedules only run from the repository’s default branch.
+# Daily schedule: cron-daily-pipeline.yml (runs with sync-all + niche discovery).
 
 name: Cron scraped-reels-refresh
 
 on:
-  schedule:
-    # After sync-all (05:00 UTC) so new scrapes can land first; refresh is independent of sync timing.
-    - cron: "30 6 * * *"
   workflow_dispatch:
 
 jobs:

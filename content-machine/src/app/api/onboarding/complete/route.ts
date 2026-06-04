@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { createClient as createServerClient } from "@/lib/supabase/server";
-import { newClientId, newMemberId, newOrgId, newProfileApiKey } from "@/lib/ids";
+import { newClientId, newMemberId, newOnboardingStateId, newOrgId, newProfileApiKey } from "@/lib/ids";
 import { slugify } from "@/lib/slug";
 import { ACTIVE_CLIENT_SLUG_COOKIE } from "@/lib/workspace-cookie";
 
@@ -163,6 +163,29 @@ export async function POST(request: Request) {
         );
       }
 
+      const now = new Date().toISOString();
+      const { error: onboardingErr } = await admin.from("client_onboarding_state").insert({
+        id: newOnboardingStateId(),
+        client_id: clientId,
+        status: "in_progress",
+        current_step: "quiz",
+        completed_steps: ["workspace"],
+        quiz_answers: {},
+        pipeline_progress: {},
+        job_ids: {},
+        started_at: now,
+        updated_at: now,
+      });
+
+      if (onboardingErr) {
+        await admin.from("clients").delete().eq("org_id", orgRow.id);
+        await admin.from("organizations").delete().eq("id", orgRow.id);
+        return NextResponse.json(
+          { error: `Could not initialize onboarding: ${onboardingErr.message}` },
+          { status: 500 },
+        );
+      }
+
       const { error: memErr } = await admin.from("organization_members").insert({
         id: newMemberId(),
         org_id: orgRow.id,
@@ -171,6 +194,7 @@ export async function POST(request: Request) {
       });
 
       if (memErr) {
+        await admin.from("client_onboarding_state").delete().eq("client_id", clientId);
         await admin.from("clients").delete().eq("org_id", orgRow.id);
         await admin.from("organizations").delete().eq("id", orgRow.id);
         return NextResponse.json(

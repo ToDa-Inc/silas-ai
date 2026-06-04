@@ -27,6 +27,7 @@ from jobs.format_digest_recompute import run_format_digest_recompute
 from jobs.milestone_scrape import run_milestone_scrape
 from jobs.batch_rescore_scraped_reels_similarity import run_batch_rescore_scraped_reels_similarity
 from jobs.keyword_reel_similarity import run_keyword_reel_similarity
+from jobs.onboarding_pipeline import run_onboarding_pipeline
 from jobs.niche_reel_scrape import run_niche_reel_scrape
 from jobs.reel_analyze_url import run_reel_analyze_bulk, run_reel_analyze_url
 from jobs.scraped_reels_refresh import run_scraped_reels_refresh
@@ -151,6 +152,8 @@ def _process_job_sync(settings: Settings, job: Dict[str, Any]) -> None:
         run_scraped_reels_refresh(settings, job)
     elif jt == "daily_intelligence_tick":
         run_daily_intelligence_tick(settings, job)
+    elif jt == "onboarding_pipeline":
+        run_onboarding_pipeline(settings, job)
     elif jt == "video_render":
         jid = str(job.get("id") or "").strip()
         if jid:

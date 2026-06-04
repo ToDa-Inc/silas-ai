@@ -327,6 +327,9 @@ export type VideoCreateWorkspaceProps = {
   sessionId: string;
   /** Allows the parent to react to state changes (e.g. show a toast or refresh sessions). */
   onSessionUpdated?: (s: GenerationSession) => void;
+  /** First-run onboarding: hide advanced panels and show export-ready CTA. */
+  guidedMode?: boolean;
+  onGuidedComplete?: () => void;
 };
 
 /**
@@ -347,6 +350,8 @@ export function VideoCreateWorkspace({
   orgSlug,
   sessionId,
   onSessionUpdated,
+  guidedMode = false,
+  onGuidedComplete,
 }: VideoCreateWorkspaceProps) {
   const { show } = useToast();
   const [bootstrapDone, setBootstrapDone] = useState(false);
@@ -2931,11 +2936,13 @@ export function VideoCreateWorkspace({
           }
         />
 
-        <AiContextSection
-          hooks={hooks}
-          regenHooks={(fb) => onRegenSection("hooks", fb)}
-          busy={regenBusyScope === "hooks"}
-        />
+        {!guidedMode ? (
+          <AiContextSection
+            hooks={hooks}
+            regenHooks={(fb) => onRegenSection("hooks", fb)}
+            busy={regenBusyScope === "hooks"}
+          />
+        ) : null}
       </div>
     );
   }
@@ -2955,19 +2962,38 @@ export function VideoCreateWorkspace({
             </p>
           </div>
         </div>
-        <div className="mt-4">
-          <AiContextSection
-            hooks={hooks}
-            regenHooks={(fb) => onRegenSection("hooks", fb)}
-            busy={regenBusyScope === "hooks"}
-          />
-        </div>
+        {!guidedMode ? (
+          <div className="mt-4">
+            <AiContextSection
+              hooks={hooks}
+              regenHooks={(fb) => onRegenSection("hooks", fb)}
+              busy={regenBusyScope === "hooks"}
+            />
+          </div>
+        ) : null}
       </div>
     );
   }
 
   return (
     <div className="space-y-4">
+      {guidedMode ? (
+        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
+          <p className="font-semibold text-amber-900 dark:text-amber-100">First-run editor</p>
+          <p className="mt-1 text-xs text-amber-800/90 dark:text-amber-200/80">
+            Refine copy → background → render → cover → caption. When your export is ready, continue onboarding.
+          </p>
+          {(session.rendered_video_url || step3Done) && onGuidedComplete ? (
+            <button
+              type="button"
+              onClick={onGuidedComplete}
+              className="mt-3 rounded-lg bg-amber-500 px-4 py-2 text-xs font-bold text-zinc-950"
+            >
+              Export ready — continue
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <div className="glass rounded-2xl border border-app-divider/80 p-3">
         <div className="flex flex-wrap items-center gap-3">
           <StudioFormatTabs
@@ -4170,11 +4196,13 @@ export function VideoCreateWorkspace({
         }
       />
 
-      <AiContextSection
-        hooks={hooks}
-        regenHooks={(fb) => onRegenSection("hooks", fb)}
-        busy={regenBusyScope === "hooks"}
-      />
+      {!guidedMode ? (
+        <AiContextSection
+          hooks={hooks}
+          regenHooks={(fb) => onRegenSection("hooks", fb)}
+          busy={regenBusyScope === "hooks"}
+        />
+      ) : null}
       </>
       ) : null}
 
