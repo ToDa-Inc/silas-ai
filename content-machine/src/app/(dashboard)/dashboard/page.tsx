@@ -1,15 +1,29 @@
 import {
+  fetchAdaptPreviewReels,
   fetchDashboardCompetitorWins,
   fetchDashboardFreshNiche,
+  fetchHomeSummary,
   fetchIntelligenceStats,
   getCachedServerApiContext,
+  type HomeSummaryRow,
 } from "@/lib/api";
-import { CompetitorWins, FreshFromNiche } from "./dashboard-daily-lane";
-import { DashboardKpiStrip } from "./dashboard-kpi-strip";
-import { DashboardUpdateReels } from "./dashboard-update-reels";
-import { OwnReelMetricsDashboard } from "./own-reel-metrics-dashboard";
+import { HomeFeed } from "@/components/home/home-feed";
 
 type DashboardSearchParams = { focusReel?: string | string[] };
+
+const EMPTY_SUMMARY: HomeSummaryRow = {
+  scout: { watching_accounts: 0, new_this_week: 0, top_opportunity_reel_id: null, working: false },
+  writer: {
+    drafts_ready: 0,
+    in_progress: 0,
+    latest_draft_session_id: null,
+    last_export: null,
+    working: false,
+  },
+  analyst: { reels_studied: 0, avg_views: null, outliers: 0, trend_pct: null, working: false },
+  state: { phase: "", setup_complete: false, onboarding_step: "", is_building: false },
+  momentum: { posts_made: 0, last_export: null },
+};
 
 export default async function DashboardPage({
   searchParams,
@@ -21,72 +35,36 @@ export default async function DashboardPage({
   const focusReel =
     typeof rawFocus === "string" ? rawFocus.trim() : Array.isArray(rawFocus) ? String(rawFocus[0] ?? "").trim() : "";
 
-  const { clientSlug, orgSlug, user, tenancy } = await getCachedServerApiContext();
+  const { clientSlug, orgSlug } = await getCachedServerApiContext();
   const syncDisabled = !clientSlug.trim() || !orgSlug.trim();
-  const syncDisabledHint =
-    user && !tenancy
-      ? "No workspace membership visible for this login — refresh or check your account."
-      : !orgSlug.trim()
-        ? "Missing organization — refresh the page or sign in again."
-        : !clientSlug.trim()
-          ? "Pick a creator in the top bar or finish onboarding."
-          : null;
 
-  const [statsRes, freshRes, winsRes] = await Promise.all([
+  const [summaryRes, statsRes, freshRes, winsRes, adaptRes] = await Promise.all([
+    fetchHomeSummary(),
     fetchIntelligenceStats(),
     fetchDashboardFreshNiche(),
     fetchDashboardCompetitorWins(),
+    fetchAdaptPreviewReels(12),
   ]);
 
+  const summary = summaryRes.ok && summaryRes.data ? summaryRes.data : EMPTY_SUMMARY;
   const stats = statsRes.ok ? statsRes.data : null;
-  const freshNicheReels = freshRes.ok ? freshRes.data : [];
-  const competitorWinReels = winsRes.ok ? winsRes.data : [];
+  const freshReels = freshRes.ok ? freshRes.data : [];
+  const winReels = winsRes.ok ? winsRes.data : [];
+  const adaptReels = adaptRes.ok ? adaptRes.data : [];
 
   return (
-    <main className="mx-auto max-w-7xl px-4 py-8 md:px-6">
-      <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0 space-y-1">
-          <h1 className="text-lg font-semibold text-app-fg">Dashboard</h1>
-          <p className="max-w-xl text-xs text-app-fg-muted">
-            Headline numbers for your reels, fresh niche finds, and competitor breakouts worth recreating —
-            refreshed every day.
-          </p>
-        </div>
-        <DashboardUpdateReels
-          clientSlug={clientSlug}
-          orgSlug={orgSlug}
-          disabled={syncDisabled}
-          disabledHint={syncDisabledHint}
-        />
-      </header>
-
-      <DashboardKpiStrip stats={stats} />
-
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-2">
-          <OwnReelMetricsDashboard
-            clientSlug={clientSlug}
-            orgSlug={orgSlug}
-            focusReelId={focusReel || undefined}
-          />
-        </div>
-        <div className="flex flex-col gap-4 lg:col-span-1">
-          <FreshFromNiche
-            reels={freshNicheReels}
-            clientSlug={clientSlug}
-            orgSlug={orgSlug}
-            disabled={syncDisabled}
-            disabledHint={syncDisabledHint}
-          />
-          <CompetitorWins
-            reels={competitorWinReels}
-            clientSlug={clientSlug}
-            orgSlug={orgSlug}
-            disabled={syncDisabled}
-            disabledHint={syncDisabledHint}
-          />
-        </div>
-      </div>
+    <main className="mx-auto max-w-3xl px-4 py-6 md:max-w-4xl md:px-6 md:py-8">
+      <HomeFeed
+        initialSummary={summary}
+        freshReels={freshReels}
+        winReels={winReels}
+        adaptReels={adaptReels}
+        clientSlug={clientSlug}
+        orgSlug={orgSlug}
+        disabled={syncDisabled}
+        stats={stats}
+        focusReelId={focusReel || undefined}
+      />
     </main>
   );
 }

@@ -3317,8 +3317,284 @@ def dashboard_competitor_wins(
     return top
 
 
+# ---------------------------------------------------------------------------
+# Home dashboard summary (agent team + hero hints)
+# ---------------------------------------------------------------------------
+
+_SCOUT_JOB_TYPES = (
+    "competitor_discovery",
+    "profile_scrape",
+    "keyword_reel_similarity",
+    "onboarding_pipeline",
+)
+_ANALYST_JOB_TYPES = ("auto_analyze_scraped", "baseline_scrape", "reel_analyze_url")
+_WRITER_JOB_TYPES = ("video_render",)
 
 
+def _count_exact(supabase: Client, table: str, **filters) -> int:
+    try:
+        q = supabase.table(table).select("id", count="exact")
+        for key, val in filters.items():
+            if key.endswith("_not_null") and val:
+                q = q.not_.is_(key.replace("_not_null", ""), "null")
+            elif key.endswith("_gte"):
+                q = q.gte(key.replace("_gte", ""), val)
+            else:
+                q = q.eq(key, val)
+        res = q.limit(1).execute()
+        return int(res.count or 0)
+    except Exception:
+        return 0
+
+
+def _any_active_job_types(supabase: Client, client_id: str, job_types: tuple[str, ...]) -> bool:
+    try:
+        res = (
+            supabase.table("background_jobs")
+            .select("id")
+            .eq("client_id", client_id)
+            .in_("job_type", list(job_types))
+            .in_("status", ["queued", "running"])
+            .limit(1)
+            .execute()
+        )
+        return bool(res.data)
+    except Exception:
+        return False
+
+
+def _top_opportunity_reel_id(supabase: Client, client_id: str) -> Optional[str]:
+    """Best-effort top reel for hero: competitor win first, else fresh niche."""
+    since_iso = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    try:
+        wins = (
+            supabase.table("scraped_reels")
+            .select("id, views, account_avg_views, competitor_id")
+            .eq("client_id", client_id)
+            .not_.is_("competitor_id", "null")
+            .gte("posted_at", since_iso)
+            .order("views", desc=True)
+            .limit(30)
+            .execute()
+        )
+        best_id: Optional[str] = None
+        best_ratio = 0.0
+        for row in wins.data or []:
+            avg = _int_metric_val(row.get("account_avg_views"))
+            views = _int_metric_val(row.get("views"))
+            if avg > 0 and views > 0:
+                ratio = views / float(avg)
+                if ratio >= 1.5 and ratio > best_ratio:
+                    best_ratio = ratio
+                    best_id = str(row.get("id") or "")
+        if best_id:
+            return best_id
+        fresh = (
+            supabase.table("scraped_reels")
+            .select("id")
+            .eq("client_id", client_id)
+            .eq("source", "keyword_similarity")
+            .gte("posted_at", since_iso)
+            .order("views", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if fresh.data:
+            return str(fresh.data[0].get("id") or "") or None
+        fallback = (
+            supabase.table("scraped_reels")
+            .select("id")
+            .eq("client_id", client_id)
+            .not_.is_("competitor_id", "null")
+            .order("views", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if fallback.data:
+            return str(fallback.data[0].get("id") or "") or None
+    except Exception:
+        logger.warning("home_summary top_opportunity_reel_id failed", exc_info=True)
+    return None
+
+
+def _latest_export_session(supabase: Client, client_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        res = (
+            supabase.table("generation_sessions")
+            .select("id, thumbnail_url, rendered_video_url, hooks, caption_body, updated_at")
+            .eq("client_id", client_id)
+            .order("updated_at", desc=True)
+            .limit(30)
+            .execute()
+        )
+        for row in res.data or []:
+            thumb = str(row.get("thumbnail_url") or row.get("rendered_video_url") or "").strip()
+            hooks = row.get("hooks")
+            hook_text = ""
+            if isinstance(hooks, list) and hooks and isinstance(hooks[0], dict):
+                hook_text = str(hooks[0].get("text") or "").strip()
+            if not hook_text:
+                hook_text = str(row.get("caption_body") or "").strip()[:120]
+            if thumb or hook_text:
+                return {
+                    "session_id": str(row.get("id") or ""),
+                    "thumbnail_url": thumb or None,
+                    "hook_text": hook_text or None,
+                }
+    except Exception:
+        logger.warning("home_summary latest_export failed", exc_info=True)
+    return None
+
+
+@router.get("/clients/{slug}/home/summary")
+def home_summary(
+    slug: str,
+    client_id: Annotated[str, Depends(resolve_client_id)],
+    supabase: Annotated[Client, Depends(get_supabase)],
+) -> Dict[str, Any]:
+    """Aggregated Home cockpit stats for Scout / Writer / Analyst agents."""
+    _ = slug
+    cache_key = f"home_summary:{client_id}"
+    cached = cache_get(cache_key, ttl_seconds=90)
+    if cached is not None:
+        return cached
+
+    week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+
+    watching = _count_exact(supabase, "competitors", client_id=client_id)
+    try:
+        new_res = (
+            supabase.table("scraped_reels")
+            .select("id", count="exact")
+            .eq("client_id", client_id)
+            .gte("first_seen_at", week_ago)
+            .limit(1)
+            .execute()
+        )
+        new_this_week = int(new_res.count or 0)
+    except Exception:
+        new_this_week = 0
+
+    stats = _compute_client_stats(supabase, client_id)
+    outlier_count = 0
+    try:
+        oc_res = (
+            supabase.table("scraped_reels")
+            .select("id", count="exact")
+            .eq("client_id", client_id)
+            .eq("is_outlier", True)
+            .not_.is_("competitor_id", "null")
+            .limit(1)
+            .execute()
+        )
+        outlier_count = int(oc_res.count or 0)
+    except Exception:
+        pass
+
+    drafts_ready = 0
+    in_progress = 0
+    posts_made = 0
+    latest_draft_session_id: Optional[str] = None
+    try:
+        sess_res = (
+            supabase.table("generation_sessions")
+            .select("id, status, render_status, rendered_video_url, updated_at")
+            .eq("client_id", client_id)
+            .order("updated_at", desc=True)
+            .limit(100)
+            .execute()
+        )
+        for row in sess_res.data or []:
+            st = str(row.get("status") or "")
+            if st == "content_ready":
+                drafts_ready += 1
+                posts_made += 1
+                if not latest_draft_session_id:
+                    latest_draft_session_id = str(row.get("id") or "")
+            elif st == "angles_ready" or str(row.get("render_status") or "") == "rendering":
+                in_progress += 1
+            elif row.get("rendered_video_url"):
+                posts_made += 1
+    except Exception:
+        pass
+
+    last_export = _latest_export_session(supabase, client_id)
+    top_reel_id = _top_opportunity_reel_id(supabase, client_id)
+
+    onboarding_row: Optional[Dict[str, Any]] = None
+    try:
+        ob = (
+            supabase.table("client_onboarding_state")
+            .select("status, current_step, pipeline_progress")
+            .eq("client_id", client_id)
+            .limit(1)
+            .execute()
+        )
+        if ob.data:
+            onboarding_row = dict(ob.data[0])
+    except Exception:
+        pass
+
+    pipeline_progress = (
+        onboarding_row.get("pipeline_progress")
+        if isinstance(onboarding_row, dict) and isinstance(onboarding_row.get("pipeline_progress"), dict)
+        else {}
+    )
+    phase = str(pipeline_progress.get("phase") or "")
+    onboarding_status = str(onboarding_row.get("status") or "") if onboarding_row else ""
+    onboarding_step = str(onboarding_row.get("current_step") or "") if onboarding_row else ""
+    setup_complete = onboarding_status == "completed" or onboarding_step == "done" or phase == "complete"
+
+    building_phases = {
+        "dna_compile",
+        "baseline_scrape",
+        "auto_profile",
+        "competitor_discovery",
+        "profile_scrapes",
+        "auto_analyze",
+    }
+    is_building = phase in building_phases or _any_active_job_types(
+        supabase, client_id, _SCOUT_JOB_TYPES
+    )
+
+    scout_working = _any_active_job_types(supabase, client_id, _SCOUT_JOB_TYPES)
+    writer_working = _any_active_job_types(supabase, client_id, _WRITER_JOB_TYPES)
+    analyst_working = _any_active_job_types(supabase, client_id, _ANALYST_JOB_TYPES)
+
+    result: Dict[str, Any] = {
+        "scout": {
+            "watching_accounts": watching,
+            "new_this_week": new_this_week,
+            "top_opportunity_reel_id": top_reel_id,
+            "working": scout_working,
+        },
+        "writer": {
+            "drafts_ready": drafts_ready,
+            "in_progress": in_progress,
+            "latest_draft_session_id": latest_draft_session_id,
+            "last_export": last_export,
+            "working": writer_working,
+        },
+        "analyst": {
+            "reels_studied": int(stats.get("total_own_reels") or 0),
+            "avg_views": stats.get("average_views_last_30_reels"),
+            "outliers": outlier_count,
+            "trend_pct": stats.get("avg_views_change_vs_prior_week_pct"),
+            "working": analyst_working,
+        },
+        "state": {
+            "phase": phase,
+            "setup_complete": setup_complete,
+            "onboarding_step": onboarding_step,
+            "is_building": is_building,
+        },
+        "momentum": {
+            "posts_made": posts_made,
+            "last_export": last_export,
+        },
+    }
+    cache_set(cache_key, result)
+    return result
 
 
 

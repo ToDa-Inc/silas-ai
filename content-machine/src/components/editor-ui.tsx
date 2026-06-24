@@ -168,10 +168,13 @@ export function EditorShell({
   preview,
   controls,
   previewMaxWidth = 400,
+  embedded = false,
 }: {
   preview: ReactNode;
   controls: ReactNode;
   previewMaxWidth?: number;
+  /** Relaxed height when inside the Home studio overlay. */
+  embedded?: boolean;
 }) {
   return (
     <div
@@ -183,7 +186,13 @@ export function EditorShell({
       <div className="flex flex-col items-center gap-3 md:sticky md:top-4 md:self-start lg:items-start">
         {preview}
       </div>
-      <div className="flex min-h-0 max-h-[calc(100vh-12rem)] min-w-0 flex-col overflow-hidden rounded-2xl border border-app-divider/90 bg-app-chip-bg/25 shadow-sm lg:max-h-[calc(100vh-12rem)]">
+      <div
+        className={
+          embedded
+            ? "flex min-w-0 flex-col overflow-visible rounded-2xl border border-app-divider/90 bg-app-chip-bg/25 shadow-sm"
+            : "flex min-h-0 max-h-[calc(100vh-12rem)] min-w-0 flex-col overflow-hidden rounded-2xl border border-app-divider/90 bg-app-chip-bg/25 shadow-sm lg:max-h-[calc(100vh-12rem)]"
+        }
+      >
         {controls}
       </div>
     </div>

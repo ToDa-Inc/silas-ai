@@ -77,6 +77,7 @@ import { TalkingHeadEditor } from "@/components/editors/talking-head/TalkingHead
 import { CarouselEditor } from "@/components/editors/carousel/CarouselEditor";
 import { EditorCommandPalette } from "@/components/editors/shared/EditorCommandPalette";
 import { StudioFormatTabs } from "@/components/editors/shared/StudioShell";
+import { useStudioShell } from "@/components/studio-shell-context";
 import { useEditorSelection } from "@/components/editors/shared/useEditorSelection";
 import { buildVideoActions } from "@/components/editors/video/videoActions";
 import { UndoPill } from "@/components/undo-pill";
@@ -330,6 +331,8 @@ export type VideoCreateWorkspaceProps = {
   /** First-run onboarding: hide advanced panels and show export-ready CTA. */
   guidedMode?: boolean;
   onGuidedComplete?: () => void;
+  /** Home studio overlay: wider layout and relaxed scroll clipping. */
+  embedded?: boolean;
 };
 
 /**
@@ -352,8 +355,12 @@ export function VideoCreateWorkspace({
   onSessionUpdated,
   guidedMode = false,
   onGuidedComplete,
+  embedded = false,
 }: VideoCreateWorkspaceProps) {
   const { show } = useToast();
+  const studioShell = useStudioShell();
+  const studioExpanded = embedded && studioShell.expanded;
+  const previewWidth = studioExpanded ? 300 : embedded ? 260 : 250;
   const [bootstrapDone, setBootstrapDone] = useState(false);
   const [session, setSession] = useState<GenerationSession | null>(null);
   const [clips, setClips] = useState<BrollClipRow[]>([]);
@@ -2634,6 +2641,7 @@ export function VideoCreateWorkspace({
         regenBusyScope={regenBusyScope}
         onRegenSection={onRegenSection}
         copyText={copyText}
+        embedded={embedded}
         hooks={hooks}
         coverOptions={coverOptions}
         coverRegenBusy={coverRegenBusy}
@@ -2887,6 +2895,7 @@ export function VideoCreateWorkspace({
           clientSlug={clientSlug}
           orgSlug={orgSlug}
           sessionId={session.id}
+          embedded={embedded}
           slides={carouselDraft}
           images={images}
           busy={carouselSlideBusy || loading}
@@ -3034,8 +3043,17 @@ export function VideoCreateWorkspace({
 
         {/* Preview column (sticky) + edit column: preview stays visible while scrolling
             template/look/layout/timing — matches NLE / Figma mental model. */}
-        <div className="grid gap-5 lg:grid-cols-[250px_minmax(0,1fr)] lg:items-start xl:grid-cols-[270px_minmax(0,1fr)]">
-          <div className="mx-auto flex w-full max-w-[270px] shrink-0 flex-col gap-2 lg:sticky lg:top-4 lg:mx-0">
+        <div
+          className={
+            studioExpanded
+              ? "grid gap-6 lg:grid-cols-[minmax(260px,320px)_minmax(0,1fr)] lg:items-start"
+              : "grid gap-5 lg:grid-cols-[250px_minmax(0,1fr)] lg:items-start xl:grid-cols-[270px_minmax(0,1fr)]"
+          }
+        >
+          <div
+            className="mx-auto flex w-full shrink-0 flex-col gap-2 lg:sticky lg:top-4 lg:mx-0"
+            style={{ maxWidth: previewWidth }}
+          >
             {bgBusy ? (
               <div className="flex aspect-[9/16] w-full max-w-[250px] flex-col items-center justify-center gap-2 self-center rounded-xl border border-app-divider bg-app-chip-bg/40">
                 <Loader2 className="h-6 w-6 animate-spin text-app-fg-subtle" />
@@ -3078,7 +3096,7 @@ export function VideoCreateWorkspace({
                   playerSpec={playerSpec}
                   safeZone={safeZonePreview}
                   layoutGuides={layoutGuides}
-                  width={250}
+                  width={previewWidth}
                   selectedSegmentId={selectedSegmentId}
                   onSelectSegment={setSelectedSegmentId}
                   onResizeLayerTimingDraft={onResizeLayerTimingDraftRaf}
@@ -4073,6 +4091,7 @@ export function VideoCreateWorkspace({
         onGenerateAi={onGenerateThumbnail}
         onComposeFromImage={onComposeCoverFromImage}
         step={1}
+        embedded={embedded}
       />
       ) : null}
 

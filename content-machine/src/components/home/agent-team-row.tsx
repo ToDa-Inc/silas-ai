@@ -1,0 +1,193 @@
+"use client";
+
+import type { LucideIcon } from "lucide-react";
+import { BarChart3, PenLine, Search } from "lucide-react";
+import { motion } from "framer-motion";
+import type { HomeSummaryRow } from "@/lib/api";
+import { HOME_COPY, formatCompactViews } from "@/lib/home-ui";
+import { useCountUp } from "@/lib/use-count-up";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
+import { cn } from "@/lib/cn";
+
+export type AgentId = "scout" | "writer" | "analyst";
+
+type Props = {
+  summary: HomeSummaryRow;
+  activeAgent: AgentId | null;
+  onSelect: (id: AgentId) => void;
+};
+
+const AGENTS: {
+  id: AgentId;
+  name: string;
+  role: string;
+  icon: LucideIcon;
+  iconBg: string;
+}[] = [
+  {
+    id: "scout",
+    name: HOME_COPY.scoutName,
+    role: HOME_COPY.scoutRole,
+    icon: Search,
+    iconBg: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
+  },
+  {
+    id: "writer",
+    name: HOME_COPY.writerName,
+    role: HOME_COPY.writerRole,
+    icon: PenLine,
+    iconBg: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
+  },
+  {
+    id: "analyst",
+    name: HOME_COPY.analystName,
+    role: HOME_COPY.analystRole,
+    icon: BarChart3,
+    iconBg: "bg-violet-500/15 text-violet-600 dark:text-violet-400",
+  },
+];
+
+function agentStatLine(id: AgentId, summary: HomeSummaryRow): string {
+  const { scout, writer, analyst } = summary;
+  if (id === "scout") {
+    if (scout.working) return HOME_COPY.scoutWorking;
+    if (scout.watching_accounts === 0) return "Setting up your watch list";
+    return `Watching ${scout.watching_accounts} account${scout.watching_accounts === 1 ? "" : "s"} · ${scout.new_this_week} new this week`;
+  }
+  if (id === "writer") {
+    if (writer.working) return HOME_COPY.writerWorking;
+    if (writer.drafts_ready === 0 && writer.in_progress === 0) return "Ready when you are";
+    const parts: string[] = [];
+    if (writer.drafts_ready > 0) {
+      parts.push(`${writer.drafts_ready} draft${writer.drafts_ready === 1 ? "" : "s"} ready`);
+    }
+    if (writer.in_progress > 0) {
+      parts.push(`${writer.in_progress} in progress`);
+    }
+    return parts.join(" · ");
+  }
+  if (analyst.working) return HOME_COPY.analystWorking;
+  if (analyst.reels_studied === 0) return "Waiting for your reels";
+  const avg = formatCompactViews(analyst.avg_views);
+  return `Studied ${analyst.reels_studied} of your reels · avg ${avg} views`;
+}
+
+function agentNumericHighlight(id: AgentId, summary: HomeSummaryRow): number {
+  if (id === "scout") return summary.scout.new_this_week;
+  if (id === "writer") return summary.writer.drafts_ready;
+  return summary.analyst.reels_studied;
+}
+
+export function AgentTeamRow({ summary, activeAgent, onSelect }: Props) {
+  const reducedMotion = usePrefersReducedMotion();
+
+  return (
+    <section aria-label="Your agent team" className="mt-8">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+          Your team
+        </p>
+        <p className="text-[11px] text-zinc-400">{HOME_COPY.teamLive}</p>
+      </div>
+      <div className="-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-1 md:mx-0 md:grid md:grid-cols-3 md:overflow-visible md:px-0">
+        {AGENTS.map((agent, i) => (
+          <AgentCard
+            key={agent.id}
+            agent={agent}
+            stat={agentStatLine(agent.id, summary)}
+            highlight={agentNumericHighlight(agent.id, summary)}
+            working={
+              agent.id === "scout"
+                ? summary.scout.working
+                : agent.id === "writer"
+                  ? summary.writer.working
+                  : summary.analyst.working
+            }
+            active={activeAgent === agent.id}
+            floatDelay={i * 0.4}
+            reducedMotion={reducedMotion}
+            onSelect={() => onSelect(agent.id)}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AgentCard({
+  agent,
+  stat,
+  highlight,
+  working,
+  active,
+  floatDelay,
+  reducedMotion,
+  onSelect,
+}: {
+  agent: (typeof AGENTS)[number];
+  stat: string;
+  highlight: number;
+  working: boolean;
+  active: boolean;
+  floatDelay: number;
+  reducedMotion: boolean;
+  onSelect: () => void;
+}) {
+  const Icon = agent.icon;
+  const count = useCountUp(highlight, 600, !reducedMotion);
+
+  return (
+    <motion.button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={active}
+      className={cn(
+        "min-w-[200px] snap-start rounded-2xl border p-4 text-left transition md:min-w-0",
+        active
+          ? "border-amber-400/50 bg-amber-500/[0.06] ring-1 ring-amber-400/25"
+          : "border-zinc-200 bg-white hover:border-zinc-300 hover:shadow-sm dark:border-white/10 dark:bg-zinc-900/40 dark:hover:border-white/20",
+      )}
+      whileHover={reducedMotion ? undefined : { scale: 1.03 }}
+      whileTap={reducedMotion ? undefined : { scale: 0.98 }}
+      animate={
+        reducedMotion || working
+          ? undefined
+          : { y: [0, -2, 0] }
+      }
+      transition={
+        working
+          ? undefined
+          : {
+              y: { duration: 3, repeat: Infinity, ease: "easeInOut", delay: floatDelay },
+            }
+      }
+    >
+      <div className="flex items-start gap-3">
+        <div
+          className={cn(
+            "relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl",
+            agent.iconBg,
+            working && "ring-2 ring-amber-400/40 ring-offset-2 ring-offset-white dark:ring-offset-zinc-950",
+          )}
+        >
+          <Icon className="h-5 w-5" aria-hidden />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-app-fg">{agent.name}</p>
+          <p className="text-[11px] text-zinc-500">{agent.role}</p>
+        </div>
+        {!working && highlight > 0 ? (
+          <span className="text-lg font-bold tabular-nums text-amber-600 dark:text-amber-400">
+            {count}
+          </span>
+        ) : null}
+      </div>
+      <p className="mt-3 line-clamp-2 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+        {stat}
+      </p>
+      <p className="mt-2 text-[10px] font-medium uppercase tracking-wide text-zinc-400">
+        {HOME_COPY.tapToSee}
+      </p>
+    </motion.button>
+  );
+}

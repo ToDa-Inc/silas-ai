@@ -38,64 +38,64 @@ export type OnboardingChapter = {
 export const ONBOARDING_CHAPTERS: OnboardingChapter[] = [
   {
     id: "identity",
-    label: "Who you are",
-    subtitle: "Workspace, niche, and source material",
+    label: "Identity",
+    subtitle: "Creator, niche, audience",
     steps: ["workspace", "quiz", "source"],
   },
   {
     id: "brain",
-    label: "Train your brain",
-    subtitle: "Strategy docs and market discovery",
+    label: "Creator Brain",
+    subtitle: "Context, patterns, discovery",
     steps: ["strategy_docs", "pipeline"],
   },
   {
     id: "first_win",
     label: "First win",
-    subtitle: "Pick an outlier, create, and export",
+    subtitle: "Pick, create, export",
     steps: ["reel_review", "first_content", "editor", "action_plan", "tour"],
   },
 ];
 
 export const STEP_HEADINGS: Record<OnboardingStepKey, { title: string; description: string }> = {
   workspace: {
-    title: "Create your workspace",
-    description: "One organization and your first creator profile.",
+    title: "Let's build your Creator Brain",
+    description: "Start with the creator profile Silas will use to find opportunities and generate your first post.",
   },
   quiz: {
-    title: "Your niche",
-    description: "Structured answers feed discovery and your AI profile.",
+    title: "What should Silas understand?",
+    description: "A few sharp answers are enough. We use them to shape discovery, voice, and your first content angle.",
   },
   source: {
-    title: "Source material",
-    description: "Paste a transcript or brief — we draft your strategy sections from it.",
+    title: "Add the raw truth",
+    description: "Paste notes, a sales call, or positioning bullets. This gives the AI real language to work from.",
   },
   strategy_docs: {
-    title: "Strategy documents",
-    description: "Review and save the five core docs, then we compile Client DNA.",
+    title: "Your brain preview",
+    description: "Review what Silas understood. Keep it lightweight now; you can refine the full brain later.",
   },
   pipeline: {
-    title: "Market discovery",
-    description: "We find competitors, similar reels, and run analyses in the background.",
+    title: "Silas is finding your opening",
+    description: "We're reading your niche, finding similar creators, and preparing content options worth acting on.",
   },
   reel_review: {
-    title: "Approve outliers",
-    description: "Vote on candidate reels — we learn what resonates with you.",
+    title: "Train your taste",
+    description: "Vote on the best opportunities. Silas learns what feels on-brand before creating anything for you.",
   },
   first_content: {
-    title: "Choose your first reel",
-    description: "Pick one YES vote to adapt into your first post.",
+    title: "Pick your first win",
+    description: "Choose the opportunity you want Silas to turn into your first export-ready content piece.",
   },
   editor: {
-    title: "Create & export",
-    description: "Refine copy, visual, cover, and caption — then export when ready.",
+    title: "Create your first post",
+    description: "Refine the copy, visuals, cover, and caption. When the export is ready, your dashboard unlocks.",
   },
   action_plan: {
-    title: "Your 7-day plan",
-    description: "Concrete daily actions based on your DNA and first session.",
+    title: "Your first week is mapped",
+    description: "A concrete 7-day plan based on your Creator Brain, taste votes, and first generation session.",
   },
   tour: {
-    title: "You're set",
-    description: "Open the full dashboard — Intelligence, Create, and Context are unlocked.",
+    title: "You're ready",
+    description: "Open the full studio. Intelligence, Create, and Creator Brain are now connected.",
   },
   done: { title: "Done", description: "" },
 };
@@ -112,12 +112,12 @@ export type PipelinePhaseId =
   | "failed";
 
 export const PIPELINE_PHASES: { id: PipelinePhaseId; label: string; hint: string }[] = [
-  { id: "dna_compile", label: "Compile AI profile", hint: "From your strategy docs" },
-  { id: "baseline_scrape", label: "Read your Instagram", hint: "Own reels and captions" },
-  { id: "auto_profile", label: "Enrich niche profile", hint: "Merge with your quiz answers" },
-  { id: "competitor_discovery", label: "Find similar creators", hint: "Identity keywords + seeds" },
-  { id: "profile_scrapes", label: "Collect competitor reels", hint: "Profile scrapes queued" },
-  { id: "auto_analyze", label: "Analyze winning patterns", hint: "Hooks, structure, formats" },
+  { id: "dna_compile", label: "Build your Creator Brain", hint: "Positioning, audience, voice, and offers" },
+  { id: "baseline_scrape", label: "Read your Instagram", hint: "Your existing reels and captions" },
+  { id: "auto_profile", label: "Sharpen the niche map", hint: "Merging AI signals with your answers" },
+  { id: "competitor_discovery", label: "Find creators like you", hint: "Relevant accounts and adjacent angles" },
+  { id: "profile_scrapes", label: "Collect winning reels", hint: "Outliers from similar creators" },
+  { id: "auto_analyze", label: "Detect repeatable patterns", hint: "Hooks, formats, structures, and payoff" },
 ];
 
 export function chapterForStep(step: OnboardingStepKey): OnboardingChapter {
@@ -156,10 +156,10 @@ export function pipelinePhaseStatus(
 
 /** Same inputs as signup (`signup-client.tsx`). */
 export const onboardingInputClass =
-  "w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-500";
+  "w-full rounded-xl border border-white/10 bg-white/[0.045] px-3 py-3 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 transition focus:border-amber-300/55 focus:bg-white/[0.07] focus:ring-4 focus:ring-amber-300/10";
 
 export const onboardingTextareaClass =
-  "min-h-[220px] w-full resize-y rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm leading-relaxed text-zinc-100 placeholder:text-zinc-500";
+  "min-h-[220px] w-full resize-y rounded-xl border border-white/10 bg-white/[0.045] px-3 py-3 text-sm leading-relaxed text-zinc-100 outline-none placeholder:text-zinc-600 transition focus:border-amber-300/55 focus:bg-white/[0.07] focus:ring-4 focus:ring-amber-300/10";
 
 export const onboardingLabelClass =
-  "mb-1 block text-[10px] font-bold uppercase tracking-widest text-zinc-500";
+  "mb-2 block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500";

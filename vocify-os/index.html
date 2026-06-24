@@ -1,0 +1,1521 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vocify OS — Morning Sales Dashboard</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='10' fill='%23F7F3EA'/%3E%3Ccircle cx='16' cy='16' r='8' fill='none' stroke='%235B4A32' stroke-width='2'/%3E%3Cpath d='M16 9v9m-4-5v4m8-4v4' stroke='%235B4A32' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=EB+Garamond:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              brand: '#5B4A32',
+              brandDark: '#3E3121',
+              brandDim: '#EEE8DD',
+              brandLight: '#FAF8F5',
+              healthy: '#1D9E75',
+              healthyDim: '#E8F5EE',
+              follow: '#EF9F27',
+              followDim: '#FEF5E7',
+              urgent: '#E24B4A',
+              urgentDim: '#FDF0F0',
+              surface: '#F7F3EA',
+              sidebar: '#FBF9F6',
+              ink: '#12110F',
+              secondary: '#5E584F',
+              muted: '#8C8478',
+              borderLight: 'rgba(91,74,50,0.08)',
+              borderMedium: 'rgba(91,74,50,0.15)'
+            },
+            fontFamily: {
+              sans: ['Inter', 'ui-sans-serif', 'system-ui'],
+              serif: ['EB Garamond', 'Georgia', 'serif']
+            },
+            boxShadow: {
+              soft: '0 2px 12px rgba(91,74,50,0.04)',
+              medium: '0 8px 24px rgba(91,74,50,0.06)',
+              premium: '0 12px 32px rgba(91,74,50,0.08)',
+              innerLight: 'inset 2px 2px 4px rgba(255,255,255,0.9), inset -2px -2px 4px rgba(91,74,50,0.02)'
+            }
+          }
+        }
+      };
+    </script>
+    <style>
+      [x-cloak] { display: none !important; }
+      * { box-sizing: border-box; }
+      body {
+        font-family: Inter, ui-sans-serif, system-ui;
+        background-color: #F7F3EA;
+        color: #12110F;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+      .hairline { border: 0.5px solid rgba(91,74,50,0.12); }
+      .hairline-b { border-bottom: 0.5px solid rgba(91,74,50,0.12); }
+      .hairline-r { border-right: 0.5px solid rgba(91,74,50,0.12); }
+      .divider { border-bottom: 0.5px solid rgba(91,74,50,0.08); }
+      
+      .soft-scroll {
+        scrollbar-width: thin;
+        scrollbar-color: rgba(91,74,50,0.15) transparent;
+      }
+      .soft-scroll::-webkit-scrollbar { height: 6px; width: 6px; }
+      .soft-scroll::-webkit-scrollbar-track { background: transparent; }
+      .soft-scroll::-webkit-scrollbar-thumb {
+        background: rgba(91,74,50,0.15);
+        border-radius: 999px;
+      }
+      .soft-scroll::-webkit-scrollbar-thumb:hover {
+        background: rgba(91,74,50,0.25);
+      }
+
+      .premium-card {
+        background: rgba(255, 255, 255, 0.65);
+        border: 0.5px solid rgba(91, 74, 50, 0.12);
+        box-shadow: inset 4px 4px 8px rgba(255, 255, 255, 0.8), inset -4px -4px 8px rgba(91, 74, 50, 0.01), 0 8px 24px rgba(91, 74, 50, 0.04);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+      }
+
+      .premium-card-hover {
+        transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+      .premium-card-hover:hover {
+        transform: translateY(-2px);
+        background: rgba(255, 255, 255, 0.8);
+        border-color: rgba(91, 74, 50, 0.22);
+        box-shadow: inset 4px 4px 8px rgba(255, 255, 255, 0.9), 0 12px 28px rgba(91, 74, 50, 0.08);
+      }
+
+      .btn-tactile {
+        transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+      .btn-tactile:active {
+        transform: scale(0.96);
+      }
+
+      .drag-over-zone {
+        border-color: #5B4A32 !important;
+        background-color: rgba(91, 74, 50, 0.04) !important;
+      }
+
+      .pulse-dot {
+        box-shadow: 0 0 0 0 rgba(29, 158, 117, 0.4);
+        animation: pulse 2s infinite;
+      }
+      @keyframes pulse {
+        0% {
+          box-shadow: 0 0 0 0 rgba(29, 158, 117, 0.4);
+        }
+        70% {
+          box-shadow: 0 0 0 6px rgba(29, 158, 117, 0);
+        }
+        100% {
+          box-shadow: 0 0 0 0 rgba(29, 158, 117, 0);
+        }
+      }
+    </style>
+    <script defer src="https://cdn.jsdelivr.net/npm/@alpinejs/sort@3.x.x/dist/cdn.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  </head>
+  <body class="soft-scroll">
+    <div x-data="vocifyOs()" x-init="init()" class="min-h-screen flex" x-cloak>
+      
+      <!-- Persistent Sidebar -->
+      <aside class="fixed inset-y-0 left-0 z-30 flex w-[240px] flex-col bg-sidebar px-4 py-6 hairline-r shadow-soft">
+        <!-- Logo Header -->
+        <div class="mb-8 flex items-center justify-between px-2">
+          <button @click="activeView = 'dashboard'" class="flex items-center gap-3 focus:outline-none group">
+            <img src="./logo.png" alt="Vocify" class="h-11 w-auto object-contain transition-transform duration-300 group-hover:scale-105" />
+            <div class="flex flex-col">
+              <span class="text-[14px] font-bold tracking-tight text-ink">Vocify OS</span>
+              <span class="text-[9px] font-semibold tracking-[0.2em] text-muted uppercase">Morning Sync</span>
+            </div>
+          </button>
+          <span class="rounded-full bg-brandDim px-2.5 py-0.5 text-[9px] font-bold tracking-[0.1em] text-brand uppercase">PRO</span>
+        </div>
+
+        <!-- Navigation Links -->
+        <nav class="space-y-1">
+          <template x-for="item in navItems" :key="item.id">
+            <button
+              @click="activeView = item.id"
+              class="flex w-full items-center gap-3 rounded-[12px] px-3.5 py-2.5 text-left text-[13px] font-medium transition-all duration-200 btn-tactile group"
+              :class="activeView === item.id ? 'bg-brandDim text-brand font-semibold shadow-innerLight' : 'text-secondary hover:bg-brandDim/30 hover:text-ink'"
+            >
+              <!-- Dynamic SVGs for Icons -->
+              <span class="text-brand transition-transform duration-200 group-hover:scale-110" x-html="getNavIcon(item.id, activeView === item.id)"></span>
+              <span x-text="item.label"></span>
+            </button>
+          </template>
+        </nav>
+
+        <div class="my-6 divider"></div>
+
+        <!-- Projects/Initiatives Section -->
+        <div class="flex items-center justify-between mb-2 px-2">
+          <span class="text-[11px] font-bold tracking-wider text-muted uppercase">Active Projects</span>
+          <button @click="activeView = 'canvas'; setTimeout(() => addInitiative(), 50)" class="text-secondary hover:text-brand transition-colors p-1 rounded-full hover:bg-brandDim/40 btn-tactile" title="Add Project">
+            <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+          </button>
+        </div>
+        
+        <div class="soft-scroll min-h-0 flex-1 space-y-1 overflow-y-auto px-1">
+          <template x-for="initiative in activeInitiatives" :key="initiative.id">
+            <button
+              @click="activeView = 'canvas'; selectedInitiativeId = initiative.id"
+              class="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-left text-[13px] text-secondary transition-all duration-150 hover:bg-brandDim/30 hover:text-ink group"
+            >
+              <div class="flex items-center gap-2.5 min-w-0">
+                <span class="h-2 w-2 rounded-full shrink-0" :class="colourClass(initiative.colour)"></span>
+                <span class="truncate font-medium" x-text="initiative.title"></span>
+              </div>
+              <span class="text-[10px] font-semibold text-muted bg-brandDim/40 px-1.5 py-0.5 rounded-md opacity-0 group-hover:opacity-100 transition-opacity" x-text="tasksForInitiative(initiative.id).length"></span>
+            </button>
+          </template>
+        </div>
+
+        <!-- Today's Focus Drop Zone -->
+        <div
+          class="mt-4 rounded-[14px] bg-white/50 p-3.5 hairline border-dashed text-center transition-all duration-200"
+          :class="dragOverToday ? 'drag-over-zone' : ''"
+          @dragover.prevent="dragOverToday = true"
+          @dragleave.prevent="dragOverToday = false"
+          @drop="dropOnToday($event)"
+        >
+          <div class="flex justify-center mb-1.5 text-brand">
+            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.907c.961 0 1.36 1.243.58 1.8l-3.97 2.883a1 1 0 00-.364 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.971-2.883a1 1 0 00-1.18 0l-3.97 2.883c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.364-1.118L2.49 10.09c-.78-.557-.381-1.8.58-1.8h4.908a1 1 0 00.95-.69l1.519-4.674z" /></svg>
+          </div>
+          <div class="text-[11px] font-bold text-ink mb-0.5">Today's Focus Drop Zone</div>
+          <div class="text-[10px] text-secondary leading-relaxed">Drag any canvas task here to commit for today</div>
+        </div>
+
+        <!-- Sync Status -->
+        <div class="mt-5 flex items-center justify-between px-2 text-[11px] text-muted font-medium">
+          <div class="flex items-center gap-2">
+            <span class="h-2 w-2 rounded-full" :class="$store.hubspot.status === 'syncing' ? 'bg-follow animate-pulse' : 'bg-healthy pulse-dot'"></span>
+            <span x-text="syncLabel"></span>
+          </div>
+          <span class="text-[10px] opacity-75" x-text="dataModeLabel"></span>
+        </div>
+      </aside>
+
+      <!-- Main Workspace Area -->
+      <main class="ml-[240px] flex-1 min-h-screen flex flex-col bg-surface">
+        
+        <!-- View 1: Dashboard (Morning View) -->
+        <section x-show="activeView === 'dashboard'" class="px-8 py-8 flex-1 flex flex-col space-y-6" x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0">
+          <!-- Top Bar -->
+          <header class="flex items-center justify-between">
+            <div>
+              <span class="text-[11px] font-bold tracking-[0.2em] text-brand uppercase">Morning Briefing</span>
+              <h1 class="text-[28px] font-bold tracking-tight text-ink mt-0.5">Good morning, team</h1>
+              <p class="text-[13px] text-secondary mt-0.5 font-medium" x-text="todayLong"></p>
+            </div>
+            <button
+              @click="refreshHubSpot()"
+              class="rounded-full bg-brand hover:bg-brandDark px-5 py-2.5 text-[13px] font-semibold text-white shadow-medium btn-tactile flex items-center gap-2"
+              :disabled="$store.hubspot.status === 'syncing'"
+            >
+              <svg :class="$store.hubspot.status === 'syncing' ? 'animate-spin' : ''" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+              <span x-text="$store.hubspot.status === 'syncing' ? 'Syncing HubSpot...' : 'Sync HubSpot'"></span>
+            </button>
+          </header>
+
+          <!-- 4 Metric Cards -->
+          <div class="grid grid-cols-4 gap-4">
+            <template x-for="metric in metrics" :key="metric.label">
+              <article class="premium-card premium-card-hover rounded-[20px] p-5 flex flex-col justify-between">
+                <div class="flex items-center justify-between">
+                  <span class="text-[12px] font-bold text-secondary tracking-tight" x-text="metric.label"></span>
+                  <span x-html="getMetricIcon(metric.label)" class="text-brand"></span>
+                </div>
+                <div class="mt-4">
+                  <div class="text-[26px] font-extrabold text-ink tracking-tight leading-none" x-text="metric.value"></div>
+                  <div class="mt-2 text-[11px] font-semibold text-muted flex items-center gap-1" x-text="metric.note"></div>
+                </div>
+              </article>
+            </template>
+          </div>
+
+          <!-- Two-Column Main Content -->
+          <div class="grid grid-cols-[1fr_380px] gap-6 items-start">
+            <!-- Left Column: HubSpot Signals -->
+            <section class="premium-card rounded-[24px] p-6 space-y-6">
+              <div class="flex items-center justify-between pb-2 border-b border-brand/5">
+                <div class="flex items-center gap-2">
+                  <svg class="h-5 w-5 text-brand" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                  <h2 class="text-[16px] font-bold text-ink tracking-tight">HubSpot Signals</h2>
+                </div>
+                <span class="rounded-full bg-brandDim px-3 py-1 text-[10px] font-bold text-brand uppercase tracking-wider" x-text="dataModeLabel"></span>
+              </div>
+
+              <div class="space-y-6">
+                <template x-for="group in signalGroups" :key="group.id">
+                  <div class="space-y-3">
+                    <!-- Group Header -->
+                    <div class="flex items-center justify-between">
+                      <div class="flex items-center gap-2.5">
+                        <span class="h-2.5 w-2.5 rounded-full" :class="group.dot"></span>
+                        <h3 class="text-[13px] font-bold text-secondary" x-text="group.title"></h3>
+                      </div>
+                      <span class="text-[11px] font-bold text-muted bg-brandDim/30 px-2 py-0.5 rounded-full" x-text="group.items.length"></span>
+                    </div>
+
+                    <!-- Signal Cards -->
+                    <div class="grid gap-2.5" x-show="group.items.length">
+                      <template x-for="deal in group.items" :key="`${group.id}-${deal.id}`">
+                        <article class="rounded-[16px] bg-white/40 hover:bg-white/90 border border-brand/5 p-4 transition-all duration-200 hover:shadow-soft group relative">
+                          <div class="flex items-start justify-between gap-4">
+                            <div class="min-w-0 space-y-1">
+                              <div class="truncate text-[14px] font-bold text-ink" x-text="deal.company"></div>
+                              <div class="truncate text-[12px] font-medium text-secondary" x-text="deal.name"></div>
+                            </div>
+                            <div class="shrink-0 text-right">
+                              <div class="text-[14px] font-bold text-brand" x-text="money(deal.value)"></div>
+                              <div class="text-[10px] font-bold text-muted uppercase tracking-wider" x-text="deal.owner"></div>
+                            </div>
+                          </div>
+                          
+                          <div class="mt-3.5 flex items-center justify-between text-[11px] text-muted font-medium">
+                            <div class="flex items-center gap-2">
+                              <span class="rounded-full bg-brandDim/50 px-2.5 py-0.5 text-[10px] font-semibold text-brand" x-text="deal.stage"></span>
+                              <span class="text-secondary" x-text="deal.reason"></span>
+                            </div>
+                            <span class="text-[10px]" x-text="relativeDate(deal.referenceDate)"></span>
+                          </div>
+
+                          <!-- Hover Action Buttons (Notion/ClickUp Style) -->
+                          <div class="absolute right-3 top-3 opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-center gap-1.5 bg-white/95 p-1 rounded-lg shadow-soft border border-brand/10">
+                            <button @click="addSignalToToday(deal)" class="p-1.5 rounded-md hover:bg-brandDim/60 text-secondary hover:text-brand btn-tactile" title="Add to Today's Focus">
+                              <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                            </button>
+                            <button @click="selectedDealId = deal.id; activeView = 'pipeline'" class="p-1.5 rounded-md hover:bg-brandDim/60 text-secondary hover:text-brand btn-tactile" title="View in Pipeline">
+                              <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" /></svg>
+                            </button>
+                          </div>
+                        </article>
+                      </template>
+                    </div>
+
+                    <!-- Empty State -->
+                    <div x-show="!group.items.length" class="rounded-[14px] bg-brandLight/40 border border-dashed border-brand/10 p-4 text-center text-[12px] text-muted font-medium">
+                      All caught up. No action needed here.
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </section>
+
+            <!-- Right Column: Today's Focus -->
+            <section class="premium-card rounded-[24px] p-6 space-y-5">
+              <div class="flex items-center justify-between pb-2 border-b border-brand/5">
+                <div class="flex items-center gap-2">
+                  <svg class="h-5 w-5 text-brand" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>
+                  <h2 class="text-[16px] font-bold text-ink tracking-tight">Today's Focus</h2>
+                </div>
+                <span class="text-[11px] font-bold text-muted bg-brandDim/40 px-2.5 py-0.5 rounded-full" x-text="`${todayTasks.length} committed`"></span>
+              </div>
+
+              <!-- Today's Task List -->
+              <ol class="space-y-2.5">
+                <template x-for="(task, index) in todayTasks" :key="task.id">
+                  <li class="rounded-[16px] bg-white border border-brand/5 p-3.5 shadow-soft hover:shadow-medium transition-all duration-200 group relative">
+                    <div class="flex items-start gap-3">
+                      <!-- Notion-style Checkbox -->
+                      <button @click="cycleStatus(task.id)" class="mt-1 h-4 w-4 shrink-0 rounded-md border border-brand/30 flex items-center justify-center hover:border-brand transition-colors btn-tactile" :class="task.status === 'done' ? 'bg-healthy border-healthy' : ''">
+                        <template x-if="task.status === 'done'">
+                          <svg class="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                        </template>
+                      </button>
+
+                      <div class="min-w-0 flex-1 space-y-1.5">
+                        <div class="text-[13px] font-semibold text-ink leading-snug" :class="task.status === 'done' ? 'line-through text-muted' : ''" x-text="task.title"></div>
+                        
+                        <div class="flex flex-wrap items-center gap-2 text-[10px] text-muted font-bold uppercase tracking-wider">
+                          <div class="flex items-center gap-1.5">
+                            <span class="h-2 w-2 rounded-full" :class="colourClass(initiativeFor(task)?.colour || 'gray')"></span>
+                            <span class="text-secondary" x-text="initiativeFor(task)?.title || 'General'"></span>
+                          </div>
+                          <span>·</span>
+                          <span :class="dueTone(task)" x-text="dueLabel(task)"></span>
+                        </div>
+                      </div>
+
+                      <!-- Remove Button -->
+                      <button @click="removeFromToday(task.id)" class="text-muted hover:text-urgent transition-colors p-1 rounded-full hover:bg-brandDim/30 btn-tactile opacity-0 group-hover:opacity-100 absolute right-2 top-2">
+                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                      </button>
+                    </div>
+                  </li>
+                </template>
+              </ol>
+
+              <!-- Empty State -->
+              <div x-show="!todayTasks.length" class="rounded-[16px] bg-brandLight/40 border border-dashed border-brand/10 p-5 text-center">
+                <div class="text-muted mb-1.5">
+                  <svg class="h-6 w-6 mx-auto opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m0-12.728l.707.707m12.728 12.728l.707.707M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                </div>
+                <div class="text-[12px] font-bold text-ink">No focus tasks committed</div>
+                <p class="text-[11px] text-secondary mt-1">Drag tasks from Projects or add a quick task below</p>
+              </div>
+
+              <!-- Quick Add Input -->
+              <div class="mt-4 pt-2">
+                <button x-show="!quickAddOpen" @click="quickAddOpen = true; $nextTick(() => $refs.quickAddInput.focus())" class="w-full rounded-full bg-brandDim hover:bg-brandDim/70 px-4 py-2.5 text-[12px] font-bold text-brand tracking-wide btn-tactile flex items-center justify-center gap-1.5">
+                  <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                  Add Task to Today
+                </button>
+                <form x-show="quickAddOpen" @submit.prevent="addQuickTask()" class="space-y-2.5" @click.outside="quickAddOpen = false">
+                  <input x-ref="quickAddInput" x-model="quickTaskTitle" class="w-full rounded-[12px] bg-white px-3.5 py-2.5 text-[13px] font-medium outline-none hairline focus:border-brand transition-all" placeholder="What needs to be done?" />
+                  <div class="flex gap-2 justify-end">
+                    <button type="button" @click="quickAddOpen = false" class="rounded-full bg-white border border-brand/10 px-4 py-1.5 text-[11px] font-bold text-secondary btn-tactile">Cancel</button>
+                    <button class="rounded-full bg-brand hover:bg-brandDark px-4 py-1.5 text-[11px] font-bold text-white btn-tactile">Add Task</button>
+                  </div>
+                </form>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <!-- View 2: Projects (Initiative Board) -->
+        <section x-show="activeView === 'canvas'" class="px-8 py-8 flex-1 flex flex-col space-y-6" x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0">
+          <header class="flex items-center justify-between">
+            <div>
+              <span class="text-[11px] font-bold tracking-[0.2em] text-brand uppercase">Initiatives & Priorities</span>
+              <h1 class="text-[28px] font-bold tracking-tight text-ink mt-0.5">Project Canvas</h1>
+              <p class="text-[13px] text-secondary mt-0.5 font-medium">Organize long-running priorities, local tasks, and link them directly to HubSpot deals.</p>
+            </div>
+            <button @click="addInitiative()" class="rounded-full bg-brand hover:bg-brandDark px-5 py-2.5 text-[13px] font-semibold text-white shadow-medium btn-tactile flex items-center gap-2">
+              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+              New Project
+            </button>
+          </header>
+
+          <!-- Horizontal Columns Scroll -->
+          <div class="soft-scroll flex gap-5 overflow-x-auto pb-6 items-start flex-1 min-h-0">
+            <template x-for="initiative in activeInitiatives" :key="initiative.id">
+              <section
+                class="min-h-[calc(100vh-180px)] w-[320px] shrink-0 rounded-[22px] bg-white p-4 hairline flex flex-col justify-between transition-all duration-200"
+                :class="selectedInitiativeId === initiative.id ? 'ring-2 ring-brand ring-offset-2' : ''"
+                @dragover.prevent="dragOverInitiativeId = initiative.id"
+                @dragleave.prevent="dragOverInitiativeId = null"
+                @drop="dropOnInitiative($event, initiative.id)"
+                :style="dragOverInitiativeId === initiative.id ? 'border-color: #5B4A32; background-color: rgba(91, 74,50, 0.02);' : ''"
+              >
+                <div class="flex flex-col flex-1 min-h-0">
+                  <!-- Column Header -->
+                  <div class="mb-4 flex items-center justify-between relative">
+                    <div class="flex items-center gap-2.5 min-w-0">
+                      <span class="h-3 w-3 rounded-full shrink-0" :class="colourClass(initiative.colour)"></span>
+                      
+                      <!-- Inline Renaming -->
+                      <template x-if="editingInitiativeId === initiative.id">
+                        <input
+                          x-model="editingInitiativeTitle"
+                          @keydown.enter="saveInitiativeTitle(initiative.id)"
+                          @blur="saveInitiativeTitle(initiative.id)"
+                          class="text-[14px] font-bold text-ink bg-transparent border-b border-brand outline-none w-full py-0.5"
+                          x-init="$nextTick(() => $el.focus())"
+                        />
+                      </template>
+                      <template x-if="editingInitiativeId !== initiative.id">
+                        <h2 @click="editingInitiativeId = initiative.id; editingInitiativeTitle = initiative.title" class="text-[14px] font-bold text-ink truncate cursor-pointer hover:underline" x-text="initiative.title"></h2>
+                      </template>
+                    </div>
+
+                    <!-- Dropdown Menu Trigger -->
+                    <div class="relative">
+                      <button @click="projectMenuId = projectMenuId === initiative.id ? null : initiative.id" class="text-muted hover:text-brand transition-colors p-1.5 rounded-full hover:bg-brandDim/40 btn-tactile">
+                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z" /></svg>
+                      </button>
+
+                      <!-- Project Action Dropdown -->
+                      <div x-show="projectMenuId === initiative.id" @click.outside="projectMenuId = null" class="absolute right-0 top-8 z-20 w-48 rounded-[14px] bg-white p-1.5 shadow-premium border border-brand/10" x-transition>
+                        <button @click="editingInitiativeId = initiative.id; editingInitiativeTitle = initiative.title; projectMenuId = null" class="flex w-full items-center gap-2 rounded-[10px] px-3 py-2 text-left text-[12px] font-semibold text-secondary hover:bg-brandDim/40 hover:text-ink">
+                          <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                          Rename Project
+                        </button>
+                        <div class="divider my-1"></div>
+                        <div class="px-3 py-1 text-[10px] font-bold text-muted uppercase tracking-wider">Change Color</div>
+                        <div class="grid grid-cols-4 gap-1.5 p-1.5">
+                          <template x-for="color in ['purple', 'teal', 'amber', 'gray']">
+                            <button @click="changeInitiativeColor(initiative.id, color); projectMenuId = null" class="h-5 w-5 rounded-full border border-brand/5 btn-tactile" :class="colourClass(color)"></button>
+                          </template>
+                        </div>
+                        <div class="divider my-1"></div>
+                        
+                        <!-- Safe Archive with Confirmation -->
+                        <template x-if="confirmArchiveInitiativeId !== initiative.id">
+                          <button @click="confirmArchiveInitiativeId = initiative.id" class="flex w-full items-center gap-2 rounded-[10px] px-3 py-2 text-left text-[12px] font-bold text-urgent hover:bg-urgentDim">
+                            <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                            Archive Project
+                          </button>
+                        </template>
+                        <template x-if="confirmArchiveInitiativeId === initiative.id">
+                          <div class="p-2 bg-urgentDim rounded-[10px] text-center space-y-1.5">
+                            <div class="text-[10px] font-bold text-urgent">Are you sure?</div>
+                            <div class="flex gap-1 justify-center">
+                              <button @click="confirmArchiveInitiativeId = null" class="px-2 py-1 rounded-md bg-white border border-brand/10 text-[9px] font-bold text-secondary">No</button>
+                              <button @click="archiveInitiative(initiative.id); confirmArchiveInitiativeId = null; projectMenuId = null" class="px-2 py-1 rounded-md bg-urgent text-white text-[9px] font-bold">Yes, Archive</button>
+                            </div>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Task Cards List -->
+                  <div class="space-y-2.5 overflow-y-auto max-h-[calc(100vh-320px)] pr-1 soft-scroll flex-1">
+                    <template x-for="task in tasksForInitiative(initiative.id)" :key="task.id">
+                      <article
+                        class="rounded-[16px] bg-brandLight/60 border border-brand/5 p-3.5 shadow-soft hover:shadow-medium transition-all duration-200 group relative cursor-grab active:cursor-grabbing"
+                        draggable="true"
+                        @dragstart="dragTask($event, task.id)"
+                        @dragend="$event.target.classList.remove('dragging')"
+                      >
+                        <div class="flex items-start gap-2.5">
+                          <!-- Status Indicator Dot -->
+                          <button @click="cycleStatus(task.id)" class="mt-1.5 h-3 w-3 shrink-0 rounded-full border border-brand/10 flex items-center justify-center btn-tactile" :class="statusDot(task.status)" :title="`Status: ${task.status}`"></button>
+                          
+                          <div class="min-w-0 flex-1 space-y-2">
+                            <button @click="toggleExpanded(task.id)" class="block w-full text-left text-[13px] font-semibold text-ink leading-snug hover:text-brand" :class="task.status === 'done' ? 'line-through text-muted' : ''" x-text="task.title"></button>
+                            
+                            <!-- Metadata Badges -->
+                            <div class="flex flex-wrap gap-1.5 text-[10px] font-bold tracking-wide">
+                              <span class="rounded-full px-2 py-0.5" :class="task.priority >= 3 ? 'bg-urgentDim text-urgent' : task.priority == 2 ? 'bg-followDim text-follow' : 'bg-brandDim/40 text-secondary'" x-text="`P${task.priority}`"></span>
+                              <span x-show="task.due_date" class="rounded-full bg-white border border-brand/5 px-2 py-0.5 text-secondary" x-text="shortDate(task.due_date)"></span>
+                              <span x-show="task.hubspot_deal_id" class="rounded-full bg-brandDim/40 text-brand px-2 py-0.5 flex items-center gap-0.5">
+                                <svg class="h-2.5 w-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
+                                Linked
+                              </span>
+                            </div>
+
+                            <!-- Expanded Notes & Subtasks -->
+                            <div x-show="expandedTaskId === task.id" class="space-y-3 pt-2 border-t border-brand/5" @click.stop>
+                              <textarea
+                                x-model="task.notes"
+                                @input="persistLocal()"
+                                class="min-h-20 w-full resize-none rounded-[12px] bg-white px-3 py-2 text-[12px] font-medium outline-none hairline focus:border-brand transition-all"
+                                placeholder="Add notes, objections, or next steps..."
+                              ></textarea>
+
+                              <!-- Subtasks Checklist -->
+                              <div class="space-y-1.5">
+                                <div class="text-[10px] font-bold text-muted uppercase tracking-wider">Subtasks</div>
+                                <div class="space-y-1">
+                                  <template x-for="sub in (task.subtasks || [])" :key="sub.id">
+                                    <div class="flex items-center gap-2">
+                                      <button @click="toggleSubtask(task.id, sub.id)" class="h-3.5 w-3.5 rounded border border-brand/30 flex items-center justify-center btn-tactile" :class="sub.done ? 'bg-healthy border-healthy' : 'bg-white'">
+                                        <template x-if="sub.done">
+                                          <svg class="h-2.5 w-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="4"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                                        </template>
+                                      </button>
+                                      <span class="text-[11px] font-medium" :class="sub.done ? 'line-through text-muted' : 'text-ink'" x-text="sub.title"></span>
+                                      <button @click="deleteSubtask(task.id, sub.id)" class="text-muted hover:text-urgent ml-auto p-0.5 rounded-full hover:bg-brandDim/30">
+                                        <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                      </button>
+                                    </div>
+                                  </template>
+                                  <form @submit.prevent="addSubtask(task.id, $el.querySelector('input').value); $el.querySelector('input').value=''" class="flex gap-1.5 mt-1.5">
+                                    <input class="flex-1 bg-white border border-brand/10 rounded-lg px-2.5 py-1 text-[11px] outline-none focus:border-brand" placeholder="+ Add subtask" />
+                                  </form>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <!-- Task Dropdown Trigger -->
+                          <div class="relative">
+                            <button @click="taskMenuId = taskMenuId === task.id ? null : task.id" class="text-muted hover:text-brand transition-colors p-1 rounded-full hover:bg-brandDim/40 btn-tactile">
+                              <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" /></svg>
+                            </button>
+
+                            <!-- Task Action Dropdown -->
+                            <div x-show="taskMenuId === task.id" @click.outside="taskMenuId = null" class="absolute right-0 top-6 z-20 w-44 rounded-[14px] bg-white p-1.5 shadow-premium border border-brand/10" x-transition>
+                              <button @click="moveToToday(task.id); taskMenuId = null" class="flex w-full items-center gap-2 rounded-[10px] px-3 py-2 text-left text-[12px] font-semibold text-secondary hover:bg-brandDim/40 hover:text-ink">
+                                <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.907c.961 0 1.36 1.243.58 1.8l-3.97 2.883a1 1 0 00-.364 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.971-2.883a1 1 0 00-1.18 0l-3.97 2.883c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.364-1.118L2.49 10.09c-.78-.557-.381-1.8.58-1.8h4.908a1 1 0 00.95-.69l1.519-4.674z" /></svg>
+                                Move to Today
+                              </button>
+                              <button @click="cycleStatus(task.id); taskMenuId = null" class="flex w-full items-center gap-2 rounded-[10px] px-3 py-2 text-left text-[12px] font-semibold text-secondary hover:bg-brandDim/40 hover:text-ink">
+                                <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                Cycle Status
+                              </button>
+                              <button @click="linkFirstDeal(task.id); taskMenuId = null" class="flex w-full items-center gap-2 rounded-[10px] px-3 py-2 text-left text-[12px] font-semibold text-secondary hover:bg-brandDim/40 hover:text-ink">
+                                <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
+                                Link HubSpot Deal
+                              </button>
+                              <div class="divider my-1"></div>
+                              
+                              <!-- Safe Archive Task with Confirmation -->
+                              <template x-if="confirmArchiveTaskId !== task.id">
+                                <button @click="confirmArchiveTaskId = task.id" class="flex w-full items-center gap-2 rounded-[10px] px-3 py-2 text-left text-[12px] font-bold text-urgent hover:bg-urgentDim">
+                                  <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                  Archive Task
+                                </button>
+                              </template>
+                              <template x-if="confirmArchiveTaskId === task.id">
+                                <div class="p-2 bg-urgentDim rounded-[10px] text-center space-y-1.5">
+                                  <div class="text-[10px] font-bold text-urgent">Confirm Archive?</div>
+                                  <div class="flex gap-1 justify-center">
+                                    <button @click="confirmArchiveTaskId = null" class="px-2 py-1 rounded-md bg-white border border-brand/10 text-[9px] font-bold text-secondary">No</button>
+                                    <button @click="archiveTask(task.id); confirmArchiveTaskId = null; taskMenuId = null" class="px-2 py-1 rounded-md bg-urgent text-white text-[9px] font-bold">Archive</button>
+                                  </div>
+                                </div>
+                              </template>
+                            </div>
+                          </div>
+                        </div>
+                      </article>
+                    </template>
+                  </div>
+                </div>
+
+                <!-- Add Task Inline Form -->
+                <form @submit.prevent="addTask(initiative.id)" class="mt-4 pt-2 border-t border-brand/5">
+                  <input x-model="newTaskTitles[initiative.id]" class="w-full rounded-xl bg-brandLight px-3.5 py-2.5 text-[12px] font-medium outline-none hairline focus:border-brand transition-all" placeholder="+ Add new task..." />
+                </form>
+              </section>
+            </template>
+          </div>
+        </section>
+
+        <!-- View 3: Tasks (Notion-style Database Table) -->
+        <section x-show="activeView === 'tasks'" class="px-8 py-8 flex-1 flex flex-col space-y-6" x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0">
+          <header class="flex items-center justify-between">
+            <div>
+              <span class="text-[11px] font-bold tracking-[0.2em] text-brand uppercase">Task Database</span>
+              <h1 class="text-[28px] font-bold tracking-tight text-ink mt-0.5">All Tasks</h1>
+              <p class="text-[13px] text-secondary mt-0.5 font-medium">A powerful, Notion-style table view with ClickUp-style execution signals.</p>
+            </div>
+            <button @click="quickAddOpen = true; activeView = 'dashboard'; $nextTick(() => $refs.quickAddInput?.focus())" class="rounded-full bg-brand hover:bg-brandDark px-5 py-2.5 text-[13px] font-semibold text-white shadow-medium btn-tactile flex items-center gap-2">
+              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+              New Task
+            </button>
+          </header>
+
+          <!-- Task Database Stats Grid -->
+          <div class="grid grid-cols-4 gap-4">
+            <template x-for="stat in taskStats" :key="stat.label">
+              <article class="premium-card rounded-[20px] p-4 flex flex-col justify-between">
+                <span class="text-[11px] font-bold text-secondary uppercase tracking-wider" x-text="stat.label"></span>
+                <div class="mt-3 flex items-baseline gap-2">
+                  <span class="text-[24px] font-extrabold text-ink tracking-tight" x-text="stat.value"></span>
+                  <span class="text-[11px] text-muted font-medium" x-text="stat.note"></span>
+                </div>
+              </article>
+            </template>
+          </div>
+
+          <!-- Notion-style Database Container -->
+          <section class="premium-card rounded-[24px] p-6 space-y-5 flex-1 flex flex-col min-h-0">
+            <!-- Filters Tabs -->
+            <div class="flex items-center justify-between gap-4 pb-2 border-b border-brand/5">
+              <div class="flex flex-wrap gap-1.5">
+                <template x-for="filter in taskFilterItems" :key="filter.id">
+                  <button
+                    @click="taskFilter = filter.id"
+                    class="rounded-full px-4 py-2 text-[12px] font-bold tracking-wide btn-tactile flex items-center gap-2"
+                    :class="taskFilter === filter.id ? 'bg-brand text-white shadow-soft' : 'bg-brandLight text-secondary hover:bg-brandDim/40 hover:text-ink'"
+                  >
+                    <span x-text="filter.label"></span>
+                    <span class="rounded-full px-2 py-0.5 text-[10px] font-bold" :class="taskFilter === filter.id ? 'bg-white/20 text-white' : 'bg-brandDim/60 text-brand'" x-text="filter.count"></span>
+                  </button>
+                </template>
+              </div>
+              <span class="text-[11px] font-bold text-muted uppercase tracking-wider">Sorted by priority and due date</span>
+            </div>
+
+            <!-- Notion Table Grid -->
+            <div class="overflow-hidden rounded-[16px] hairline flex-1 flex flex-col min-h-0 bg-white shadow-soft">
+              <!-- Table Header -->
+              <div class="grid grid-cols-[minmax(280px,1.5fr)_140px_80px_100px_90px_100px_120px] bg-brandLight px-4 py-3 text-[11px] font-bold text-secondary uppercase tracking-wider border-b border-brand/10">
+                <div>Task Name</div>
+                <div>Project</div>
+                <div class="text-center">Owner</div>
+                <div>Status</div>
+                <div class="text-center">Priority</div>
+                <div>Due Date</div>
+                <div class="text-right">Linked Deal</div>
+              </div>
+
+              <!-- Table Body -->
+              <div class="overflow-y-auto flex-1 soft-scroll divide-y divide-brand/5">
+                <template x-for="task in taskRows" :key="`row-${task.id}`">
+                  <div class="grid grid-cols-[minmax(280px,1.5fr)_140px_80px_100px_90px_100px_120px] items-center px-4 py-3.5 text-[13px] hover:bg-brandLight/40 transition-colors group">
+                    <!-- Task Title -->
+                    <div class="min-w-0 flex items-center gap-3">
+                      <button @click="cycleStatus(task.id)" class="h-4 w-4 shrink-0 rounded border border-brand/30 flex items-center justify-center hover:border-brand transition-colors btn-tactile" :class="task.status === 'done' ? 'bg-healthy border-healthy' : ''">
+                        <template x-if="task.status === 'done'">
+                          <svg class="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="4"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                        </template>
+                      </button>
+                      
+                      <div class="min-w-0 flex-1">
+                        <button @click="toggleExpanded(task.id)" class="truncate text-left font-bold text-ink hover:text-brand hover:underline" :class="task.status === 'done' ? 'line-through text-muted font-medium' : ''" x-text="task.title"></button>
+                        
+                        <!-- Expanded Details Panel inside Table -->
+                        <div x-show="expandedTaskId === task.id" class="mt-3 space-y-3" @click.stop>
+                          <textarea
+                            x-model="task.notes"
+                            @input="persistLocal()"
+                            class="min-h-16 w-full resize-none rounded-[12px] bg-brandLight px-3 py-2 text-[12px] font-medium outline-none hairline focus:border-brand transition-all"
+                            placeholder="Add notes, objections, or next steps..."
+                          ></textarea>
+
+                          <!-- Subtasks Checklist inside Table -->
+                          <div class="space-y-1.5">
+                            <div class="text-[10px] font-bold text-muted uppercase tracking-wider">Subtasks</div>
+                            <div class="space-y-1">
+                              <template x-for="sub in (task.subtasks || [])" :key="sub.id">
+                                <div class="flex items-center gap-2">
+                                  <button @click="toggleSubtask(task.id, sub.id)" class="h-3.5 w-3.5 rounded border border-brand/30 flex items-center justify-center btn-tactile" :class="sub.done ? 'bg-healthy border-healthy' : 'bg-white'">
+                                    <template x-if="sub.done">
+                                      <svg class="h-2.5 w-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="4"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                                    </template>
+                                  </button>
+                                  <span class="text-[11px] font-medium" :class="sub.done ? 'line-through text-muted' : 'text-ink'" x-text="sub.title"></span>
+                                  <button @click="deleteSubtask(task.id, sub.id)" class="text-muted hover:text-urgent ml-auto p-0.5 rounded-full hover:bg-brandDim/30">
+                                    <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                  </button>
+                                </div>
+                              </template>
+                              <form @submit.prevent="addSubtask(task.id, $el.querySelector('input').value); $el.querySelector('input').value=''" class="flex gap-1.5 mt-1.5">
+                                <input class="flex-1 bg-brandLight border border-brand/10 rounded-lg px-2.5 py-1 text-[11px] outline-none focus:border-brand" placeholder="+ Add subtask" />
+                              </form>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Project -->
+                    <div class="flex items-center gap-2 text-secondary font-medium">
+                      <span class="h-2.5 w-2.5 rounded-full shrink-0" :class="colourClass(initiativeFor(task)?.colour || 'gray')"></span>
+                      <span class="truncate" x-text="initiativeFor(task)?.title || 'General'"></span>
+                    </div>
+
+                    <!-- Owner Avatar -->
+                    <div class="flex justify-center">
+                      <span class="inline-grid h-7 w-7 place-items-center rounded-full bg-brandDim text-[11px] font-bold text-brand shadow-innerLight" x-text="task.owner || 'VO'"></span>
+                    </div>
+
+                    <!-- Status Pill -->
+                    <div>
+                      <button @click="cycleStatus(task.id)" class="rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide btn-tactile" :class="task.status === 'done' ? 'bg-healthyDim text-healthy' : task.status === 'doing' ? 'bg-followDim text-follow' : 'bg-brandDim/50 text-secondary'" x-text="task.status"></button>
+                    </div>
+
+                    <!-- Priority Badge -->
+                    <div class="text-center">
+                      <span class="rounded-full px-2.5 py-0.5 text-[11px] font-bold uppercase" :class="task.priority >= 3 ? 'bg-urgentDim text-urgent' : task.priority == 2 ? 'bg-followDim text-follow' : 'bg-brandDim/40 text-secondary'" x-text="'P' + task.priority"></span>
+                    </div>
+
+                    <!-- Due Date -->
+                    <div :class="dueTone(task)" class="text-[12px] font-semibold" x-text="dueLabel(task)"></div>
+
+                    <!-- Linked Deal & Quick Action -->
+                    <div class="flex items-center justify-end gap-2">
+                      <span class="truncate text-[12px] text-secondary font-medium" x-text="task.hubspot_deal_id ? dealName(task.hubspot_deal_id) : 'Unlinked'"></span>
+                      <button @click="moveToToday(task.id)" class="rounded-full bg-brandDim hover:bg-brand text-brand hover:text-white px-2.5 py-1 text-[11px] font-bold btn-tactile transition-all" title="Commit to Today">Today</button>
+                    </div>
+                  </div>
+                </template>
+              </div>
+
+              <!-- Inline Quick-Add Row (Notion Style) -->
+              <form @submit.prevent="addDatabaseTask()" class="grid grid-cols-[minmax(280px,1.5fr)_140px_80px_100px_90px_100px_120px] items-center px-4 py-3 bg-brandLight/30 border-t border-brand/10">
+                <input x-model="dbTaskTitle" class="bg-transparent border-none outline-none text-[13px] font-semibold text-ink placeholder:text-muted/60" placeholder="+ Add task inline..." />
+                <select x-model="dbTaskInitiative" class="bg-transparent border-none outline-none text-[12px] font-medium text-secondary">
+                  <option value="">No Project</option>
+                  <template x-for="init in activeInitiatives" :key="init.id">
+                    <option :value="init.id" x-text="init.title"></option>
+                  </template>
+                </select>
+                <div class="text-center text-muted text-[12px]">-</div>
+                <div class="text-muted text-[12px]">todo</div>
+                <select x-model="dbTaskPriority" class="bg-transparent border-none outline-none text-[12px] font-medium text-secondary mx-auto">
+                  <option value="1">P1</option>
+                  <option value="2">P2</option>
+                  <option value="3">P3</option>
+                </select>
+                <input type="date" x-model="dbTaskDueDate" class="bg-transparent border-none outline-none text-[12px] font-medium text-secondary" />
+                <div class="flex justify-end">
+                  <button class="rounded-full bg-brand hover:bg-brandDark px-3 py-1 text-[11px] font-bold text-white btn-tactile">Add</button>
+                </div>
+              </form>
+            </div>
+
+            <!-- Empty State for Table -->
+            <div x-show="!taskRows.length" class="text-center py-8">
+              <p class="text-[13px] text-muted font-medium">No tasks found matching this filter.</p>
+            </div>
+          </section>
+        </section>
+
+        <!-- View 4: Pipeline (HubSpot Deals Kanban) -->
+        <section x-show="activeView === 'pipeline'" class="px-8 py-8 flex-1 flex flex-col space-y-6" x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0">
+          <header class="flex items-center justify-between">
+            <div>
+              <span class="text-[11px] font-bold tracking-[0.2em] text-brand uppercase">HubSpot Integration</span>
+              <h1 class="text-[28px] font-bold tracking-tight text-ink mt-0.5">Sales Pipeline</h1>
+              <p class="text-[13px] text-secondary mt-0.5 font-medium">Live HubSpot deals grouped by deal stage. Click any card to expand details.</p>
+            </div>
+            <button @click="refreshHubSpot()" class="rounded-full bg-brand hover:bg-brandDark px-5 py-2.5 text-[13px] font-semibold text-white shadow-medium btn-tactile flex items-center gap-2">
+              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+              Refresh Pipeline
+            </button>
+          </header>
+
+          <!-- Kanban Board Layout -->
+          <div class="grid grid-cols-[1fr_360px] gap-6 flex-1 min-h-0 items-start">
+            <!-- Columns Scroll -->
+            <div class="soft-scroll flex gap-4 overflow-x-auto pb-6 items-start">
+              <template x-for="column in pipelineColumns" :key="column.stage">
+                <section class="min-h-[calc(100vh-220px)] w-[280px] shrink-0 rounded-[22px] bg-white/50 p-4 hairline flex flex-col">
+                  <!-- Column Header -->
+                  <div class="mb-4 flex items-center justify-between">
+                    <h2 class="text-[13px] font-bold text-ink uppercase tracking-wider" x-text="column.stage"></h2>
+                    <span class="rounded-full bg-brandDim px-2.5 py-0.5 text-[11px] font-bold text-brand" x-text="column.deals.length"></span>
+                  </div>
+
+                  <!-- Deal Cards Stack -->
+                  <div class="space-y-3 overflow-y-auto max-h-[calc(100vh-300px)] pr-1 soft-scroll flex-1">
+                    <template x-for="deal in column.deals" :key="deal.id">
+                      <button
+                        @click="selectedDealId = deal.id"
+                        class="block w-full rounded-[16px] bg-white border border-brand/5 p-4 text-left shadow-soft hover:shadow-medium transition-all duration-200 group relative"
+                        :class="selectedDealId === deal.id ? 'ring-2 ring-brand ring-offset-1' : ''"
+                      >
+                        <div class="flex items-start justify-between gap-3">
+                          <div class="min-w-0 space-y-1">
+                            <div class="truncate text-[14px] font-bold text-ink group-hover:text-brand transition-colors" x-text="deal.company"></div>
+                            <div class="truncate text-[12px] font-medium text-secondary" x-text="deal.name"></div>
+                          </div>
+                          <span class="inline-grid h-6 w-6 place-items-center rounded-full bg-brandDim text-[10px] font-bold text-brand shrink-0" x-text="deal.owner"></span>
+                        </div>
+
+                        <div class="mt-4 flex items-center justify-between text-[12px]">
+                          <span class="font-extrabold text-ink" x-text="money(deal.value)"></span>
+                          <span class="font-semibold px-2.5 py-0.5 rounded-full text-[10px]" :class="deal.closeDate && new Date(deal.closeDate) >= startOfToday() ? 'bg-healthyDim text-healthy' : 'bg-urgentDim text-urgent'" x-text="shortDate(deal.closeDate)"></span>
+                        </div>
+
+                        <div class="mt-3 pt-2.5 border-t border-brand/5 flex items-center justify-between text-[10px] text-muted font-semibold uppercase tracking-wider">
+                          <span x-text="`Last: ${relativeDate(deal.lastActivityDate)}`"></span>
+                          <span x-show="deal.nextActivityDate" class="text-follow" x-text="`Next: ${shortDate(deal.nextActivityDate)}`"></span>
+                        </div>
+                      </button>
+                    </template>
+                  </div>
+                </section>
+              </template>
+            </div>
+
+            <!-- Slide-out Right Sidebar Detail Panel -->
+            <aside class="premium-card rounded-[24px] p-6 space-y-6 sticky top-8">
+              <template x-if="selectedDeal">
+                <div class="space-y-6" x-transition>
+                  <!-- Header -->
+                  <div class="flex items-start justify-between pb-3 border-b border-brand/5">
+                    <div class="min-w-0">
+                      <h2 class="text-[18px] font-bold text-ink truncate" x-text="selectedDeal.company"></h2>
+                      <p class="text-[13px] text-secondary font-medium truncate mt-0.5" x-text="selectedDeal.name"></p>
+                    </div>
+                    <button @click="selectedDealId = null" class="text-muted hover:text-urgent transition-colors p-1.5 rounded-full hover:bg-brandDim/40 btn-tactile">
+                      <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                    </button>
+                  </div>
+
+                  <!-- Details List -->
+                  <dl class="space-y-3.5 text-[13px] font-medium">
+                    <div class="flex justify-between gap-4 py-1.5 border-b border-brand/5">
+                      <dt class="text-muted">Deal Value</dt>
+                      <dd class="font-extrabold text-ink" x-text="money(selectedDeal.value)"></dd>
+                    </div>
+                    <div class="flex justify-between gap-4 py-1.5 border-b border-brand/5">
+                      <dt class="text-muted">Pipeline Stage</dt>
+                      <dd class="text-brand font-bold" x-text="selectedDeal.stage"></dd>
+                    </div>
+                    <div class="flex justify-between gap-4 py-1.5 border-b border-brand/5">
+                      <dt class="text-muted">Expected Close</dt>
+                      <dd class="text-ink" x-text="shortDate(selectedDeal.closeDate)"></dd>
+                    </div>
+                    <div class="flex justify-between gap-4 py-1.5 border-b border-brand/5">
+                      <dt class="text-muted">Deal Owner</dt>
+                      <dd class="flex items-center gap-1.5">
+                        <span class="inline-grid h-6 w-6 place-items-center rounded-full bg-brandDim text-[10px] font-bold text-brand" x-text="selectedDeal.owner"></span>
+                        <span class="text-ink" x-text="selectedDeal.owner === 'MR' ? 'Max Rep' : selectedDeal.owner === 'DN' ? 'Dani' : 'Sales Team'"></span>
+                      </dd>
+                    </div>
+                    <div class="flex justify-between gap-4 py-1.5">
+                      <dt class="text-muted">Next Activity</dt>
+                      <dd :class="selectedDeal.nextActivityDate ? 'text-follow font-semibold' : 'text-muted'" x-text="selectedDeal.nextActivityDate ? shortDate(selectedDeal.nextActivityDate) : 'No scheduled activity'"></dd>
+                    </div>
+                  </dl>
+
+                  <!-- AI Summary / Deal Context -->
+                  <div class="space-y-2">
+                    <div class="text-[11px] font-bold text-muted uppercase tracking-wider">AI Deal Briefing</div>
+                    <div class="rounded-[16px] bg-white border border-brand/5 p-4 text-[12.5px] text-secondary leading-relaxed shadow-innerLight" x-text="selectedDeal.summary"></div>
+                  </div>
+
+                  <!-- Quick Action: Create Linked Task -->
+                  <div class="space-y-3 pt-2">
+                    <div class="text-[11px] font-bold text-muted uppercase tracking-wider">Create Linked Task</div>
+                    <form @submit.prevent="addLinkedTask(selectedDeal)" class="space-y-2">
+                      <input x-model="linkedTaskTitle" class="w-full rounded-xl bg-white px-3 py-2 text-[12px] font-medium outline-none hairline focus:border-brand transition-all" placeholder="What needs to be done for this deal?" />
+                      <button class="w-full rounded-full bg-brand hover:bg-brandDark px-4 py-2 text-[11px] font-bold text-white btn-tactile">Create & Link Task</button>
+                    </form>
+                  </div>
+                </div>
+              </template>
+              <div x-show="!selectedDeal" class="text-center py-12">
+                <div class="text-muted mb-3">
+                  <svg class="h-8 w-8 mx-auto opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" /></svg>
+                </div>
+                <h3 class="text-[14px] font-bold text-ink">Select a Deal</h3>
+                <p class="text-[11px] text-secondary mt-1 leading-relaxed">Click any deal card in the pipeline to see full details, AI briefing, and manage linked tasks.</p>
+              </div>
+            </aside>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script>
+      document.addEventListener('alpine:init', () => {
+        Alpine.store('hubspot', {
+          status: 'synced',
+          lastSynced: null,
+          cache: null,
+          mode: 'mock'
+        });
+      });
+
+      function vocifyOs() {
+        return {
+          activeView: 'dashboard',
+          navItems: [
+            { id: 'dashboard', label: 'Dashboard' },
+            { id: 'canvas', label: 'Projects' },
+            { id: 'tasks', label: 'Tasks' },
+            { id: 'pipeline', label: 'Pipeline' }
+          ],
+          initiatives: [],
+          tasks: [],
+          dailyFocus: [],
+          quickAddOpen: false,
+          quickTaskTitle: '',
+          newTaskTitles: {},
+          taskFilter: 'active',
+          expandedTaskId: null,
+          taskMenuId: null,
+          projectMenuId: null,
+          editingInitiativeId: null,
+          editingInitiativeTitle: '',
+          confirmArchiveTaskId: null,
+          confirmArchiveInitiativeId: null,
+          selectedInitiativeId: null,
+          selectedDealId: null,
+          dragOverToday: false,
+          dragOverInitiativeId: null,
+
+          // Notion-style Database Form State
+          dbTaskTitle: '',
+          dbTaskInitiative: '',
+          dbTaskPriority: '1',
+          dbTaskDueDate: '',
+
+          // Linked Task Form State
+          linkedTaskTitle: '',
+
+          async init() {
+            this.loadLocal();
+            await this.loadHubSpot();
+          },
+
+          get todayLong() {
+            return new Intl.DateTimeFormat('en', { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date());
+          },
+
+          get syncLabel() {
+            if (this.$store.hubspot.status === 'syncing') return 'Syncing';
+            if (!this.$store.hubspot.lastSynced) return 'Ready';
+            return `Synced ${this.relativeDate(this.$store.hubspot.lastSynced)}`;
+          },
+
+          get dataModeLabel() {
+            return this.$store.hubspot.mode === 'live' ? 'Live HubSpot' : 'Mock HubSpot';
+          },
+
+          get hubspot() {
+            return this.$store.hubspot.cache || mockHubSpotData();
+          },
+
+          get activeInitiatives() {
+            return this.initiatives.filter((initiative) => !initiative.archived).sort((a, b) => a.position - b.position);
+          },
+
+          get openDeals() {
+            return this.hubspot.deals.filter((deal) => deal.isOpen);
+          },
+
+          get metrics() {
+            const activePipeline = this.openDeals.reduce((sum, deal) => sum + deal.value, 0);
+            const meetingsThisWeek = this.hubspot.meetingsBooked.length;
+            const overdue = this.hubspot.overdueFollowUps.length;
+            return [
+              { label: 'Active pipeline', value: this.money(activePipeline), note: `${this.openDeals.length} open deals` },
+              { label: 'Meetings booked', value: meetingsThisWeek, note: 'This week' },
+              { label: 'Follow-ups due', value: this.hubspot.followUpsDue.length, note: `${overdue} overdue` },
+              { label: 'Call queue', value: this.hubspot.callQueue.length, note: 'No activity in 7+ days' }
+            ];
+          },
+
+          get signalGroups() {
+            return [
+              { id: 'overdue', title: 'Overdue follow-ups', dot: 'bg-urgent', items: this.hubspot.overdueFollowUps },
+              { id: 'meetings', title: 'Meetings booked', dot: 'bg-healthy', items: this.hubspot.meetingsBooked },
+              { id: 'calls', title: 'Call needed', dot: 'bg-follow', items: this.hubspot.callQueue },
+              { id: 'proposal', title: 'Proposal or negotiation', dot: 'bg-brand', items: this.openDeals.filter((deal) => ['Proposal', 'Negotiation'].includes(deal.stage)) }
+            ];
+          },
+
+          get todayTasks() {
+            const ids = this.dailyFocus
+              .filter((item) => item.date === this.isoToday())
+              .sort((a, b) => a.order_index - b.order_index)
+              .map((item) => item.task_id);
+            return ids.map((id) => this.tasks.find((task) => task.id === id && !task.archived)).filter(Boolean);
+          },
+
+          get taskFilterItems() {
+            return [
+              { id: 'active', label: 'Active', count: this.tasks.filter((task) => !task.archived && task.status !== 'done').length },
+              { id: 'today', label: 'Today', count: this.todayTasks.length },
+              { id: 'overdue', label: 'Overdue', count: this.tasks.filter((task) => !task.archived && task.due_date && new Date(task.due_date) < this.startOfToday()).length },
+              { id: 'done', label: 'Done', count: this.tasks.filter((task) => !task.archived && task.status === 'done').length }
+            ];
+          },
+
+          get taskRows() {
+            return this.tasks
+              .filter((task) => !task.archived)
+              .filter((task) => {
+                if (this.taskFilter === 'today') return this.todayTasks.some((todayTask) => todayTask.id === task.id);
+                if (this.taskFilter === 'overdue') return task.due_date && new Date(task.due_date) < this.startOfToday();
+                if (this.taskFilter === 'done') return task.status === 'done';
+                return task.status !== 'done';
+              })
+              .sort((a, b) => (b.priority - a.priority) || String(a.due_date || '9999').localeCompare(String(b.due_date || '9999')));
+          },
+
+          get taskStats() {
+            const active = this.tasks.filter((task) => !task.archived);
+            return [
+              { label: 'Active Tasks', value: active.filter((task) => task.status !== 'done').length, note: 'Not complete' },
+              { label: 'Due Today', value: active.filter((task) => task.due_date === this.isoToday()).length, note: 'Committed' },
+              { label: 'High Priority', value: active.filter((task) => task.priority >= 3 && task.status !== 'done').length, note: 'P3' },
+              { label: 'Linked Deals', value: active.filter((task) => task.hubspot_deal_id).length, note: 'HubSpot context' }
+            ];
+          },
+
+          get pipelineColumns() {
+            const groups = new Map();
+            this.openDeals.forEach((deal) => {
+              if (!groups.has(deal.stage)) groups.set(deal.stage, []);
+              groups.get(deal.stage).push(deal);
+            });
+            return [...groups.entries()].map(([stage, deals]) => ({ stage, deals }));
+          },
+
+          get selectedDeal() {
+            return this.openDeals.find((deal) => deal.id === this.selectedDealId);
+          },
+
+          async refreshHubSpot() {
+            this.$store.hubspot.cache = null;
+            await this.loadHubSpot({ force: true });
+          },
+
+          async loadHubSpot() {
+            this.$store.hubspot.status = 'syncing';
+            if (!this.shouldUseLiveHubSpot()) {
+              this.$store.hubspot.cache = mockHubSpotData();
+              this.$store.hubspot.mode = 'mock';
+              this.$store.hubspot.status = 'synced';
+              this.$store.hubspot.lastSynced = new Date().toISOString();
+              return;
+            }
+
+            try {
+              const controller = new AbortController();
+              const timeout = setTimeout(() => controller.abort(), 1400);
+              const response = await fetch('/api/hubspot/summary', { signal: controller.signal, headers: { accept: 'application/json' } });
+              clearTimeout(timeout);
+              if (!response.ok) throw new Error(`HubSpot proxy returned ${response.status}`);
+              const payload = normalizeHubSpotSummary(await response.json());
+              this.$store.hubspot.cache = payload;
+              this.$store.hubspot.mode = 'live';
+            } catch (error) {
+              this.$store.hubspot.cache = mockHubSpotData();
+              this.$store.hubspot.mode = 'mock';
+            } finally {
+              this.$store.hubspot.status = 'synced';
+              this.$store.hubspot.lastSynced = new Date().toISOString();
+            }
+          },
+
+          shouldUseLiveHubSpot() {
+            const params = new URLSearchParams(window.location.search);
+            return params.get('live') === '1' || localStorage.getItem('vocify-hubspot-mode') === 'live';
+          },
+
+          loadLocal() {
+            const saved = safeJson(localStorage.getItem('vocify-os-local'));
+            const defaults = defaultLocalData();
+            this.initiatives = saved?.initiatives || defaults.initiatives;
+            this.tasks = saved?.tasks || defaults.tasks;
+            this.dailyFocus = saved?.dailyFocus || defaults.dailyFocus;
+          },
+
+          persistLocal() {
+            localStorage.setItem('vocify-os-local', JSON.stringify({
+              initiatives: this.initiatives,
+              tasks: this.tasks,
+              dailyFocus: this.dailyFocus
+            }));
+          },
+
+          addQuickTask() {
+            const title = this.quickTaskTitle.trim();
+            if (!title) return;
+            const initiative = this.activeInitiatives[0];
+            const task = {
+              id: crypto.randomUUID(),
+              title,
+              initiative_id: initiative?.id || '',
+              status: 'todo',
+              priority: 2,
+              due_date: this.isoToday(),
+              hubspot_deal_id: '',
+              owner: 'VO',
+              notes: '',
+              subtasks: [],
+              archived: false
+            };
+            this.tasks.push(task);
+            this.moveToToday(task.id);
+            this.quickTaskTitle = '';
+            this.quickAddOpen = false;
+            this.persistLocal();
+          },
+
+          addDatabaseTask() {
+            const title = this.dbTaskTitle.trim();
+            if (!title) return;
+            const task = {
+              id: crypto.randomUUID(),
+              title,
+              initiative_id: this.dbTaskInitiative || (this.activeInitiatives[0]?.id || ''),
+              status: 'todo',
+              priority: parseInt(this.dbTaskPriority) || 1,
+              due_date: this.dbTaskDueDate || '',
+              hubspot_deal_id: '',
+              owner: 'VO',
+              notes: '',
+              subtasks: [],
+              archived: false
+            };
+            this.tasks.push(task);
+            this.dbTaskTitle = '';
+            this.dbTaskDueDate = '';
+            this.persistLocal();
+          },
+
+          addLinkedTask(deal) {
+            const title = this.linkedTaskTitle.trim();
+            if (!title) return;
+            const initiative = this.activeInitiatives[0];
+            const task = {
+              id: crypto.randomUUID(),
+              title,
+              initiative_id: initiative?.id || '',
+              status: 'todo',
+              priority: 2,
+              due_date: this.isoToday(),
+              hubspot_deal_id: deal.id,
+              owner: deal.owner || 'VO',
+              notes: `Linked to HubSpot Deal for ${deal.company}.`,
+              subtasks: [],
+              archived: false
+            };
+            this.tasks.push(task);
+            this.moveToToday(task.id);
+            this.linkedTaskTitle = '';
+            this.persistLocal();
+          },
+
+          addSignalToToday(deal) {
+            // Check if task already exists for this deal
+            let task = this.tasks.find(t => t.hubspot_deal_id === deal.id && !t.archived);
+            if (!task) {
+              task = {
+                id: crypto.randomUUID(),
+                title: `Follow up with ${deal.company}: ${deal.name}`,
+                initiative_id: this.activeInitiatives[0]?.id || '',
+                status: 'todo',
+                priority: 3,
+                due_date: this.isoToday(),
+                hubspot_deal_id: deal.id,
+                owner: deal.owner || 'VO',
+                notes: deal.summary || '',
+                subtasks: [],
+                archived: false
+              };
+              this.tasks.push(task);
+            }
+            this.moveToToday(task.id);
+            this.persistLocal();
+          },
+
+          addInitiative() {
+            const next = this.initiatives.length + 1;
+            const colors = ['purple', 'teal', 'amber', 'gray'];
+            this.initiatives.push({
+              id: crypto.randomUUID(),
+              title: `New Project ${next}`,
+              colour: colors[next % colors.length],
+              position: next,
+              archived: false
+            });
+            this.persistLocal();
+          },
+
+          saveInitiativeTitle(id) {
+            const initiative = this.initiatives.find((item) => item.id === id);
+            if (initiative && this.editingInitiativeTitle.trim()) {
+              initiative.title = this.editingInitiativeTitle.trim();
+            }
+            this.editingInitiativeId = null;
+            this.persistLocal();
+          },
+
+          changeInitiativeColor(id, color) {
+            const initiative = this.initiatives.find((item) => item.id === id);
+            if (initiative) {
+              initiative.colour = color;
+            }
+            this.persistLocal();
+          },
+
+          archiveInitiative(id) {
+            const initiative = this.initiatives.find((item) => item.id === id);
+            if (initiative) initiative.archived = true;
+            this.persistLocal();
+          },
+
+          addTask(initiativeId) {
+            const title = (this.newTaskTitles[initiativeId] || '').trim();
+            if (!title) return;
+            this.tasks.push({
+              id: crypto.randomUUID(),
+              title,
+              initiative_id: initiativeId,
+              status: 'todo',
+              priority: 1,
+              due_date: '',
+              hubspot_deal_id: '',
+              owner: 'VO',
+              notes: '',
+              subtasks: [],
+              archived: false
+            });
+            this.newTaskTitles[initiativeId] = '';
+            this.persistLocal();
+          },
+
+          archiveTask(id) {
+            const task = this.tasks.find((item) => item.id === id);
+            if (task) task.archived = true;
+            this.dailyFocus = this.dailyFocus.filter((item) => item.task_id !== id);
+            this.persistLocal();
+          },
+
+          tasksForInitiative(initiativeId) {
+            return this.tasks.filter((task) => task.initiative_id === initiativeId && !task.archived);
+          },
+
+          initiativeFor(task) {
+            return this.initiatives.find((initiative) => initiative.id === task.initiative_id);
+          },
+
+          dealName(dealId) {
+            const deal = this.openDeals.find((item) => item.id === dealId);
+            return deal ? deal.company : dealId;
+          },
+
+          cycleStatus(taskId) {
+            const order = ['todo', 'doing', 'done'];
+            const task = this.tasks.find((item) => item.id === taskId);
+            if (!task) return;
+            task.status = order[(order.indexOf(task.status) + 1) % order.length];
+            this.persistLocal();
+          },
+
+          toggleExpanded(taskId) {
+            this.expandedTaskId = this.expandedTaskId === taskId ? null : taskId;
+          },
+
+          linkFirstDeal(taskId) {
+            const task = this.tasks.find((item) => item.id === taskId);
+            if (!task || !this.openDeals.length) return;
+            task.hubspot_deal_id = this.openDeals[0].id;
+            this.persistLocal();
+          },
+
+          moveToToday(taskId) {
+            const today = this.isoToday();
+            if (!this.dailyFocus.some((item) => item.task_id === taskId && item.date === today)) {
+              this.dailyFocus.push({ task_id: taskId, date: today, order_index: this.dailyFocus.filter((item) => item.date === today).length });
+            }
+            this.persistLocal();
+          },
+
+          removeFromToday(taskId) {
+            this.dailyFocus = this.dailyFocus.filter((item) => !(item.task_id === taskId && item.date === this.isoToday()));
+            this.reindexToday();
+            this.persistLocal();
+          },
+
+          reindexToday() {
+            this.dailyFocus
+              .filter((item) => item.date === this.isoToday())
+              .sort((a, b) => a.order_index - b.order_index)
+              .forEach((item, index) => item.order_index = index);
+          },
+
+          // Subtasks Management
+          addSubtask(taskId, title) {
+            if (!title || !title.trim()) return;
+            const task = this.tasks.find((item) => item.id === taskId);
+            if (!task) return;
+            if (!task.subtasks) task.subtasks = [];
+            task.subtasks.push({
+              id: crypto.randomUUID(),
+              title: title.trim(),
+              done: false
+            });
+            this.persistLocal();
+          },
+
+          toggleSubtask(taskId, subId) {
+            const task = this.tasks.find((item) => item.id === taskId);
+            if (!task || !task.subtasks) return;
+            const sub = task.subtasks.find((s) => s.id === subId);
+            if (sub) sub.done = !sub.done;
+            this.persistLocal();
+          },
+
+          deleteSubtask(taskId, subId) {
+            const task = this.tasks.find((item) => item.id === taskId);
+            if (!task || !task.subtasks) return;
+            task.subtasks = task.subtasks.filter((s) => s.id !== subId);
+            this.persistLocal();
+          },
+
+          // Drag & Drop
+          dragTask(event, taskId) {
+            event.dataTransfer.setData('text/plain', taskId);
+            event.currentTarget.classList.add('dragging');
+          },
+
+          dropOnInitiative(event, initiativeId) {
+            const taskId = event.dataTransfer.getData('text/plain');
+            const task = this.tasks.find((item) => item.id === taskId);
+            if (!task) return;
+            task.initiative_id = initiativeId;
+            this.dragOverInitiativeId = null;
+            this.persistLocal();
+          },
+
+          dropOnToday(event) {
+            const taskId = event.dataTransfer.getData('text/plain');
+            if (taskId) this.moveToToday(taskId);
+            this.dragOverToday = false;
+          },
+
+          colourClass(colour) {
+            return {
+              purple: 'bg-brand',
+              teal: 'bg-healthy',
+              amber: 'bg-follow',
+              gray: 'bg-muted'
+            }[colour] || 'bg-muted';
+          },
+
+          statusDot(status) {
+            return {
+              todo: 'bg-muted',
+              doing: 'bg-follow',
+              done: 'bg-healthy'
+            }[status] || 'bg-muted';
+          },
+
+          dueTone(task) {
+            if (!task.due_date) return 'text-muted';
+            const date = new Date(task.due_date);
+            if (isNaN(date.getTime())) return 'text-muted';
+            return date < this.startOfToday() ? 'text-urgent' : 'text-secondary';
+          },
+
+          dueLabel(task) {
+            if (!task.due_date) return 'No due date';
+            const today = this.isoToday();
+            if (task.due_date === today) return 'Due today';
+            const date = new Date(task.due_date);
+            if (isNaN(date.getTime())) return 'No due date';
+            if (date < this.startOfToday()) return 'Overdue';
+            return `Due ${this.shortDate(task.due_date)}`;
+          },
+
+          money(value) {
+            return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value || 0);
+          },
+
+          shortDate(value) {
+            if (!value) return '';
+            const date = new Date(value);
+            if (isNaN(date.getTime())) return '';
+            return new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric' }).format(date);
+          },
+
+          relativeDate(value) {
+            if (!value) return '';
+            const date = new Date(value);
+            if (isNaN(date.getTime())) return '';
+            const diffMs = Date.now() - date.getTime();
+            const diffDays = Math.round(diffMs / 86400000);
+            if (Math.abs(diffDays) === 0) return 'today';
+            if (diffDays === 1) return 'yesterday';
+            if (diffDays > 1) return `${diffDays} days ago`;
+            if (diffDays === -1) return 'tomorrow';
+            return `in ${Math.abs(diffDays)} days`;
+          },
+
+          isoToday() {
+            return new Date().toISOString().slice(0, 10);
+          },
+
+          startOfToday() {
+            const date = new Date();
+            date.setHours(0, 0, 0, 0);
+            return date;
+          },
+
+          // SVG Icon Helpers
+          getNavIcon(id, isActive) {
+            const strokeColor = isActive ? '#5B4A32' : 'currentColor';
+            const icons = {
+              dashboard: `<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="${strokeColor}" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>`,
+              canvas: `<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="${strokeColor}" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>`,
+              tasks: `<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="${strokeColor}" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>`,
+              pipeline: `<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="${strokeColor}" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2H6a2 2 0 01-2-2v-4zM14 16a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2h-2a2 2 0 01-2-2v-4z" /></svg>`
+            };
+            return icons[id] || '';
+          },
+
+          getMetricIcon(label) {
+            const icons = {
+              'Active pipeline': `<svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>`,
+              'Meetings booked': `<svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 00-2 2z" /></svg>`,
+              'Follow-ups due': `<svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>`,
+              'Call queue': `<svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.94.725l.548 2.2a1 1 0 01-.321.988l-1.305.98a10.582 10.582 0 004.872 4.872l.98-1.305a1 1 0 01.988-.321l2.2.548a1 1 0 01.725.94V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" /></svg>`
+            };
+            return icons[label] || '';
+          }
+        };
+      }
+
+      function normalizeHubSpotSummary(payload) {
+        if (!payload?.deals) throw new Error('Missing HubSpot deals');
+        return {
+          deals: payload.deals.map((deal) => ({
+            id: String(deal.id),
+            company: deal.company || deal.companyName || 'Unknown company',
+            name: deal.name || deal.dealname || 'Untitled deal',
+            value: Number(deal.value || deal.amount || 0),
+            stage: deal.stage || deal.stageName || 'Open',
+            closeDate: deal.closeDate || deal.closedate || new Date().toISOString(),
+            owner: deal.owner || deal.ownerInitials || 'VO',
+            lastActivityDate: deal.lastActivityDate || deal.notes_last_updated || new Date().toISOString(),
+            nextActivityDate: deal.nextActivityDate || deal.next_activity_date || '',
+            referenceDate: deal.referenceDate || deal.nextActivityDate || deal.lastActivityDate || new Date().toISOString(),
+            reason: deal.reason || 'Needs review',
+            summary: deal.summary || 'HubSpot deal imported through the live adapter.',
+            isOpen: deal.isOpen !== false
+          })),
+          overdueFollowUps: payload.overdueFollowUps || [],
+          followUpsDue: payload.followUpsDue || payload.overdueFollowUps || [],
+          meetingsBooked: payload.meetingsBooked || [],
+          callQueue: payload.callQueue || []
+        };
+      }
+
+      function defaultLocalData() {
+        const today = new Date().toISOString().slice(0, 10);
+        const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+        return {
+          initiatives: [
+            { id: 'init-expansion', title: 'Expansion Accounts', colour: 'purple', position: 1, archived: false },
+            { id: 'init-followup', title: 'Follow-up Discipline', colour: 'amber', position: 2, archived: false },
+            { id: 'init-proposals', title: 'Proposal Velocity', colour: 'teal', position: 3, archived: false }
+          ],
+          tasks: [
+            { id: 'task-1', title: 'Send proof recap to Northstar Ops', initiative_id: 'init-proposals', status: 'doing', priority: 3, due_date: today, hubspot_deal_id: 'deal-103', owner: 'DN', notes: 'Use their warehouse call notes and keep it short.', subtasks: [{ id: 'sub-1', title: 'Review warehouse call notes', done: true }, { id: 'sub-2', title: 'Draft email recap', done: false }], archived: false },
+            { id: 'task-2', title: 'Call back Vega Logistics before lunch', initiative_id: 'init-followup', status: 'todo', priority: 3, due_date: today, hubspot_deal_id: 'deal-101', owner: 'MR', notes: 'Discuss pricing objections raised by their operations lead.', subtasks: [], archived: false },
+            { id: 'task-3', title: 'Prepare meeting plan for Atlas Manufacturing', initiative_id: 'init-expansion', status: 'todo', priority: 2, due_date: tomorrow, hubspot_deal_id: 'deal-102', owner: 'DN', notes: 'Focus on mobile adoption case studies.', subtasks: [], archived: false },
+            { id: 'task-4', title: 'Tighten negotiation next step for Harbor Foods', initiative_id: 'init-proposals', status: 'todo', priority: 2, due_date: '', hubspot_deal_id: 'deal-104', owner: 'AV', notes: 'Need to get sign-off from VP of Procurement.', subtasks: [], archived: false }
+          ],
+          dailyFocus: [
+            { task_id: 'task-1', date: today, order_index: 0 },
+            { task_id: 'task-2', date: today, order_index: 1 }
+          ]
+        };
+      }
+
+      function mockHubSpotData() {
+        const daysAgo = (days) => new Date(Date.now() - days * 86400000).toISOString();
+        const daysFromNow = (days) => new Date(Date.now() + days * 86400000).toISOString();
+        const deals = [
+          { id: 'deal-101', company: 'Vega Logistics', name: 'Voice update rollout', value: 42000, stage: 'Qualified', closeDate: daysFromNow(18), owner: 'MR', lastActivityDate: daysAgo(9), nextActivityDate: daysAgo(1), referenceDate: daysAgo(1), reason: 'Follow-up was due yesterday', summary: 'Operations team liked the CRM update flow. Needs a direct call to confirm pilot scope and address minor security questions.', isOpen: true },
+          { id: 'deal-102', company: 'Atlas Manufacturing', name: 'Field sales CRM cleanup', value: 68000, stage: 'Meeting booked', closeDate: daysFromNow(24), owner: 'DN', lastActivityDate: daysAgo(2), nextActivityDate: daysFromNow(1), referenceDate: daysFromNow(1), reason: 'Meeting booked tomorrow at 10:00', summary: 'Discovery call scheduled with VP Sales and RevOps. Focus on mobile adoption and call notes automation.', isOpen: true },
+          { id: 'deal-103', company: 'Northstar Ops', name: 'Rep workflow automation', value: 55000, stage: 'Proposal', closeDate: daysFromNow(12), owner: 'MR', lastActivityDate: daysAgo(3), nextActivityDate: daysFromNow(2), referenceDate: daysAgo(3), reason: 'Proposal stage', summary: 'Proposal sent after strong demo. Decision depends on integration confidence and rollout timeline. Follow up to secure pilot.', isOpen: true },
+          { id: 'deal-104', company: 'Harbor Foods', name: 'Sales notes assistant', value: 73000, stage: 'Negotiation', closeDate: daysAgo(2), owner: 'DN', lastActivityDate: daysAgo(8), nextActivityDate: daysFromNow(3), referenceDate: daysAgo(8), reason: 'No activity for 8 days', summary: 'Procurement asked for updated commercial terms. Close date has slipped and needs owner attention to finalize contract.', isOpen: true },
+          { id: 'deal-105', company: 'Cobalt Services', name: 'Regional pilot', value: 31000, stage: 'Demo scheduled', closeDate: daysFromNow(31), owner: 'AV', lastActivityDate: daysAgo(1), nextActivityDate: daysFromNow(5), referenceDate: daysFromNow(5), reason: 'Demo scheduled this week', summary: 'Smaller team, but urgent need. Keep scope tight and avoid enterprise procurement drag.', isOpen: true },
+          { id: 'deal-106', company: 'Summit Equipment', name: 'Mobile sales capture', value: 47000, stage: 'Qualified', closeDate: daysFromNow(28), owner: 'MR', lastActivityDate: daysAgo(11), nextActivityDate: '', referenceDate: daysAgo(11), reason: 'No activity for 11 days', summary: 'Initial interest came from sales enablement. Needs a quick value reminder and next step to schedule discovery.', isOpen: true }
+        ];
+        return {
+          deals,
+          overdueFollowUps: deals.filter((deal) => deal.nextActivityDate && new Date(deal.nextActivityDate) < new Date()),
+          followUpsDue: deals.filter((deal) => deal.nextActivityDate && new Date(deal.nextActivityDate) <= new Date(Date.now() + 86400000)),
+          meetingsBooked: deals.filter((deal) => deal.stage === 'Meeting booked'),
+          callQueue: deals.filter((deal) => Date.now() - new Date(deal.lastActivityDate).getTime() > 7 * 86400000)
+        };
+      }
+
+      function safeJson(value) {
+        try {
+          return value ? JSON.parse(value) : null;
+        } catch {
+          return null;
+        }
+      }
+    </script>
+  </body>
+</html>

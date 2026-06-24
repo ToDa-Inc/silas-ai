@@ -348,6 +348,69 @@ export function fetchDashboardCompetitorWinsClient(
   return fetchDashboardLaneClient("competitor-wins", clientSlug, orgSlug, days, limit);
 }
 
+export type HomeSummaryExport = {
+  session_id: string;
+  thumbnail_url: string | null;
+  hook_text: string | null;
+};
+
+export type HomeSummaryRow = {
+  scout: {
+    watching_accounts: number;
+    new_this_week: number;
+    top_opportunity_reel_id: string | null;
+    working: boolean;
+  };
+  writer: {
+    drafts_ready: number;
+    in_progress: number;
+    latest_draft_session_id: string | null;
+    last_export: HomeSummaryExport | null;
+    working: boolean;
+  };
+  analyst: {
+    reels_studied: number;
+    avg_views: number | null;
+    outliers: number;
+    trend_pct: number | null;
+    working: boolean;
+  };
+  state: {
+    phase: string;
+    setup_complete: boolean;
+    onboarding_step: string;
+    is_building: boolean;
+  };
+  momentum: {
+    posts_made: number;
+    last_export: HomeSummaryExport | null;
+  };
+};
+
+export async function fetchHomeSummaryClient(
+  clientSlug: string,
+  orgSlug: string,
+): Promise<{ ok: true; data: HomeSummaryRow } | { ok: false; error: string }> {
+  const base = getContentApiBase();
+  const headers = await clientApiHeaders({ orgSlug });
+  try {
+    const res = await contentApiFetch(
+      `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/home/summary`,
+      { headers },
+    );
+    const json = (await res.json().catch(() => ({}))) as HomeSummaryRow & { detail?: unknown };
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: formatFastApiError(json as Record<string, unknown>, `Failed (${res.status})`),
+      };
+    }
+    return { ok: true, data: json as HomeSummaryRow };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "fetch failed" };
+  }
+}
+
 /** Browser GET /reels?own_reels_only — creator baseline rows only. */
 export async function fetchOwnReelsClient(
   clientSlug: string,
@@ -477,6 +540,8 @@ export type ReelsListClientQuery = {
   source?: string;
   outlierOnly?: boolean;
   ownReelsOnly?: boolean;
+  favouritesOnly?: boolean;
+  postedAfter?: string;
   includeAnalysis?: boolean;
 };
 
@@ -499,6 +564,8 @@ export async function fetchReelsListClient(
   if (query.outlierOnly) params.set("outlier_only", "true");
   if (query.ownReelsOnly) params.set("own_reels_only", "true");
   if (query.source) params.set("source", query.source);
+  if (query.favouritesOnly) params.set("bookmarked_only", "true");
+  if (query.postedAfter) params.set("posted_after", query.postedAfter);
   try {
     const res = await contentApiFetch(
       `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/reels?${params}`,

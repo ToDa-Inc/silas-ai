@@ -101,6 +101,7 @@ type Props = {
   onGenerateAi: () => void;
   onComposeFromImage: () => void;
   step: number;
+  embedded?: boolean;
 };
 
 export function CoverEditor({
@@ -124,6 +125,7 @@ export function CoverEditor({
   onGenerateAi,
   onComposeFromImage,
   step,
+  embedded = false,
 }: Props) {
   const usingCoverOptions = coverOptions.length > 0;
   const chipItems: string[] = usingCoverOptions
@@ -184,6 +186,7 @@ export function CoverEditor({
 
       <EditorShell
         previewMaxWidth={360}
+        embedded={embedded}
         preview={
           <CoverTextLayerEditor
             layout={coverEdit.layout}

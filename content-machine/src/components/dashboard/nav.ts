@@ -18,15 +18,23 @@ export type NavItem = {
   comingSoon?: boolean;
 };
 
-export const mainNav: NavItem[] = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/intelligence", label: "Intelligence", icon: BarChart3 },
+/** Primary surfaces — promoted in the top bar (desktop) and bottom tabs (mobile). */
+export const primaryNav: NavItem[] = [
+  { href: "/dashboard", label: "Home", icon: LayoutDashboard },
   // `/generate` is the editor entry point. Sidebar / page title / empty
   // states all say "Create" so users have one consistent name for the
   // creation surface. Route kept as `/generate` to avoid breaking deep links.
   { href: "/generate", label: "Create", icon: Sparkles },
+];
+
+/** Power features — tucked under the avatar menu as "Studio". */
+export const studioNav: NavItem[] = [
+  { href: "/intelligence", label: "Intelligence", icon: BarChart3 },
   { href: "/media", label: "Media", icon: FolderOpen },
-  { href: "/scheduling", label: "Scheduling", icon: Calendar, comingSoon: true },
   { href: "/context", label: "Context", icon: Database },
   { href: "/settings", label: "Settings", icon: Settings },
+  { href: "/scheduling", label: "Scheduling", icon: Calendar, comingSoon: true },
 ];
+
+/** @deprecated Prefer `primaryNav` + `studioNav`. Kept for any legacy imports. */
+export const mainNav: NavItem[] = [...primaryNav, ...studioNav];

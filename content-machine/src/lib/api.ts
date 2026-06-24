@@ -759,6 +759,103 @@ export function fetchDashboardCompetitorWins(days = 3, limit = DASHBOARD_LANE_LI
   return fetchDashboardLane("competitor-wins", days, limit);
 }
 
+export type HomeSummaryExport = {
+  session_id: string;
+  thumbnail_url: string | null;
+  hook_text: string | null;
+};
+
+export type HomeSummaryRow = {
+  scout: {
+    watching_accounts: number;
+    new_this_week: number;
+    top_opportunity_reel_id: string | null;
+    working: boolean;
+  };
+  writer: {
+    drafts_ready: number;
+    in_progress: number;
+    latest_draft_session_id: string | null;
+    last_export: HomeSummaryExport | null;
+    working: boolean;
+  };
+  analyst: {
+    reels_studied: number;
+    avg_views: number | null;
+    outliers: number;
+    trend_pct: number | null;
+    working: boolean;
+  };
+  state: {
+    phase: string;
+    setup_complete: boolean;
+    onboarding_step: string;
+    is_building: boolean;
+  };
+  momentum: {
+    posts_made: number;
+    last_export: HomeSummaryExport | null;
+  };
+};
+
+/** GET /home/summary — agent team stats + setup state for Home cockpit. */
+export async function fetchHomeSummary(): Promise<{
+  ok: boolean;
+  data: HomeSummaryRow | null;
+  error?: string;
+}> {
+  const base = getContentApiBase();
+  try {
+    const { headers, clientSlug } = await getCachedServerApiContext();
+    if (!clientSlug) {
+      return { ok: false, data: null, error: "No active creator" };
+    }
+    const res = await fetch(
+      `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/home/summary`,
+      { headers: { ...headers }, cache: "no-store" },
+    );
+    if (!res.ok) {
+      return { ok: false, data: null, error: `${res.status} ${await res.text()}` };
+    }
+    return { ok: true, data: (await res.json()) as HomeSummaryRow };
+  } catch (e) {
+    return {
+      ok: false,
+      data: null,
+      error: e instanceof Error ? e.message : "fetch failed",
+    };
+  }
+}
+
+/** GET /reels/adapt-preview — broader opportunity pool for hero fallback. */
+export async function fetchAdaptPreviewReels(limit = 8): Promise<{
+  ok: boolean;
+  data: ScrapedReelRow[];
+  error?: string;
+}> {
+  const base = getContentApiBase();
+  try {
+    const { headers, clientSlug } = await getCachedServerApiContext();
+    if (!clientSlug) {
+      return { ok: false, data: [], error: "No active creator" };
+    }
+    const res = await fetch(
+      `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/reels/adapt-preview?limit=${limit}`,
+      { headers: { ...headers }, cache: "no-store" },
+    );
+    if (!res.ok) {
+      return { ok: false, data: [], error: `${res.status} ${await res.text()}` };
+    }
+    return { ok: true, data: (await res.json()) as ScrapedReelRow[] };
+  } catch (e) {
+    return {
+      ok: false,
+      data: [],
+      error: e instanceof Error ? e.message : "fetch failed",
+    };
+  }
+}
+
 export type ReelsListSortBy =
   | "posted_at"
   | "posted_date"

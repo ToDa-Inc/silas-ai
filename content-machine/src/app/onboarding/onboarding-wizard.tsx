@@ -2,10 +2,11 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Loader2, Sparkles } from "lucide-react";
+import { Brain, ChevronDown, FileText, Loader2, Sparkles } from "lucide-react";
 import { ContextEditor } from "@/app/(dashboard)/context/context-editor";
 import { OnboardingPipelineProgress } from "@/components/onboarding/onboarding-pipeline-progress";
 import { OnboardingReelVoteCard } from "@/components/onboarding/onboarding-reel-vote-card";
+import { OpportunityCard } from "@/components/home/opportunity-card";
 import {
   OnboardingError,
   OnboardingPrimaryButton,
@@ -40,6 +41,7 @@ type Props = {
   orgSlug: string;
   initialStatus: OnboardingStatusRow | null;
   initialContext?: Record<string, unknown> | null;
+  onboardingBypassActive?: boolean;
 };
 
 function toScrapedRow(c: OnboardingReelCandidate): ScrapedReelRow {
@@ -72,12 +74,32 @@ function ReelCandidatesSkeleton() {
   );
 }
 
+function splitList(value: string): string[] {
+  return value
+    .split(/[,;\n]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function PreviewCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-5 hover:border-amber-300/20 hover:bg-white/[0.03] transition-all duration-300 shadow-sm">
+      <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-amber-300/90 flex items-center gap-1.5">
+        <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+        {label}
+      </p>
+      <p className="mt-2.5 text-sm leading-relaxed text-zinc-300 font-medium whitespace-pre-wrap">{value}</p>
+    </div>
+  );
+}
+
 export function OnboardingWizard({
   hasTenancy,
   clientSlug,
   orgSlug,
   initialStatus,
   initialContext,
+  onboardingBypassActive = false,
 }: Props) {
   const router = useRouter();
   const [status, setStatus] = useState<OnboardingStatusRow | null>(initialStatus);
@@ -87,19 +109,21 @@ export function OnboardingWizard({
 
   const [wsStep, setWsStep] = useState<1 | 2>(1);
   const [orgName, setOrgName] = useState("");
-  const [orgSlugInput, setOrgSlugInput] = useState("");
+  const [orgSlugInput] = useState("");
   const [clientName, setClientName] = useState("");
-  const [clientSlugInput, setClientSlugInput] = useState("");
+  const [clientSlugInput] = useState("");
   const [instagram, setInstagram] = useState("");
   const [language, setLanguage] = useState<"de" | "en">("de");
-  const [nicheSummary, setNicheSummary] = useState("");
-  const [nicheKeywords, setNicheKeywords] = useState("");
+  const [nicheSummary] = useState("");
+  const [nicheKeywords] = useState("");
 
   const [quizAudience, setQuizAudience] = useState("");
   const [quizGoals, setQuizGoals] = useState("");
   const [quizVoice, setQuizVoice] = useState("");
+  const [quizOffers, setQuizOffers] = useState("");
   const [quizCompetitors, setQuizCompetitors] = useState("");
   const [sourceText, setSourceText] = useState("");
+  const [showFullBrainEditor, setShowFullBrainEditor] = useState(false);
   const [candidates, setCandidates] = useState<OnboardingReelCandidate[]>([]);
   const [votes, setVotes] = useState<Record<string, "yes" | "no">>({});
   const [selectedReelId, setSelectedReelId] = useState<string | null>(null);
@@ -234,8 +258,13 @@ export function OnboardingWizard({
   }
 
   async function saveSourceAndContinue() {
-    if (sourceText.trim().length < 80) {
-      setError("Paste at least a short transcript or brief (80+ characters).");
+    const trimmedSource = sourceText.trim();
+    if (!trimmedSource) {
+      await advance({ current_step: "strategy_docs", complete_step: "source" });
+      return;
+    }
+    if (trimmedSource.length < 80) {
+      setError("Add a little more context (80+ characters), or clear this box and skip it for now.");
       return;
     }
     setBusy(true);
@@ -252,7 +281,7 @@ export function OnboardingWizard({
           body: JSON.stringify({
             client_context: {
               onboarding_transcript: {
-                text: sourceText.trim(),
+                text: trimmedSource,
                 source: "manual",
                 file: null,
                 updated_at: new Date().toISOString(),
@@ -347,13 +376,38 @@ export function OnboardingWizard({
   const yesReels = candidates.filter((c) => c.reel?.id && votes[c.reel.id] === "yes");
   const pipelinePhase = (status?.pipeline_progress as { phase?: string })?.phase;
   const pipelineComplete = pipelinePhase === "complete";
+  const votedCount = Object.keys(votes).length;
+  const sourceLength = sourceText.trim().length;
+  const brainPreview = {
+    audience:
+      quizAudience.trim() ||
+      String(status?.quiz_answers?.target_audience || "").trim() ||
+      "Your ideal audience will be shaped from your answers and source material.",
+    goals:
+      splitList(quizGoals).join(", ") ||
+      ((status?.quiz_answers?.content_goals as string[] | undefined)?.join(", ") ?? "") ||
+      "Your first content angles will appear here.",
+    voice:
+      quizVoice.trim() ||
+      String(status?.quiz_answers?.brand_voice || "").trim() ||
+      "Silas will infer tone from your examples and notes.",
+    offer:
+      quizOffers.trim() ||
+      String(status?.quiz_answers?.offers || "").trim() ||
+      "Add what you sell or promote so the AI can aim the content.",
+  };
 
   const body = (
     <>
       {error ? <OnboardingError message={error} /> : null}
 
       {currentStep === "workspace" && (
-        <div className="space-y-4">
+        <div className="space-y-5">
+          <div className="rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3">
+            <p className="text-sm font-semibold text-amber-100">
+              In a few minutes, Silas should know who you are and what kind of content to find for you.
+            </p>
+          </div>
           {wsStep === 1 ? (
             <>
               <label className="block text-sm">
@@ -375,7 +429,7 @@ export function OnboardingWizard({
                   setWsStep(2);
                 }}
               >
-                Continue
+                Continue to creator profile
               </OnboardingPrimaryButton>
             </>
           ) : (
@@ -386,6 +440,7 @@ export function OnboardingWizard({
                   value={clientName}
                   onChange={(e) => setClientName(e.target.value)}
                   className={onboardingInputClass}
+                  placeholder="e.g. Dani"
                 />
               </label>
               <label className="block text-sm">
@@ -399,17 +454,22 @@ export function OnboardingWizard({
               </label>
               <label className="block text-sm">
                 <span className={onboardingLabelClass}>Language</span>
-                <select
-                  value={language}
-                  onChange={(e) => setLanguage(e.target.value as "de" | "en")}
-                  className={onboardingInputClass}
-                >
-                  <option value="de">Deutsch</option>
-                  <option value="en">English</option>
-                </select>
+                <div className="relative mt-1">
+                  <select
+                    value={language}
+                    onChange={(e) => setLanguage(e.target.value as "de" | "en")}
+                    className={cn(onboardingInputClass, "appearance-none pr-10 cursor-pointer")}
+                  >
+                    <option value="de" className="bg-zinc-950 text-white">Deutsch</option>
+                    <option value="en" className="bg-zinc-950 text-white">English</option>
+                  </select>
+                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3.5 text-zinc-500">
+                    <ChevronDown className="h-4 w-4" />
+                  </div>
+                </div>
               </label>
               <OnboardingPrimaryButton busy={busy} onClick={() => void submitWorkspace()}>
-                Create workspace
+                Create my Creator Brain
               </OnboardingPrimaryButton>
             </>
           )}
@@ -419,33 +479,44 @@ export function OnboardingWizard({
       {currentStep === "quiz" && (
         <div className="space-y-4">
           <label className="block text-sm">
-            <span className={onboardingLabelClass}>Ideal audience</span>
+            <span className={onboardingLabelClass}>Who do you want to attract?</span>
             <textarea
               value={quizAudience}
               onChange={(e) => setQuizAudience(e.target.value)}
               rows={2}
               className={onboardingInputClass}
+              placeholder="e.g. B2B founders who want better outbound systems without hiring a huge team"
             />
           </label>
           <label className="block text-sm">
-            <span className={onboardingLabelClass}>Content goals</span>
+            <span className={onboardingLabelClass}>What should the content help you do?</span>
             <input
               value={quizGoals}
               onChange={(e) => setQuizGoals(e.target.value)}
-              placeholder="Comma-separated"
+              placeholder="Book calls, build authority, sell a program"
               className={onboardingInputClass}
             />
           </label>
           <label className="block text-sm">
-            <span className={onboardingLabelClass}>Brand voice</span>
+            <span className={onboardingLabelClass}>How should it sound?</span>
             <input
               value={quizVoice}
               onChange={(e) => setQuizVoice(e.target.value)}
+              placeholder="Direct, sharp, contrarian, practical"
               className={onboardingInputClass}
             />
           </label>
           <label className="block text-sm">
-            <span className={onboardingLabelClass}>Known competitors</span>
+            <span className={onboardingLabelClass}>Offer or product</span>
+            <input
+              value={quizOffers}
+              onChange={(e) => setQuizOffers(e.target.value)}
+              placeholder="What do you sell, promote, or want people to do?"
+              className={onboardingInputClass}
+            />
+          </label>
+          <label className="block text-sm">
+            <span className={onboardingLabelClass}>Creators we should learn near</span>
             <input
               value={quizCompetitors}
               onChange={(e) => setQuizCompetitors(e.target.value)}
@@ -454,66 +525,110 @@ export function OnboardingWizard({
             />
           </label>
           <OnboardingPrimaryButton busy={busy} onClick={() => void saveQuiz()}>
-            Continue
+            Shape my discovery
           </OnboardingPrimaryButton>
         </div>
       )}
 
       {currentStep === "source" && (
         <div className="space-y-4">
-          <div className="flex items-start gap-3 rounded-xl border border-app-divider/60 bg-app-chip-bg/30 px-4 py-3">
-            <FileText className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" aria-hidden />
-            <p className="text-xs leading-relaxed text-app-fg-muted">
-              Sales call transcript, Notion doc, or positioning notes — minimum 80 characters.
-              Next step drafts your five strategy sections automatically.
-            </p>
+          <div className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3">
+            <FileText className="mt-0.5 h-5 w-5 shrink-0 text-amber-300" aria-hidden />
+            <div>
+              <p className="text-sm font-semibold text-zinc-100">Give Silas your real words.</p>
+              <p className="mt-1 text-xs leading-relaxed text-zinc-400">
+                Paste a call transcript, positioning notes, website copy, or a messy brain dump. This is optional, but it makes the output sound less generic.
+              </p>
+            </div>
           </div>
           <textarea
             value={sourceText}
             onChange={(e) => setSourceText(e.target.value)}
-            placeholder="Paste your material here…"
+            placeholder="Paste notes here. Example: who you serve, the promise, common objections, stories, beliefs, phrases you use often..."
             className={onboardingTextareaClass}
           />
           <p className="text-right text-[11px] tabular-nums text-app-fg-subtle">
-            {sourceText.trim().length} characters
-            {sourceText.trim().length < 80 ? " · need 80+" : ""}
+            {sourceLength} characters
+            {sourceLength > 0 && sourceLength < 80 ? " · need 80+ or clear to skip" : ""}
           </p>
           <OnboardingPrimaryButton busy={busy} onClick={() => void saveSourceAndContinue()}>
-            Draft strategy sections
+            {sourceLength > 0 ? "Build my brain preview" : "Skip for now"}
           </OnboardingPrimaryButton>
         </div>
       )}
 
       {currentStep === "strategy_docs" && (
         <div className="space-y-6">
-          <ContextEditor
-            clientSlug={clientSlug}
-            orgSlug={orgSlug}
-            initialContext={initialContext as never}
-            disabled={false}
-          />
+          <div className="grid gap-4 lg:grid-cols-[1fr_0.85fr]">
+            <div className="rounded-3xl border border-amber-300/20 bg-amber-300/10 p-5">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-amber-300/20">
+                  <Brain className="h-5 w-5 text-amber-300" aria-hidden />
+                </div>
+                <div>
+                  <p className="text-lg font-black text-white">Silas has enough to start.</p>
+                  <p className="mt-2 text-sm leading-relaxed text-zinc-300">
+                    This is the lightweight version of your Creator Brain. The full editor is still available below, but the onboarding goal is to get you to a useful first content opportunity quickly.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
+              <p className="text-sm font-bold text-white">What happens next</p>
+              <p className="mt-2 text-sm leading-relaxed text-zinc-400">
+                We&apos;ll compile this into discovery inputs, look for similar creators, score outlier reels, and ask you to approve what actually feels on-brand.
+              </p>
+            </div>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <PreviewCard label="Audience" value={brainPreview.audience} />
+            <PreviewCard label="Content goals" value={brainPreview.goals} />
+            <PreviewCard label="Voice" value={brainPreview.voice} />
+            <PreviewCard label="Offer" value={brainPreview.offer} />
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowFullBrainEditor((v) => !v)}
+            className="text-sm font-bold text-amber-300 hover:text-amber-200"
+          >
+            {showFullBrainEditor ? "Hide full brain editor" : "Review full brain editor"}
+          </button>
+          {showFullBrainEditor ? (
+            <ContextEditor
+              clientSlug={clientSlug}
+              orgSlug={orgSlug}
+              initialContext={initialContext as never}
+              disabled={false}
+            />
+          ) : null}
           <OnboardingPrimaryButton
             busy={busy}
             onClick={() => void advance({ complete_step: "strategy_docs", current_step: "pipeline" })}
           >
-            Continue to discovery
+            Start finding content opportunities
           </OnboardingPrimaryButton>
         </div>
       )}
 
       {currentStep === "pipeline" && (
         <div className="space-y-5">
+          <div className="rounded-3xl border border-white/5 bg-white/[0.02] p-6 text-center shadow-lg">
+            <p className="text-xl font-black text-white">Silas is crafting your Creator Brain...</p>
+            <p className="mx-auto mt-2 max-w-lg text-sm leading-relaxed text-zinc-400">
+              We are compiling your brand positioning, analyzing adjacent creator spaces, and crawling top-performing competitor strategies to prepare your custom insights.
+            </p>
+          </div>
           <OnboardingPipelineProgress
             phase={pipelinePhase}
             lastError={status?.last_error}
           />
           {pipelineComplete ? (
             <OnboardingPrimaryButton onClick={() => void advance({ current_step: "reel_review" })}>
-              Review candidate reels
+              Show me the best opportunities
             </OnboardingPrimaryButton>
           ) : (
             <OnboardingPrimaryButton busy={busy} onClick={() => void runPipeline()}>
-              {pipelinePhase && pipelinePhase !== "queued" ? "Discovery running…" : "Start discovery"}
+              {pipelinePhase && pipelinePhase !== "queued" ? "Discovery is running..." : "Start AI discovery"}
             </OnboardingPrimaryButton>
           )}
         </div>
@@ -521,6 +636,12 @@ export function OnboardingWizard({
 
       {currentStep === "reel_review" && (
         <div className="space-y-4">
+          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
+            <p className="text-sm font-bold text-white">Your job: teach taste, not strategy.</p>
+            <p className="mt-2 text-sm leading-relaxed text-zinc-400">
+              Mark what feels useful and on-brand. Three votes are enough for Silas to adapt the first piece with better judgment.
+            </p>
+          </div>
           {candidatesLoading ? (
             <ReelCandidatesSkeleton />
           ) : candidates.length === 0 ? (
@@ -550,17 +671,23 @@ export function OnboardingWizard({
               })}
             </div>
           )}
-          <p className="text-center text-xs text-app-fg-muted">
-            {Object.keys(votes).length}/3 minimum votes
+          <p className="text-center text-xs font-semibold text-zinc-400">
+            {votedCount}/3 minimum taste votes
           </p>
           <OnboardingPrimaryButton busy={busy} onClick={() => void submitVotes()}>
-            Continue
+            Use these signals
           </OnboardingPrimaryButton>
         </div>
       )}
 
       {currentStep === "first_content" && (
-        <div className="space-y-3">
+        <div className="space-y-4">
+          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
+            <p className="text-sm font-bold text-white">Choose the seed for your first post.</p>
+            <p className="mt-2 text-sm leading-relaxed text-zinc-400">
+              Pick the YES opportunity you&apos;d be proud to adapt. Silas will use the reel as structure, not as a copy-paste template.
+            </p>
+          </div>
           {yesReels.length === 0 ? (
             <p className="text-sm text-app-fg-muted">Mark at least one reel as Yes first.</p>
           ) : (
@@ -568,24 +695,14 @@ export function OnboardingWizard({
               const id = c.reel?.id ?? "";
               const row = toScrapedRow(c);
               return (
-                <button
+                <OpportunityCard
                   key={id}
-                  type="button"
-                  onClick={() => setSelectedReelId(id)}
-                  className={cn(
-                    "flex w-full gap-3 rounded-xl border p-3 text-left transition",
-                    selectedReelId === id
-                      ? "border-amber-500/60 bg-amber-500/10 ring-1 ring-amber-500/30"
-                      : "border-app-card-border hover:border-amber-500/30",
-                  )}
-                >
-                  <span className="line-clamp-2 flex-1 text-sm text-app-fg">
-                    {row.caption?.slice(0, 140) ?? row.post_url ?? id}
-                  </span>
-                  {selectedReelId === id ? (
-                    <Check className="h-5 w-5 shrink-0 text-amber-500" />
-                  ) : null}
-                </button>
+                  reel={row}
+                  tone="onboarding"
+                  selectable
+                  selected={selectedReelId === id}
+                  onSelect={() => setSelectedReelId(id)}
+                />
               );
             })
           )}
@@ -594,7 +711,7 @@ export function OnboardingWizard({
             disabled={!selectedReelId}
             onClick={() => void startFirstContent()}
           >
-            Create first content
+            Generate my first post
           </OnboardingPrimaryButton>
         </div>
       )}
@@ -611,10 +728,15 @@ export function OnboardingWizard({
 
       {(currentStep === "action_plan" || currentStep === "tour") && (
         <div className="space-y-5">
-          <div className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
-            <Sparkles className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
-            <p className="text-sm font-medium text-emerald-900 dark:text-emerald-100">
-              First export complete — your creator brain is live.
+          <div className="rounded-3xl border border-emerald-400/30 bg-emerald-400/10 px-5 py-5 text-center">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-400/20">
+              <Sparkles className="h-6 w-6 text-emerald-300" />
+            </div>
+            <p className="mt-3 text-xl font-black text-white">
+              You&apos;re set up. Your first post is ready to review.
+            </p>
+            <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-zinc-300">
+              Home now shows posts picked for your niche — adapt, export, and keep going from there.
             </p>
           </div>
           {actionPlan && Array.isArray((actionPlan as { days?: unknown }).days) ? (
@@ -624,14 +746,14 @@ export function OnboardingWizard({
               ).days.map((d) => (
                 <li
                   key={d.day}
-                  className="flex gap-3 rounded-xl border border-app-card-border bg-app-card/20 p-4"
+                  className="flex gap-3 rounded-2xl border border-white/10 bg-white/[0.04] p-4"
                 >
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-xs font-bold text-amber-700 dark:text-amber-300">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-300/20 text-xs font-bold text-amber-300">
                     {d.day}
                   </span>
                   <div>
-                    <p className="text-sm font-semibold text-app-fg">{d.title}</p>
-                    <p className="mt-1 text-xs leading-relaxed text-app-fg-muted">{d.action}</p>
+                    <p className="text-sm font-semibold text-zinc-100">{d.title}</p>
+                    <p className="mt-1 text-xs leading-relaxed text-zinc-400">{d.action}</p>
                   </div>
                 </li>
               ))}
@@ -639,11 +761,11 @@ export function OnboardingWizard({
           ) : (
             <div className="flex items-center justify-center gap-2 py-8 text-sm text-app-fg-muted">
               <Loader2 className="h-4 w-4 animate-spin" />
-              Building your 7-day plan…
+              Building your 7-day plan...
             </div>
           )}
           <OnboardingPrimaryButton onClick={() => void finishTour()}>
-            Open dashboard
+            Open my studio
           </OnboardingPrimaryButton>
         </div>
       )}
@@ -652,28 +774,27 @@ export function OnboardingWizard({
 
   if (!hasTenancy) {
     return (
-      <main className="flex min-h-svh items-center justify-center bg-zinc-100 px-4 py-10 dark:bg-zinc-950">
-        <article className="glass w-full max-w-md rounded-2xl border border-app-card-border shadow-lg">
-          <header className="border-b border-app-divider/60 px-8 py-6">
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-amber-600 dark:text-amber-400">
-              Setup
-            </p>
-            <h1 className="mt-2 text-xl font-bold text-app-fg">{heading.title}</h1>
-            <p className="mt-2 text-sm text-app-fg-muted">{heading.description}</p>
-          </header>
-          <div className="px-8 py-6">{body}</div>
-        </article>
-      </main>
+      <OnboardingShell
+        variant="card"
+        currentStep={currentStep}
+        completedSteps={completedSteps}
+        title={heading.title}
+        description={heading.description}
+        onboardingBypassActive={onboardingBypassActive}
+      >
+        {body}
+      </OnboardingShell>
     );
   }
 
   return (
     <OnboardingShell
+      variant={layoutVariant}
       currentStep={currentStep}
       completedSteps={completedSteps}
       title={heading.title}
       description={heading.description}
-      wide={wideStep}
+      onboardingBypassActive={onboardingBypassActive}
     >
       {body}
     </OnboardingShell>

@@ -45,6 +45,48 @@ const segmentedActive = (v: Variant) =>
 const SEGMENTED_IDLE =
   "rounded-md px-2.5 py-1.5 text-xs text-app-fg-muted transition-colors hover:bg-white/80 hover:text-zinc-800 dark:hover:bg-white/[0.06] dark:hover:text-app-fg-secondary";
 
+export type SegmentedPill = {
+  id: string;
+  label: string;
+  active: boolean;
+  variant?: Variant;
+};
+
+/** Client-side segmented pills (same look as SourceFilterPills, no navigation). */
+export function SegmentedFilterPills({
+  pills,
+  onSelect,
+  busyId,
+  "aria-label": ariaLabel = "Filter options",
+}: {
+  pills: SegmentedPill[];
+  onSelect: (id: string) => void;
+  busyId?: string | null;
+  "aria-label"?: string;
+}) {
+  return (
+    <nav className={`${SEGMENTED_WRAP} text-xs`} aria-label={ariaLabel}>
+      {pills.map((p) => (
+        <button
+          key={p.id}
+          type="button"
+          aria-current={p.active ? "true" : undefined}
+          disabled={busyId === p.id}
+          onClick={() => onSelect(p.id)}
+          className={
+            p.active ? segmentedActive(p.variant ?? "neutral") : SEGMENTED_IDLE
+          }
+        >
+          {p.label}
+          {busyId === p.id ? (
+            <span className="ml-1.5 inline-block h-3 w-3 animate-spin rounded-full border-2 border-zinc-400 border-t-transparent" />
+          ) : null}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
 /**
  * `useLinkStatus` (Next 15+) reports navigation pending state for the parent <Link>.
  * Renders a tiny spinner inline so the user gets visible feedback while the server
