@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Brain, ChevronDown, FileText, Loader2, Sparkles } from "lucide-react";
 import { ContextEditor } from "@/app/(dashboard)/context/context-editor";
 import { OnboardingPipelineProgress } from "@/components/onboarding/onboarding-pipeline-progress";
@@ -10,6 +10,7 @@ import { OpportunityCard } from "@/components/home/opportunity-card";
 import {
   OnboardingError,
   OnboardingPrimaryButton,
+  OnboardingQuestionScreen,
   OnboardingShell,
   type OnboardingLayoutVariant,
 } from "@/components/onboarding/onboarding-shell";
@@ -28,9 +29,6 @@ import {
 import {
   ONBOARDING_STEP_ORDER,
   STEP_HEADINGS,
-  onboardingInputClass,
-  onboardingLabelClass,
-  onboardingTextareaClass,
   type OnboardingStepKey,
 } from "@/lib/onboarding-ui";
 import { cn } from "@/lib/cn";
@@ -107,7 +105,8 @@ export function OnboardingWizard({
   const [error, setError] = useState<string | null>(null);
   const [candidatesLoading, setCandidatesLoading] = useState(false);
 
-  const [wsStep, setWsStep] = useState<1 | 2>(1);
+  const [qIdx, setQIdx] = useState(0);
+  const [sourceMode, setSourceMode] = useState<null | "questions" | "paste">(null);
   const [orgName, setOrgName] = useState("");
   const [orgSlugInput] = useState("");
   const [clientName, setClientName] = useState("");
@@ -124,6 +123,11 @@ export function OnboardingWizard({
   const [quizCompetitors, setQuizCompetitors] = useState("");
   const [sourceText, setSourceText] = useState("");
   const [showFullBrainEditor, setShowFullBrainEditor] = useState(false);
+  const [srcOffer, setSrcOffer] = useState("");
+  const [srcIcp, setSrcIcp] = useState("");
+  const [srcStory, setSrcStory] = useState("");
+  const [srcPositioning, setSrcPositioning] = useState("");
+  const [srcTone, setSrcTone] = useState("");
   const [candidates, setCandidates] = useState<OnboardingReelCandidate[]>([]);
   const [votes, setVotes] = useState<Record<string, "yes" | "no">>({});
   const [selectedReelId, setSelectedReelId] = useState<string | null>(null);
@@ -146,6 +150,12 @@ export function OnboardingWizard({
     currentStep === "reel_review"
       ? "page"
       : "card";
+
+  useEffect(() => {
+    setQIdx(0);
+    setSourceMode(null);
+    setError(null);
+  }, [currentStep]);
 
   const refreshStatus = useCallback(async () => {
     if (!clientSlug || !orgSlug) return;
@@ -257,14 +267,31 @@ export function OnboardingWizard({
     });
   }
 
+  function buildSourceTranscript() {
+    const parts: string[] = [];
+    const push = (heading: string, value: string) => {
+      const v = value.trim();
+      if (v) parts.push(`# ${heading}\n${v}`);
+    };
+    push("Transcript / notes", sourceText);
+    push("Offer", srcOffer);
+    push("Ideal client — pains & desires", srcIcp);
+    push("Story / origin", srcStory);
+    push("Positioning & differentiators", srcPositioning);
+    push("Tone & phrases", srcTone);
+    return parts.join("\n\n");
+  }
+
   async function saveSourceAndContinue() {
-    const trimmedSource = sourceText.trim();
-    if (!trimmedSource) {
+    const combined = buildSourceTranscript().trim();
+    if (!combined) {
       await advance({ current_step: "strategy_docs", complete_step: "source" });
       return;
     }
-    if (trimmedSource.length < 80) {
-      setError("Add a little more context (80+ characters), or clear this box and skip it for now.");
+    if (combined.length < 80) {
+      setError(
+        "Add a bit more detail (80+ characters total), or go back and clear fields to skip for now.",
+      );
       return;
     }
     setBusy(true);
@@ -273,21 +300,54 @@ export function OnboardingWizard({
       const { clientApiHeaders, getContentApiBase } = await import("@/lib/api-client");
       const base = getContentApiBase();
       const headers = await clientApiHeaders({ orgSlug });
+      const now = new Date().toISOString();
+
+      // Best-effort: draft the strategy sections from the combined material so the
+      // next step (Strategy documents) opens already showing progress.
+      let generated: Record<string, string> | null = null;
+      try {
+        const genRes = await fetch(
+          `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/context/generate`,
+          {
+            method: "POST",
+            headers: { ...headers, "Content-Type": "application/json" },
+            body: JSON.stringify({ transcript: combined }),
+          },
+        );
+        if (genRes.ok) {
+          const j = (await genRes.json().catch(() => null)) as { sections?: unknown } | null;
+          if (j && typeof j.sections === "object" && j.sections) {
+            generated = j.sections as Record<string, string>;
+          }
+        }
+      } catch {
+        /* draft is best-effort — user can still draft manually in the next step */
+      }
+
+      const clientContext: Record<string, unknown> = {
+        onboarding_transcript: { text: combined, source: "manual", file: null, updated_at: now },
+      };
+      if (generated) {
+        for (const key of [
+          "icp",
+          "brand_map",
+          "story_board",
+          "communication_guideline",
+          "offer_documentation",
+        ]) {
+          const text = typeof generated[key] === "string" ? generated[key].trim() : "";
+          if (text) {
+            clientContext[key] = { text, source: "generated", file: null, updated_at: now };
+          }
+        }
+      }
+
       const putRes = await fetch(
         `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}`,
         {
           method: "PUT",
           headers: { ...headers, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            client_context: {
-              onboarding_transcript: {
-                text: trimmedSource,
-                source: "manual",
-                file: null,
-                updated_at: new Date().toISOString(),
-              },
-            },
-          }),
+          body: JSON.stringify({ client_context: clientContext }),
         },
       );
       if (!putRes.ok) {
@@ -397,165 +457,424 @@ export function OnboardingWizard({
       "Add what you sell or promote so the AI can aim the content.",
   };
 
+  const qInputClass =
+    "w-full rounded-lg border border-zinc-800 bg-zinc-950 px-4 py-3 text-base text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none focus:ring-1 focus:ring-amber-500/30";
+
+  type OnbQuestion = {
+    question: string;
+    helper: string;
+    example?: string;
+    optional?: boolean;
+    validate?: () => string | null;
+    node: ReactNode;
+  };
+
+  const workspaceQuestions: OnbQuestion[] = [
+    {
+      question: "What's your organization name?",
+      helper: "Your company or umbrella brand — it groups all your creators and clients.",
+      example: "e.g. Prism Studio",
+      validate: () => (orgName.trim() ? null : "Organization name is required."),
+      node: (
+        <input
+          value={orgName}
+          onChange={(e) => setOrgName(e.target.value)}
+          className={qInputClass}
+          placeholder="Prism Studio"
+          autoFocus
+        />
+      ),
+    },
+    {
+      question: "What's the creator or brand name?",
+      helper: "The creator or personal brand you'll be making content for.",
+      example: "e.g. Toni Mora",
+      validate: () => (clientName.trim() ? null : "Creator / brand name is required."),
+      node: (
+        <input
+          value={clientName}
+          onChange={(e) => setClientName(e.target.value)}
+          className={qInputClass}
+          placeholder="Toni Mora"
+          autoFocus
+        />
+      ),
+    },
+    {
+      question: "What's the Instagram handle?",
+      helper: "We use it to analyze your reels and others in your niche. You can add it later.",
+      example: "e.g. @tonimora",
+      optional: true,
+      node: (
+        <input
+          value={instagram}
+          onChange={(e) => setInstagram(e.target.value)}
+          className={qInputClass}
+          placeholder="@username"
+          autoFocus
+        />
+      ),
+    },
+    {
+      question: "Which language should we create in?",
+      helper: "The main language your content will be generated in.",
+      node: (
+        <select
+          value={language}
+          onChange={(e) => setLanguage(e.target.value as "de" | "en")}
+          className={qInputClass}
+          autoFocus
+        >
+          <option value="de">Deutsch</option>
+          <option value="en">English</option>
+        </select>
+      ),
+    },
+  ];
+
+  const quizQuestions: OnbQuestion[] = [
+    {
+      question: "Who's your ideal audience?",
+      helper:
+        "Describe the follower or client you want to reach — who they are and what they struggle with.",
+      example: "e.g. B2B startup founders who want to grow on LinkedIn without hiring an agency",
+      validate: () => (quizAudience.trim() ? null : "Tell us who you want to reach."),
+      node: (
+        <textarea
+          value={quizAudience}
+          onChange={(e) => setQuizAudience(e.target.value)}
+          rows={3}
+          className={qInputClass}
+          placeholder="Describe your ideal audience…"
+          autoFocus
+        />
+      ),
+    },
+    {
+      question: "What are your content goals?",
+      helper: "What do you want your content to achieve? Separate several with commas.",
+      example: "e.g. leads, brand authority, sell my course",
+      optional: true,
+      node: (
+        <input
+          value={quizGoals}
+          onChange={(e) => setQuizGoals(e.target.value)}
+          className={qInputClass}
+          placeholder="leads, brand authority, sell my course"
+          autoFocus
+        />
+      ),
+    },
+    {
+      question: "How would you describe your brand voice?",
+      helper: "The tone and style you want to communicate with.",
+      example: "e.g. friendly and direct, with humor but data-backed",
+      optional: true,
+      node: (
+        <input
+          value={quizVoice}
+          onChange={(e) => setQuizVoice(e.target.value)}
+          className={qInputClass}
+          placeholder="friendly and direct, with humor but data-backed"
+          autoFocus
+        />
+      ),
+    },
+    {
+      question: "Any creators you treat as competitors or references?",
+      helper:
+        "Instagram accounts in your niche you admire or use as a reference. Separate several with commas.",
+      example: "e.g. @creator1, @creator2",
+      optional: true,
+      node: (
+        <input
+          value={quizCompetitors}
+          onChange={(e) => setQuizCompetitors(e.target.value)}
+          className={qInputClass}
+          placeholder="@creator1, @creator2"
+          autoFocus
+        />
+      ),
+    },
+  ];
+
+  const sourcePasteQuestion: OnbQuestion = {
+    question: "Paste your material",
+    helper:
+      "A sales-call transcript, onboarding doc, or positioning notes — we'll extract your offer, audience, story, positioning and tone from it.",
+    optional: true,
+    node: (
+      <textarea
+        value={sourceText}
+        onChange={(e) => setSourceText(e.target.value)}
+        rows={10}
+        className={qInputClass}
+        placeholder="Paste your transcript, call notes, or brief here…"
+        autoFocus
+      />
+    ),
+  };
+
+  const sourceDiscoveryQuestions: OnbQuestion[] = [
+    {
+      question: "What do you sell, and to whom?",
+      helper:
+        "Your main offer: what it is, the price range, the core promise, and the objections people usually raise.",
+      example:
+        "e.g. A 12-week group program for B2B founders, ~$3k. Promise: a predictable inbound pipeline. Common objection: “I don't have time to post.”",
+      optional: true,
+      node: (
+        <textarea
+          value={srcOffer}
+          onChange={(e) => setSrcOffer(e.target.value)}
+          rows={4}
+          className={qInputClass}
+          placeholder="What you sell, price, promise, common objections…"
+          autoFocus
+        />
+      ),
+    },
+    {
+      question: "What does your ideal client struggle with — and what do they want?",
+      helper:
+        "Go deeper than the niche: the concrete frustrations they feel today and the outcome they're dreaming of.",
+      example:
+        "e.g. Frustrated: posting for months with no leads. Wants: to be seen as the go-to expert and book calls every week.",
+      optional: true,
+      node: (
+        <textarea
+          value={srcIcp}
+          onChange={(e) => setSrcIcp(e.target.value)}
+          rows={4}
+          className={qInputClass}
+          placeholder="Their pains today and the outcome they want…"
+          autoFocus
+        />
+      ),
+    },
+    {
+      question: "What's your story or origin?",
+      helper:
+        "How you started, a turning point, or real anecdotes and examples — only what's actually true.",
+      example:
+        "e.g. Left a corporate sales job after burning out, rebuilt a pipeline from zero in 90 days, now teach the same system.",
+      optional: true,
+      node: (
+        <textarea
+          value={srcStory}
+          onChange={(e) => setSrcStory(e.target.value)}
+          rows={4}
+          className={qInputClass}
+          placeholder="How it started, turning points, real examples…"
+          autoFocus
+        />
+      ),
+    },
+    {
+      question: "Why you, and not someone else?",
+      helper:
+        "Your positioning and what makes you different — values, method, or a point of view your competitors don't have.",
+      example:
+        "e.g. The only one combining cold outreach with organic content. Data-driven, no fluff, no “hustle culture”.",
+      optional: true,
+      node: (
+        <textarea
+          value={srcPositioning}
+          onChange={(e) => setSrcPositioning(e.target.value)}
+          rows={4}
+          className={qInputClass}
+          placeholder="Your edge, values, method, point of view…"
+          autoFocus
+        />
+      ),
+    },
+    {
+      question: "How should your content sound?",
+      helper:
+        "The tone, plus any words or phrases you love to use — and ones you want to avoid.",
+      example:
+        "e.g. Confident and warm. Use “pipeline”, “system”. Avoid “guru”, “crush it”, and emojis in every line.",
+      optional: true,
+      node: (
+        <textarea
+          value={srcTone}
+          onChange={(e) => setSrcTone(e.target.value)}
+          rows={4}
+          className={qInputClass}
+          placeholder="Tone, words to use, words to avoid…"
+          autoFocus
+        />
+      ),
+    },
+  ];
+
+  const stepFlow: Record<
+    "workspace" | "quiz",
+    { questions: OnbQuestion[]; submitLabel: string; onSubmit: () => void | Promise<void> }
+  > = {
+    workspace: {
+      questions: workspaceQuestions,
+      submitLabel: "Create workspace",
+      onSubmit: submitWorkspace,
+    },
+    quiz: { questions: quizQuestions, submitLabel: "Continue", onSubmit: saveQuiz },
+  };
+
+  if (currentStep === "workspace" || currentStep === "quiz") {
+    const flow = stepFlow[currentStep];
+    const questions = flow.questions;
+    const safeIdx = Math.min(qIdx, questions.length - 1);
+    const q = questions[safeIdx];
+    const isLast = safeIdx >= questions.length - 1;
+    const stepHeading = STEP_HEADINGS[currentStep];
+
+    const handleContinue = () => {
+      const validationError = q.validate?.();
+      if (validationError) {
+        setError(validationError);
+        return;
+      }
+      setError(null);
+      if (!isLast) {
+        setQIdx((i) => i + 1);
+        return;
+      }
+      void flow.onSubmit();
+    };
+
+    return (
+      <OnboardingQuestionScreen
+        stepTitle={stepHeading.title}
+        stepDescription={stepHeading.description}
+        index={safeIdx}
+        total={questions.length}
+        question={q.question}
+        helper={q.helper}
+        example={q.example}
+        optional={q.optional}
+        error={error}
+        canBack={safeIdx > 0}
+        isLast={isLast}
+        busy={busy}
+        submitLabel={flow.submitLabel}
+        onBack={() => {
+          setError(null);
+          setQIdx((i) => Math.max(0, i - 1));
+        }}
+        onContinue={handleContinue}
+      >
+        {q.node}
+      </OnboardingQuestionScreen>
+    );
+  }
+
+  if (currentStep === "source") {
+    const stepHeading = STEP_HEADINGS.source;
+
+    if (sourceMode === null) {
+      return (
+        <OnboardingQuestionScreen
+          stepTitle={stepHeading.title}
+          stepDescription={stepHeading.description}
+          index={0}
+          total={1}
+          hideActions
+          hideProgress
+          question="How do you want to set up your strategy?"
+          helper="Either answer a few quick questions, or paste material you already have — either way we turn it into your strategy."
+          error={error}
+          onContinue={() => {}}
+        >
+          <div className="grid gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                setError(null);
+                setQIdx(0);
+                setSourceMode("questions");
+              }}
+              className="flex flex-col gap-1 rounded-xl border border-amber-500/40 bg-amber-500/[0.06] p-4 text-left transition hover:border-amber-500/70 hover:bg-amber-500/10"
+            >
+              <span className="flex items-center gap-2">
+                <span className="text-sm font-bold text-on-surface">Answer a few questions</span>
+                <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:text-amber-300">
+                  Recommended
+                </span>
+              </span>
+              <span className="text-xs leading-relaxed text-zinc-500">
+                ~5 quick questions to map your project. We draft your strategy from your answers.
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setError(null);
+                setQIdx(0);
+                setSourceMode("paste");
+              }}
+              className="flex flex-col gap-1 rounded-xl border border-outline-variant/20 bg-surface-container-low p-4 text-left transition hover:border-amber-500/50 hover:bg-surface-container-high"
+            >
+              <span className="text-sm font-bold text-on-surface">Paste my material</span>
+              <span className="text-xs leading-relaxed text-zinc-500">
+                Transcript, sales call, or a doc — we extract everything from it.
+              </span>
+            </button>
+          </div>
+        </OnboardingQuestionScreen>
+      );
+    }
+
+    const isPaste = sourceMode === "paste";
+    const questions = isPaste ? [sourcePasteQuestion] : sourceDiscoveryQuestions;
+    const safeIdx = Math.min(qIdx, questions.length - 1);
+    const q = questions[safeIdx];
+    const isLast = safeIdx >= questions.length - 1;
+
+    const handleContinue = () => {
+      const validationError = q.validate?.();
+      if (validationError) {
+        setError(validationError);
+        return;
+      }
+      setError(null);
+      if (!isLast) {
+        setQIdx((i) => i + 1);
+        return;
+      }
+      void saveSourceAndContinue();
+    };
+
+    return (
+      <OnboardingQuestionScreen
+        stepTitle={stepHeading.title}
+        stepDescription={stepHeading.description}
+        index={safeIdx}
+        total={questions.length}
+        hideProgress={isPaste}
+        question={q.question}
+        helper={q.helper}
+        example={q.example}
+        optional={q.optional}
+        error={error}
+        canBack
+        isLast={isLast}
+        busy={busy}
+        submitLabel="Draft strategy sections"
+        onBack={() => {
+          setError(null);
+          if (safeIdx > 0) setQIdx((i) => Math.max(0, i - 1));
+          else setSourceMode(null);
+        }}
+        onContinue={handleContinue}
+      >
+        {q.node}
+      </OnboardingQuestionScreen>
+    );
+  }
+
   const body = (
     <>
       {error ? <OnboardingError message={error} /> : null}
-
-      {currentStep === "workspace" && (
-        <div className="space-y-5">
-          <div className="rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3">
-            <p className="text-sm font-semibold text-amber-100">
-              In a few minutes, Silas should know who you are and what kind of content to find for you.
-            </p>
-          </div>
-          {wsStep === 1 ? (
-            <>
-              <label className="block text-sm">
-                <span className={onboardingLabelClass}>Organization name</span>
-                <input
-                  value={orgName}
-                  onChange={(e) => setOrgName(e.target.value)}
-                  className={onboardingInputClass}
-                  placeholder="e.g. Prism Studio"
-                />
-              </label>
-              <OnboardingPrimaryButton
-                onClick={() => {
-                  if (!orgName.trim()) {
-                    setError("Organization name is required.");
-                    return;
-                  }
-                  setError(null);
-                  setWsStep(2);
-                }}
-              >
-                Continue to creator profile
-              </OnboardingPrimaryButton>
-            </>
-          ) : (
-            <>
-              <label className="block text-sm">
-                <span className={onboardingLabelClass}>Creator / brand name</span>
-                <input
-                  value={clientName}
-                  onChange={(e) => setClientName(e.target.value)}
-                  className={onboardingInputClass}
-                  placeholder="e.g. Dani"
-                />
-              </label>
-              <label className="block text-sm">
-                <span className={onboardingLabelClass}>Instagram handle</span>
-                <input
-                  value={instagram}
-                  onChange={(e) => setInstagram(e.target.value)}
-                  placeholder="@username"
-                  className={onboardingInputClass}
-                />
-              </label>
-              <label className="block text-sm">
-                <span className={onboardingLabelClass}>Language</span>
-                <div className="relative mt-1">
-                  <select
-                    value={language}
-                    onChange={(e) => setLanguage(e.target.value as "de" | "en")}
-                    className={cn(onboardingInputClass, "appearance-none pr-10 cursor-pointer")}
-                  >
-                    <option value="de" className="bg-zinc-950 text-white">Deutsch</option>
-                    <option value="en" className="bg-zinc-950 text-white">English</option>
-                  </select>
-                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3.5 text-zinc-500">
-                    <ChevronDown className="h-4 w-4" />
-                  </div>
-                </div>
-              </label>
-              <OnboardingPrimaryButton busy={busy} onClick={() => void submitWorkspace()}>
-                Create my Creator Brain
-              </OnboardingPrimaryButton>
-            </>
-          )}
-        </div>
-      )}
-
-      {currentStep === "quiz" && (
-        <div className="space-y-4">
-          <label className="block text-sm">
-            <span className={onboardingLabelClass}>Who do you want to attract?</span>
-            <textarea
-              value={quizAudience}
-              onChange={(e) => setQuizAudience(e.target.value)}
-              rows={2}
-              className={onboardingInputClass}
-              placeholder="e.g. B2B founders who want better outbound systems without hiring a huge team"
-            />
-          </label>
-          <label className="block text-sm">
-            <span className={onboardingLabelClass}>What should the content help you do?</span>
-            <input
-              value={quizGoals}
-              onChange={(e) => setQuizGoals(e.target.value)}
-              placeholder="Book calls, build authority, sell a program"
-              className={onboardingInputClass}
-            />
-          </label>
-          <label className="block text-sm">
-            <span className={onboardingLabelClass}>How should it sound?</span>
-            <input
-              value={quizVoice}
-              onChange={(e) => setQuizVoice(e.target.value)}
-              placeholder="Direct, sharp, contrarian, practical"
-              className={onboardingInputClass}
-            />
-          </label>
-          <label className="block text-sm">
-            <span className={onboardingLabelClass}>Offer or product</span>
-            <input
-              value={quizOffers}
-              onChange={(e) => setQuizOffers(e.target.value)}
-              placeholder="What do you sell, promote, or want people to do?"
-              className={onboardingInputClass}
-            />
-          </label>
-          <label className="block text-sm">
-            <span className={onboardingLabelClass}>Creators we should learn near</span>
-            <input
-              value={quizCompetitors}
-              onChange={(e) => setQuizCompetitors(e.target.value)}
-              placeholder="@handles, comma-separated"
-              className={onboardingInputClass}
-            />
-          </label>
-          <OnboardingPrimaryButton busy={busy} onClick={() => void saveQuiz()}>
-            Shape my discovery
-          </OnboardingPrimaryButton>
-        </div>
-      )}
-
-      {currentStep === "source" && (
-        <div className="space-y-4">
-          <div className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3">
-            <FileText className="mt-0.5 h-5 w-5 shrink-0 text-amber-300" aria-hidden />
-            <div>
-              <p className="text-sm font-semibold text-zinc-100">Give Silas your real words.</p>
-              <p className="mt-1 text-xs leading-relaxed text-zinc-400">
-                Paste a call transcript, positioning notes, website copy, or a messy brain dump. This is optional, but it makes the output sound less generic.
-              </p>
-            </div>
-          </div>
-          <textarea
-            value={sourceText}
-            onChange={(e) => setSourceText(e.target.value)}
-            placeholder="Paste notes here. Example: who you serve, the promise, common objections, stories, beliefs, phrases you use often..."
-            className={onboardingTextareaClass}
-          />
-          <p className="text-right text-[11px] tabular-nums text-app-fg-subtle">
-            {sourceLength} characters
-            {sourceLength > 0 && sourceLength < 80 ? " · need 80+ or clear to skip" : ""}
-          </p>
-          <OnboardingPrimaryButton busy={busy} onClick={() => void saveSourceAndContinue()}>
-            {sourceLength > 0 ? "Build my brain preview" : "Skip for now"}
-          </OnboardingPrimaryButton>
-        </div>
-      )}
 
       {currentStep === "strategy_docs" && (
         <div className="space-y-6">

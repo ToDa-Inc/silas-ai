@@ -67,7 +67,8 @@ export const STEP_HEADINGS: Record<OnboardingStepKey, { title: string; descripti
   },
   source: {
     title: "Add the raw truth",
-    description: "Paste notes, a sales call, or positioning bullets. This gives the AI real language to work from.",
+    description:
+      "Answer a few quick questions or paste notes — we turn your answers into strategy docs Silas can use.",
   },
   strategy_docs: {
     title: "Your brain preview",

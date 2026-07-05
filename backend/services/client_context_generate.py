@@ -18,6 +18,21 @@ SECTION_KEYS = (
     "offer_documentation",
 )
 
+SECTION_DESCRIPTIONS = {
+    "icp": "Ideal client: who they serve, demographics, psychographics, pains, desires.",
+    "brand_map": "Brand identity: positioning, values, personality, differentiators.",
+    "story_board": (
+        "Stories to reference: origin, signature anecdotes, examples "
+        "(no invention; only what the source supports)."
+    ),
+    "communication_guideline": (
+        "How this creator speaks: tone, vocabulary, phrases to use/avoid, style rules."
+    ),
+    "offer_documentation": (
+        "What they sell, pricing if mentioned, promise, objections/handling if mentioned."
+    ),
+}
+
 GENERATE_SYSTEM = """You are a senior content strategist. From the onboarding call transcript below, write five plain-text documents for reuse in AI content generation. Write in the same language as the transcript when obvious; otherwise use the client's language from context.
 
 Output MUST be a single JSON object with exactly these string keys (no markdown fences):
@@ -80,3 +95,57 @@ def generate_sections_from_transcript(
         v = parsed.get(key)
         out[key] = str(v).strip() if v is not None else ""
     return out
+
+
+def generate_section_from_brief(
+    *,
+    openrouter_key: str,
+    model: str,
+    section: str,
+    brief: str,
+) -> str:
+    """Draft a single strategy section from a short Q&A brief. Returns plain-text prose."""
+    sec = (section or "").strip()
+    if sec not in SECTION_KEYS:
+        raise ValueError(f"Unknown section: {section}")
+    b = brief.strip()
+    if len(b) < 20:
+        raise ValueError("Brief is too short to generate a meaningful document.")
+
+    system = (
+        "You are a senior content strategist. Using the creator's answers below, write ONE "
+        f"plain-text document. {SECTION_DESCRIPTIONS[sec]}\n\n"
+        "Write in the same language as the answers. Use clear prose (short paragraphs). "
+        "Do not invent facts the answers do not support; omit what is missing rather than "
+        "making things up. Output ONLY the document text — no markdown fences, no preamble, "
+        "no headings unless they help readability."
+    )
+    user_msg = f"ANSWERS:\n\n{b[:60_000]}"
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_msg},
+        ],
+        "max_tokens": 4096,
+        "temperature": 0.3,
+    }
+    try:
+        r = openrouter_post_chat_completions(
+            openrouter_key,
+            payload,
+            timeout=180.0,
+            enable_model_fallback=True,
+        )
+        data = r.json()
+    except httpx.HTTPStatusError as e:
+        tail = (e.response.text or "")[:400]
+        raise RuntimeError(f"OpenRouter HTTP {e.response.status_code}: {tail}") from e
+    except httpx.RequestError as e:
+        raise RuntimeError(f"OpenRouter request failed: {e}") from e
+    if data.get("error"):
+        raise RuntimeError(data["error"].get("message", str(data["error"])))
+    content = data["choices"][0]["message"]["content"]
+    cleaned = re.sub(r"^```[a-zA-Z]*\s*", "", content.strip())
+    cleaned = re.sub(r"```\s*$", "", cleaned).strip()
+    return cleaned

@@ -291,3 +291,132 @@ export function OnboardingError({ message }: { message: string }) {
     </p>
   );
 }
+
+/**
+ * Wide, desktop-first "one question per screen" layout.
+ * Left column holds persistent step context + progress; right column holds the
+ * current question, helper text, example, the input, and Back/Continue nav.
+ */
+export function OnboardingQuestionScreen({
+  stepTitle,
+  stepDescription,
+  index,
+  total,
+  question,
+  helper,
+  example,
+  optional,
+  error,
+  canBack,
+  isLast,
+  busy,
+  submitLabel = "Continue",
+  hideActions,
+  hideProgress,
+  onBack,
+  onContinue,
+  children,
+}: {
+  stepTitle: string;
+  stepDescription?: string;
+  index: number;
+  total: number;
+  question: string;
+  helper: string;
+  example?: string;
+  optional?: boolean;
+  error?: string | null;
+  canBack?: boolean;
+  isLast?: boolean;
+  busy?: boolean;
+  submitLabel?: string;
+  hideActions?: boolean;
+  hideProgress?: boolean;
+  onBack?: () => void;
+  onContinue: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-surface-container-lowest px-4 py-10">
+      <div className="grid w-full max-w-3xl overflow-hidden rounded-2xl border border-outline-variant/10 bg-surface-container shadow-xl md:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+        <aside className="hidden flex-col justify-between gap-8 border-r border-outline-variant/10 bg-surface-container-low p-8 md:flex">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-amber-400">
+              {stepTitle}
+            </p>
+            {stepDescription ? (
+              <p className="mt-3 text-sm leading-relaxed text-zinc-400">{stepDescription}</p>
+            ) : null}
+          </div>
+          {hideProgress ? null : (
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">
+                Question {index + 1} of {total}
+              </p>
+              <div className="mt-3 flex gap-1.5">
+                {Array.from({ length: total }).map((_, i) => (
+                  <span
+                    key={i}
+                    className={cn(
+                      "h-1.5 flex-1 rounded-full transition-colors",
+                      i <= index ? "bg-amber-500" : "bg-zinc-700",
+                    )}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+        </aside>
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            onContinue();
+          }}
+          className="flex flex-col p-8 sm:p-10"
+        >
+          <p className="mb-5 text-[10px] font-bold uppercase tracking-widest text-zinc-500 md:hidden">
+            {stepTitle}
+            {hideProgress ? "" : ` · Question ${index + 1} of ${total}`}
+          </p>
+          <h1 className="text-xl font-bold text-on-surface sm:text-2xl">
+            {question}
+            {optional ? (
+              <span className="ml-2 align-middle text-xs font-medium text-zinc-500">
+                (optional)
+              </span>
+            ) : null}
+          </h1>
+          <p className="mt-3 text-sm leading-relaxed text-zinc-400">{helper}</p>
+          {example ? <p className="mt-2 text-sm italic text-zinc-500">{example}</p> : null}
+          <div key={index} className="mt-6">
+            {children}
+          </div>
+          {error ? <p className="mt-3 text-sm text-red-400">{error}</p> : null}
+          {hideActions ? null : (
+            <div className="mt-8 flex items-center gap-3">
+              {canBack ? (
+                <button
+                  type="button"
+                  onClick={onBack}
+                  disabled={busy}
+                  className="rounded-lg border border-outline-variant/20 px-5 py-2.5 text-sm font-bold text-zinc-300 transition hover:bg-surface-container-high disabled:opacity-50"
+                >
+                  Back
+                </button>
+              ) : null}
+              <button
+                type="submit"
+                disabled={busy}
+                className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-primary-container py-2.5 text-sm font-bold text-on-primary-container transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+                {isLast ? submitLabel : "Continue"}
+              </button>
+            </div>
+          )}
+        </form>
+      </div>
+    </main>
+  );
+}
