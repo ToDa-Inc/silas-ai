@@ -13,11 +13,18 @@ import { resolveTenancy, type ResolvedTenancy } from "@/lib/tenancy";
 import { ACTIVE_CLIENT_SLUG_COOKIE } from "@/lib/workspace-cookie";
 import type { ReelAnalysisSummary } from "@/lib/reel-types";
 
+import { formatApiError } from "@/lib/format-api-error";
+
 export { getContentApiBase } from "@/lib/env";
 export type { ReelAnalysisDetail, ReelAnalysisSummary } from "@/lib/reel-types";
 
 export function getApiBase(): string {
   return getContentApiBase();
+}
+
+async function apiErrorFromResponse(res: Response, fallback?: string): Promise<string> {
+  const json = await res.json().catch(() => ({}));
+  return formatApiError(json, fallback ?? `Request failed (${res.status})`);
 }
 
 export type ServerApiContext = {
@@ -351,7 +358,7 @@ export async function fetchCompetitors(): Promise<{
       return {
         ok: false,
         data: [],
-        error: `${res.status} ${await res.text()}`,
+        error: await apiErrorFromResponse(res),
       };
     }
     return { ok: true, data: await res.json() };
@@ -372,6 +379,7 @@ export type OnboardingStatusRow = {
   completed_steps: string[];
   quiz_answers: Record<string, unknown>;
   pipeline_progress: Record<string, unknown>;
+  ig_prefill: Record<string, unknown>;
   job_ids: Record<string, unknown>;
   selected_reel_id: string | null;
   selected_analysis_id: string | null;
@@ -398,7 +406,7 @@ export async function fetchOnboardingStatus(): Promise<{
       { headers: { ...headers }, cache: "no-store" },
     );
     if (!res.ok) {
-      return { ok: false, data: null, error: `${res.status} ${await res.text()}` };
+      return { ok: false, data: null, error: await apiErrorFromResponse(res) };
     }
     return { ok: true, data: (await res.json()) as OnboardingStatusRow };
   } catch (e) {
@@ -437,7 +445,7 @@ export async function fetchClient(): Promise<{
       return {
         ok: false,
         data: null,
-        error: `${res.status} ${await res.text()}`,
+        error: await apiErrorFromResponse(res),
       };
     }
     return { ok: true, data: await res.json() };
@@ -477,7 +485,7 @@ export async function fetchBaseline(): Promise<{
       return {
         ok: false,
         data: null,
-        error: `${res.status} ${await res.text()}`,
+        error: await apiErrorFromResponse(res),
       };
     }
     return { ok: true, data: await res.json() };
@@ -517,7 +525,7 @@ export async function fetchOwnReels(): Promise<{
       return {
         ok: false,
         data: [],
-        error: `${res.status} ${await res.text()}`,
+        error: await apiErrorFromResponse(res),
       };
     }
     return { ok: true, data: await res.json() };
@@ -562,7 +570,7 @@ export async function fetchIntelligenceStats(): Promise<{
       return {
         ok: false,
         data: null,
-        error: `${res.status} ${await res.text()}`,
+        error: await apiErrorFromResponse(res),
       };
     }
     return { ok: true, data: await res.json() };
@@ -661,7 +669,7 @@ export async function fetchIntelligenceActivity(sinceIso?: string): Promise<{
       return {
         ok: false,
         data: null,
-        error: `${res.status} ${await res.text()}`,
+        error: await apiErrorFromResponse(res),
       };
     }
     return { ok: true, data: await res.json() };
@@ -711,7 +719,7 @@ export async function fetchScrapedReels(
       return {
         ok: false,
         data: [],
-        error: `${res.status} ${await res.text()}`,
+        error: await apiErrorFromResponse(res),
       };
     }
     return { ok: true, data: await res.json() };
@@ -737,7 +745,7 @@ async function fetchDashboardLane(
       `${base}/api/v1/clients/${clientSlug}/dashboard/${path}?days=${days}&limit=${limit}`,
       { headers: { ...headers }, cache: "no-store" },
     );
-    if (!res.ok) return { ok: false, data: [], error: `${res.status} ${await res.text()}` };
+    if (!res.ok) return { ok: false, data: [], error: await apiErrorFromResponse(res) };
     return { ok: true, data: await res.json() };
   } catch (e) {
     return { ok: false, data: [], error: e instanceof Error ? e.message : "fetch failed" };
@@ -815,7 +823,7 @@ export async function fetchHomeSummary(): Promise<{
       { headers: { ...headers }, cache: "no-store" },
     );
     if (!res.ok) {
-      return { ok: false, data: null, error: `${res.status} ${await res.text()}` };
+      return { ok: false, data: null, error: await apiErrorFromResponse(res) };
     }
     return { ok: true, data: (await res.json()) as HomeSummaryRow };
   } catch (e) {
@@ -844,7 +852,7 @@ export async function fetchAdaptPreviewReels(limit = 8): Promise<{
       { headers: { ...headers }, cache: "no-store" },
     );
     if (!res.ok) {
-      return { ok: false, data: [], error: `${res.status} ${await res.text()}` };
+      return { ok: false, data: [], error: await apiErrorFromResponse(res) };
     }
     return { ok: true, data: (await res.json()) as ScrapedReelRow[] };
   } catch (e) {
@@ -972,7 +980,7 @@ export async function fetchReelsList(query: ReelsListQuery = {}): Promise<{
         ok: false,
         data: [],
         total: 0,
-        error: `${res.status} ${await res.text()}`,
+        error: await apiErrorFromResponse(res),
       };
     }
     const data = (await res.json()) as ScrapedReelRow[];
@@ -1009,7 +1017,7 @@ export async function fetchOutlierCount(): Promise<{
       headers: { ...headers },
       cache: "no-store",
     });
-    if (!res.ok) return { ok: false, count: 0, error: `${res.status}` };
+    if (!res.ok) return { ok: false, count: 0, error: await apiErrorFromResponse(res) };
     const data = await res.json();
     return { ok: true, count: data.count ?? 0 };
   } catch (e) {

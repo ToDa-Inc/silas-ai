@@ -91,9 +91,11 @@ export function StudioOverlay({
             transition={{ type: "spring", damping: 28, stiffness: 320 }}
           >
             <div className="flex shrink-0 items-center gap-2 border-b border-zinc-200 px-3 py-2.5 dark:border-white/10 sm:px-4 sm:py-3">
-              <p className="min-w-0 flex-1 truncate text-sm font-semibold text-app-fg">
-                {HOME_COPY.openStudio}
-              </p>
+              <nav aria-label="Editor location" className="min-w-0 flex-1 truncate text-sm text-app-fg-muted">
+                <span className="font-semibold text-amber-600 dark:text-amber-400">Home</span>
+                <span className="mx-1.5 text-app-fg-subtle">›</span>
+                <span className="font-semibold text-app-fg">{HOME_COPY.openStudio}</span>
+              </nav>
               <div className="flex shrink-0 items-center gap-1">
                 <Link
                   href={`/generate/${sessionId}`}
@@ -148,7 +150,7 @@ export function StudioOverlay({
                 expanded ? "px-4 py-4 sm:px-6 sm:py-5" : "px-3 py-3 sm:px-5 sm:py-4",
               )}
             >
-              <StudioShellProvider value={{ embedded: true, expanded }}>
+              <StudioShellProvider value={{ embedded: true, expanded, entryPoint: "home" }}>
                 <VideoCreateWorkspace
                   key={sessionId}
                   clientSlug={clientSlug}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Brain, ChevronDown, FileText, Loader2, Sparkles } from "lucide-react";
 import { ContextEditor } from "@/app/(dashboard)/context/context-editor";
 import { OnboardingPipelineProgress } from "@/components/onboarding/onboarding-pipeline-progress";
@@ -23,7 +23,11 @@ import {
   patchOnboardingStatus,
   postOnboardingReelFeedback,
   startOnboardingFirstContent,
+  startOnboardingIgPrefill,
   startOnboardingPipeline,
+  putClientClientContext,
+  clientApiHeaders,
+  getContentApiBase,
   type OnboardingReelCandidate,
 } from "@/lib/api-client";
 import {
@@ -128,6 +132,8 @@ export function OnboardingWizard({
   const [srcStory, setSrcStory] = useState("");
   const [srcPositioning, setSrcPositioning] = useState("");
   const [srcTone, setSrcTone] = useState("");
+  const [autofilledKeys, setAutofilledKeys] = useState<Set<string>>(new Set());
+  const igPrefillAppliedRef = useRef(false);
   const [candidates, setCandidates] = useState<OnboardingReelCandidate[]>([]);
   const [votes, setVotes] = useState<Record<string, "yes" | "no">>({});
   const [selectedReelId, setSelectedReelId] = useState<string | null>(null);
@@ -177,6 +183,67 @@ export function OnboardingWizard({
     return () => clearInterval(t);
   }, [currentStep, clientSlug, refreshStatus]);
 
+  // Kick off discovery automatically as soon as the user lands on this step —
+  // no need to hunt for a button. A failed run still needs an explicit retry
+  // so we don't silently hammer Apify/OpenRouter in a loop.
+  const pipelineAutoStartedRef = useRef(false);
+  useEffect(() => {
+    if (currentStep !== "pipeline" || !clientSlug || !orgSlug) return;
+    if (pipelineAutoStartedRef.current) return;
+    const phase = (status?.pipeline_progress as { phase?: string } | undefined)?.phase;
+    if (phase) return; // already started, running, failed, or complete
+    pipelineAutoStartedRef.current = true;
+    void runPipeline();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentStep, clientSlug, orgSlug, status?.pipeline_progress]);
+
+  // Silas reads the creator's Instagram in the background right after workspace
+  // setup; while they answer quiz/source questions, poll for that draft so
+  // empty fields can be pre-filled instead of starting from a blank page.
+  useEffect(() => {
+    if (currentStep !== "quiz" && currentStep !== "source") return;
+    if (!clientSlug || igPrefillAppliedRef.current) return;
+    const igStatus = String(status?.ig_prefill?.status || "");
+    if (igStatus === "ready" || igStatus === "skipped" || igStatus === "failed") return;
+    const t = setInterval(() => void refreshStatus(), 4000);
+    return () => clearInterval(t);
+  }, [currentStep, clientSlug, status?.ig_prefill, refreshStatus]);
+
+  useEffect(() => {
+    if (igPrefillAppliedRef.current) return;
+    const prefill = status?.ig_prefill as
+      | { status?: string; data?: Record<string, string> }
+      | undefined;
+    if (prefill?.status !== "ready" || !prefill.data) return;
+    igPrefillAppliedRef.current = true;
+    const d = prefill.data;
+    const filled = new Set<string>();
+    const fillIfEmpty = (
+      current: string,
+      setter: (v: string) => void,
+      value: string | undefined,
+      key: string,
+    ) => {
+      const v = (value || "").trim();
+      if (!v) return;
+      if (v.toLowerCase().startsWith("not clear")) return;
+      if (current.trim()) return;
+      setter(v);
+      filled.add(key);
+    };
+    fillIfEmpty(quizAudience, setQuizAudience, d.target_audience, "audience");
+    fillIfEmpty(quizGoals, setQuizGoals, d.content_goals, "goals");
+    fillIfEmpty(quizVoice, setQuizVoice, d.brand_voice, "voice");
+    fillIfEmpty(quizOffers, setQuizOffers, d.offer, "offer");
+    fillIfEmpty(srcOffer, setSrcOffer, d.offer, "offer");
+    fillIfEmpty(srcIcp, setSrcIcp, d.icp, "icp");
+    fillIfEmpty(srcStory, setSrcStory, d.story, "story");
+    fillIfEmpty(srcPositioning, setSrcPositioning, d.positioning, "positioning");
+    fillIfEmpty(srcTone, setSrcTone, d.tone, "tone");
+    if (filled.size > 0) setAutofilledKeys(filled);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status?.ig_prefill]);
+
   useEffect(() => {
     if (currentStep !== "reel_review" && currentStep !== "first_content") return;
     setCandidatesLoading(true);
@@ -225,10 +292,15 @@ export function OnboardingWizard({
           niche_keywords: nicheKeywords.trim() || undefined,
         }),
       });
-      const j = (await r.json()) as { error?: string };
+      const j = (await r.json()) as { error?: string; org_slug?: string; client_slug?: string };
       if (!r.ok) {
         setError(j.error ?? `Error ${r.status}`);
         return;
+      }
+      if (instagram.trim() && j.client_slug && j.org_slug) {
+        // Best-effort, don't block continuing: Silas reads the Instagram profile
+        // in the background so quiz/source questions can arrive pre-filled.
+        void startOnboardingIgPrefill(j.client_slug, j.org_slug).catch(() => {});
       }
       router.refresh();
     } finally {
@@ -297,7 +369,6 @@ export function OnboardingWizard({
     setBusy(true);
     setError(null);
     try {
-      const { clientApiHeaders, getContentApiBase } = await import("@/lib/api-client");
       const base = getContentApiBase();
       const headers = await clientApiHeaders({ orgSlug });
       const now = new Date().toISOString();
@@ -342,17 +413,9 @@ export function OnboardingWizard({
         }
       }
 
-      const putRes = await fetch(
-        `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}`,
-        {
-          method: "PUT",
-          headers: { ...headers, "Content-Type": "application/json" },
-          body: JSON.stringify({ client_context: clientContext }),
-        },
-      );
-      if (!putRes.ok) {
-        const j = (await putRes.json().catch(() => ({}))) as { detail?: string };
-        setError(typeof j.detail === "string" ? j.detail : `Save failed (${putRes.status})`);
+      const putResult = await putClientClientContext(clientSlug, orgSlug, clientContext);
+      if (!putResult.ok) {
+        setError(putResult.error);
         return;
       }
       await advance({ current_step: "strategy_docs", complete_step: "source" });
@@ -362,16 +425,24 @@ export function OnboardingWizard({
   }
 
   async function runPipeline() {
-    const r = await startOnboardingPipeline(clientSlug, orgSlug);
-    if (!r.ok) {
-      setError(r.error);
-      return;
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await startOnboardingPipeline(clientSlug, orgSlug);
+      if (!r.ok) {
+        setError(r.error);
+        return;
+      }
+    } finally {
+      setBusy(false);
     }
     await advance({ current_step: "pipeline" });
     void refreshStatus();
   }
 
   async function submitVotes() {
+    if (busy) return;
     const items = Object.entries(votes).map(([scraped_reel_id, verdict]) => ({
       scraped_reel_id,
       verdict,
@@ -380,10 +451,16 @@ export function OnboardingWizard({
       setError("Vote on at least 3 candidate reels (Yes or No).");
       return;
     }
-    const r = await postOnboardingReelFeedback(clientSlug, orgSlug, items);
-    if (!r.ok) {
-      setError(r.error);
-      return;
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await postOnboardingReelFeedback(clientSlug, orgSlug, items);
+      if (!r.ok) {
+        setError(r.error);
+        return;
+      }
+    } finally {
+      setBusy(false);
     }
     await advance({ complete_step: "reel_review", current_step: "first_content" });
   }
@@ -436,6 +513,7 @@ export function OnboardingWizard({
   const yesReels = candidates.filter((c) => c.reel?.id && votes[c.reel.id] === "yes");
   const pipelinePhase = (status?.pipeline_progress as { phase?: string })?.phase;
   const pipelineComplete = pipelinePhase === "complete";
+  const pipelineFailed = pipelinePhase === "failed";
   const votedCount = Object.keys(votes).length;
   const sourceLength = sourceText.trim().length;
   const brainPreview = {
@@ -469,18 +547,31 @@ export function OnboardingWizard({
     node: ReactNode;
   };
 
+  const igPrefillStatus = String(status?.ig_prefill?.status || "");
+  const igPrefillLoading =
+    (currentStep === "quiz" || currentStep === "source") &&
+    Boolean(instagram.trim()) &&
+    !["ready", "skipped", "failed"].includes(igPrefillStatus);
+
+  const igPrefillBanner = igPrefillLoading ? (
+    <p className="mb-4 flex items-center gap-2 text-xs font-medium text-amber-300/90">
+      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+      Reading your Instagram…
+    </p>
+  ) : null;
+
   const workspaceQuestions: OnbQuestion[] = [
     {
-      question: "What's your organization name?",
-      helper: "Your company or umbrella brand — it groups all your creators and clients.",
-      example: "e.g. Prism Studio",
-      validate: () => (orgName.trim() ? null : "Organization name is required."),
+      question: "What should we call your workspace?",
+      helper: "This is your home base in Silas — name it after your brand, studio, or yourself.",
+      example: "e.g. Toni Mora Studio",
+      validate: () => (orgName.trim() ? null : "Workspace name is required."),
       node: (
         <input
           value={orgName}
           onChange={(e) => setOrgName(e.target.value)}
           className={qInputClass}
-          placeholder="Prism Studio"
+          placeholder="Toni Mora Studio"
           autoFocus
         />
       ),
@@ -532,12 +623,17 @@ export function OnboardingWizard({
     },
   ];
 
+  const igNote = (key: string) =>
+    autofilledKeys.has(key) ? " ✨ Pre-filled from your Instagram — edit freely." : "";
+
   const quizQuestions: OnbQuestion[] = [
     {
       question: "Who's your ideal audience?",
       helper:
-        "Describe the follower or client you want to reach — who they are and what they struggle with.",
-      example: "e.g. B2B startup founders who want to grow on LinkedIn without hiring an agency",
+        "Describe the follower or client you want to reach — who they are and what they struggle with." +
+        igNote("audience"),
+      example:
+        "e.g. Busy moms in their 30s who want quick healthy meals without spending hours meal prepping",
       validate: () => (quizAudience.trim() ? null : "Tell us who you want to reach."),
       node: (
         <textarea
@@ -552,7 +648,8 @@ export function OnboardingWizard({
     },
     {
       question: "What are your content goals?",
-      helper: "What do you want your content to achieve? Separate several with commas.",
+      helper:
+        "What do you want your content to achieve? Separate several with commas." + igNote("goals"),
       example: "e.g. leads, brand authority, sell my course",
       optional: true,
       node: (
@@ -567,7 +664,7 @@ export function OnboardingWizard({
     },
     {
       question: "How would you describe your brand voice?",
-      helper: "The tone and style you want to communicate with.",
+      helper: "The tone and style you want to communicate with." + igNote("voice"),
       example: "e.g. friendly and direct, with humor but data-backed",
       optional: true,
       node: (
@@ -576,6 +673,24 @@ export function OnboardingWizard({
           onChange={(e) => setQuizVoice(e.target.value)}
           className={qInputClass}
           placeholder="friendly and direct, with humor but data-backed"
+          autoFocus
+        />
+      ),
+    },
+    {
+      question: "What do you sell or promote?",
+      helper:
+        "Your main product, service, or offer — what you want your content to drive people toward." +
+        igNote("offer"),
+      example: "e.g. A 12-week fitness coaching program, $497/month",
+      optional: true,
+      node: (
+        <textarea
+          value={quizOffers}
+          onChange={(e) => setQuizOffers(e.target.value)}
+          rows={3}
+          className={qInputClass}
+          placeholder="What you sell, price range, or main call-to-action…"
           autoFocus
         />
       ),
@@ -619,7 +734,8 @@ export function OnboardingWizard({
     {
       question: "What do you sell, and to whom?",
       helper:
-        "Your main offer: what it is, the price range, the core promise, and the objections people usually raise.",
+        "Your main offer: what it is, the price range, the core promise, and the objections people usually raise." +
+        igNote("offer"),
       example:
         "e.g. A 12-week group program for B2B founders, ~$3k. Promise: a predictable inbound pipeline. Common objection: “I don't have time to post.”",
       optional: true,
@@ -637,7 +753,8 @@ export function OnboardingWizard({
     {
       question: "What does your ideal client struggle with — and what do they want?",
       helper:
-        "Go deeper than the niche: the concrete frustrations they feel today and the outcome they're dreaming of.",
+        "Go deeper than the niche: the concrete frustrations they feel today and the outcome they're dreaming of." +
+        igNote("icp"),
       example:
         "e.g. Frustrated: posting for months with no leads. Wants: to be seen as the go-to expert and book calls every week.",
       optional: true,
@@ -655,7 +772,8 @@ export function OnboardingWizard({
     {
       question: "What's your story or origin?",
       helper:
-        "How you started, a turning point, or real anecdotes and examples — only what's actually true.",
+        "How you started, a turning point, or real anecdotes and examples — only what's actually true." +
+        igNote("story"),
       example:
         "e.g. Left a corporate sales job after burning out, rebuilt a pipeline from zero in 90 days, now teach the same system.",
       optional: true,
@@ -673,7 +791,8 @@ export function OnboardingWizard({
     {
       question: "Why you, and not someone else?",
       helper:
-        "Your positioning and what makes you different — values, method, or a point of view your competitors don't have.",
+        "Your positioning and what makes you different — values, method, or a point of view your competitors don't have." +
+        igNote("positioning"),
       example:
         "e.g. The only one combining cold outreach with organic content. Data-driven, no fluff, no “hustle culture”.",
       optional: true,
@@ -691,7 +810,8 @@ export function OnboardingWizard({
     {
       question: "How should your content sound?",
       helper:
-        "The tone, plus any words or phrases you love to use — and ones you want to avoid.",
+        "The tone, plus any words or phrases you love to use — and ones you want to avoid." +
+        igNote("tone"),
       example:
         "e.g. Confident and warm. Use “pipeline”, “system”. Avoid “guru”, “crush it”, and emojis in every line.",
       optional: true,
@@ -743,28 +863,36 @@ export function OnboardingWizard({
     };
 
     return (
-      <OnboardingQuestionScreen
-        stepTitle={stepHeading.title}
-        stepDescription={stepHeading.description}
-        index={safeIdx}
-        total={questions.length}
-        question={q.question}
-        helper={q.helper}
-        example={q.example}
-        optional={q.optional}
-        error={error}
-        canBack={safeIdx > 0}
-        isLast={isLast}
-        busy={busy}
-        submitLabel={flow.submitLabel}
-        onBack={() => {
-          setError(null);
-          setQIdx((i) => Math.max(0, i - 1));
-        }}
-        onContinue={handleContinue}
+      <OnboardingShell
+        variant="raw"
+        currentStep={currentStep}
+        completedSteps={completedSteps}
+        onboardingBypassActive={onboardingBypassActive}
       >
-        {q.node}
-      </OnboardingQuestionScreen>
+        <OnboardingQuestionScreen
+          stepTitle={stepHeading.title}
+          stepDescription={stepHeading.description}
+          index={safeIdx}
+          total={questions.length}
+          question={q.question}
+          helper={q.helper}
+          example={q.example}
+          optional={q.optional}
+          error={error}
+          canBack={safeIdx > 0}
+          isLast={isLast}
+          busy={busy}
+          submitLabel={flow.submitLabel}
+          onBack={() => {
+            setError(null);
+            setQIdx((i) => Math.max(0, i - 1));
+          }}
+          onContinue={handleContinue}
+        >
+          {igPrefillBanner}
+          {q.node}
+        </OnboardingQuestionScreen>
+      </OnboardingShell>
     );
   }
 
@@ -773,54 +901,61 @@ export function OnboardingWizard({
 
     if (sourceMode === null) {
       return (
-        <OnboardingQuestionScreen
-          stepTitle={stepHeading.title}
-          stepDescription={stepHeading.description}
-          index={0}
-          total={1}
-          hideActions
-          hideProgress
-          question="How do you want to set up your strategy?"
-          helper="Either answer a few quick questions, or paste material you already have — either way we turn it into your strategy."
-          error={error}
-          onContinue={() => {}}
+        <OnboardingShell
+          variant="raw"
+          currentStep={currentStep}
+          completedSteps={completedSteps}
+          onboardingBypassActive={onboardingBypassActive}
         >
-          <div className="grid gap-3">
-            <button
-              type="button"
-              onClick={() => {
-                setError(null);
-                setQIdx(0);
-                setSourceMode("questions");
-              }}
-              className="flex flex-col gap-1 rounded-xl border border-amber-500/40 bg-amber-500/[0.06] p-4 text-left transition hover:border-amber-500/70 hover:bg-amber-500/10"
-            >
-              <span className="flex items-center gap-2">
-                <span className="text-sm font-bold text-on-surface">Answer a few questions</span>
-                <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:text-amber-300">
-                  Recommended
+          <OnboardingQuestionScreen
+            stepTitle={stepHeading.title}
+            stepDescription={stepHeading.description}
+            index={0}
+            total={1}
+            hideActions
+            hideProgress
+            question="How do you want to set up your strategy?"
+            helper="Either answer a few quick questions, or paste material you already have — either way we turn it into your strategy."
+            error={error}
+            onContinue={() => {}}
+          >
+            <div className="grid gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  setQIdx(0);
+                  setSourceMode("questions");
+                }}
+                className="flex flex-col gap-1 rounded-xl border border-amber-400/40 bg-amber-400/[0.06] p-4 text-left transition hover:border-amber-400/70 hover:bg-amber-400/10"
+              >
+                <span className="flex items-center gap-2">
+                  <span className="text-sm font-bold text-white">Answer a few questions</span>
+                  <span className="rounded-full bg-amber-400/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-300">
+                    Recommended
+                  </span>
                 </span>
-              </span>
-              <span className="text-xs leading-relaxed text-zinc-500">
-                ~5 quick questions to map your project. We draft your strategy from your answers.
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setError(null);
-                setQIdx(0);
-                setSourceMode("paste");
-              }}
-              className="flex flex-col gap-1 rounded-xl border border-outline-variant/20 bg-surface-container-low p-4 text-left transition hover:border-amber-500/50 hover:bg-surface-container-high"
-            >
-              <span className="text-sm font-bold text-on-surface">Paste my material</span>
-              <span className="text-xs leading-relaxed text-zinc-500">
-                Transcript, sales call, or a doc — we extract everything from it.
-              </span>
-            </button>
-          </div>
-        </OnboardingQuestionScreen>
+                <span className="text-xs leading-relaxed text-zinc-500">
+                  ~5 quick questions to map your project. We draft your strategy from your answers.
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  setQIdx(0);
+                  setSourceMode("paste");
+                }}
+                className="flex flex-col gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-4 text-left transition hover:border-amber-400/50 hover:bg-white/[0.06]"
+              >
+                <span className="text-sm font-bold text-white">Paste my material</span>
+                <span className="text-xs leading-relaxed text-zinc-500">
+                  Transcript, sales call, or a doc — we extract everything from it.
+                </span>
+              </button>
+            </div>
+          </OnboardingQuestionScreen>
+        </OnboardingShell>
       );
     }
 
@@ -845,30 +980,38 @@ export function OnboardingWizard({
     };
 
     return (
-      <OnboardingQuestionScreen
-        stepTitle={stepHeading.title}
-        stepDescription={stepHeading.description}
-        index={safeIdx}
-        total={questions.length}
-        hideProgress={isPaste}
-        question={q.question}
-        helper={q.helper}
-        example={q.example}
-        optional={q.optional}
-        error={error}
-        canBack
-        isLast={isLast}
-        busy={busy}
-        submitLabel="Draft strategy sections"
-        onBack={() => {
-          setError(null);
-          if (safeIdx > 0) setQIdx((i) => Math.max(0, i - 1));
-          else setSourceMode(null);
-        }}
-        onContinue={handleContinue}
+      <OnboardingShell
+        variant="raw"
+        currentStep={currentStep}
+        completedSteps={completedSteps}
+        onboardingBypassActive={onboardingBypassActive}
       >
-        {q.node}
-      </OnboardingQuestionScreen>
+        <OnboardingQuestionScreen
+          stepTitle={stepHeading.title}
+          stepDescription={stepHeading.description}
+          index={safeIdx}
+          total={questions.length}
+          hideProgress={isPaste}
+          question={q.question}
+          helper={q.helper}
+          example={q.example}
+          optional={q.optional}
+          error={error}
+          canBack
+          isLast={isLast}
+          busy={busy}
+          submitLabel="Build my strategy"
+          onBack={() => {
+            setError(null);
+            if (safeIdx > 0) setQIdx((i) => Math.max(0, i - 1));
+            else setSourceMode(null);
+          }}
+          onContinue={handleContinue}
+        >
+          {igPrefillBanner}
+          {q.node}
+        </OnboardingQuestionScreen>
+      </OnboardingShell>
     );
   }
 
@@ -932,24 +1075,32 @@ export function OnboardingWizard({
       {currentStep === "pipeline" && (
         <div className="space-y-5">
           <div className="rounded-3xl border border-white/5 bg-white/[0.02] p-6 text-center shadow-lg">
-            <p className="text-xl font-black text-white">Silas is crafting your Creator Brain...</p>
+            <p className="text-xl font-black text-white">Silas is scanning your niche…</p>
             <p className="mx-auto mt-2 max-w-lg text-sm leading-relaxed text-zinc-400">
-              We are compiling your brand positioning, analyzing adjacent creator spaces, and crawling top-performing competitor strategies to prepare your custom insights.
+              We compile your Creator Brain, find adjacent creators, and pull a small set of trending niche reels so you can teach taste — not scrape your whole Instagram history.
             </p>
           </div>
-          <OnboardingPipelineProgress
-            phase={pipelinePhase}
-            lastError={status?.last_error}
-          />
+
+          {/* Primary action lives right under the intro — not buried below the
+              phase list — and discovery also starts itself automatically. */}
           {pipelineComplete ? (
             <OnboardingPrimaryButton onClick={() => void advance({ current_step: "reel_review" })}>
               Show me the best opportunities
             </OnboardingPrimaryButton>
-          ) : (
+          ) : pipelineFailed ? (
             <OnboardingPrimaryButton busy={busy} onClick={() => void runPipeline()}>
-              {pipelinePhase && pipelinePhase !== "queued" ? "Discovery is running..." : "Start AI discovery"}
+              Retry discovery
             </OnboardingPrimaryButton>
-          )}
+          ) : !pipelinePhase ? (
+            <OnboardingPrimaryButton busy={busy} onClick={() => void runPipeline()}>
+              Start AI discovery
+            </OnboardingPrimaryButton>
+          ) : null}
+
+          <OnboardingPipelineProgress
+            phase={pipelinePhase}
+            lastError={status?.last_error}
+          />
         </div>
       )}
 
@@ -994,7 +1145,7 @@ export function OnboardingWizard({
             {votedCount}/3 minimum taste votes
           </p>
           <OnboardingPrimaryButton busy={busy} onClick={() => void submitVotes()}>
-            Use these signals
+            Save my choices and continue
           </OnboardingPrimaryButton>
         </div>
       )}
@@ -1040,6 +1191,7 @@ export function OnboardingWizard({
           clientSlug={clientSlug}
           orgSlug={orgSlug}
           sessionId={sessionId}
+          entryPoint="onboarding"
           guidedMode
           onGuidedComplete={() => void markAhaAndPlan()}
         />

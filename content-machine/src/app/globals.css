@@ -292,10 +292,36 @@ html.dark .glass-pill {
 @keyframes onboarding-float {
   0%,
   100% {
-    transform: translate3d(0, 0, 0) rotate(-1deg);
+    transform: translate3d(0, 0, 0) rotate(-1.2deg);
   }
   50% {
-    transform: translate3d(0, -14px, 0) rotate(1deg);
+    transform: translate3d(5px, -12px, 0) rotate(1.4deg);
+  }
+}
+
+@keyframes onboarding-float-slow {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) rotate(1deg);
+  }
+  45% {
+    transform: translate3d(-6px, -10px, 0) rotate(-1.2deg);
+  }
+  70% {
+    transform: translate3d(3px, 4px, 0) rotate(0.5deg);
+  }
+}
+
+@keyframes onboarding-float-wide {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) rotate(-0.6deg);
+  }
+  40% {
+    transform: translate3d(8px, -8px, 0) rotate(1deg);
+  }
+  75% {
+    transform: translate3d(-4px, 5px, 0) rotate(-1.4deg);
   }
 }
 
@@ -323,7 +349,15 @@ html.dark .glass-pill {
 }
 
 .onboarding-float-card {
-  animation: onboarding-float 8s ease-in-out infinite;
+  animation: onboarding-float 9s ease-in-out infinite;
+}
+
+.onboarding-float-card-slow {
+  animation: onboarding-float-slow 12s ease-in-out infinite;
+}
+
+.onboarding-float-card-wide {
+  animation: onboarding-float-wide 10.5s ease-in-out infinite;
 }
 
 .onboarding-orb {

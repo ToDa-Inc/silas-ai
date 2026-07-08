@@ -53,6 +53,9 @@ export function OnboardingReelVoteCard({ row, score, verdict, onVote, dimmed }: 
             Match score {score.toFixed(1)}
             {row.views != null ? ` · ${formatCompact(row.views)} views` : ""}
           </p>
+          <p className="mt-0.5 text-[9px] leading-snug text-app-fg-subtle/80">
+            How closely this reel fits your niche and goals — higher is a better fit.
+          </p>
         </div>
       </div>
       <div className="flex border-t border-app-divider/60">

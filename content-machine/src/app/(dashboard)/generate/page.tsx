@@ -7,7 +7,19 @@ import { ChevronDown, ChevronUp, Loader2, Sparkles, Trash2 } from "lucide-react"
 import { ReelThumbnail } from "@/components/reel-thumbnail";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast-provider";
+import {
+  CarouselSlideCountPicker,
+  CarouselTemplatePicker,
+  CarouselTemplatePickerEmpty,
+  CoverTemplatePicker,
+  CoverTemplatePickerEmpty,
+  CtaPicker,
+  CtaPickerEmpty,
+  RecreationModePicker,
+  RecreateFormatPicker,
+} from "@/components/generation-pickers";
 import { VideoCreateWorkspace } from "@/components/video-create-workspace";
+import type { StudioEditorEntryPoint } from "@/lib/studio-editor-context";
 import type { ClientCarouselTemplate, ClientCoverTemplate, ClientCta, ScrapedReelRow } from "@/lib/api";
 import { formatCommentViewPct } from "@/lib/reel-comment-view";
 import { generateSessionHref } from "@/lib/generate-session-url";
@@ -58,261 +70,6 @@ function isLikelyInstagramReelUrl(s: string): boolean {
 
 /** Formats we want users to choose from in the unified flow. */
 const ALLOWED_VIDEO_FORMATS = new Set(["text_overlay", "talking_head", "carousel"]);
-
-const CTA_TYPE_LABEL: Record<string, string> = {
-  website: "Website",
-  newsletter: "Newsletter",
-  video: "Video",
-  lead_magnet: "Lead magnet",
-  booking: "Booking",
-  other: "Other",
-};
-
-/** Picker shown right under the format selector. The chosen next step is snapshotted
- *  onto the new generation session so caption, script, and on-screen text all
- *  adapt to the same destination. */
-function CtaPicker({
-  library,
-  selectedId,
-  onSelect,
-}: {
-  library: ClientCta[];
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-}) {
-  return (
-    <div>
-      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
-        <p className="text-[10px] font-bold uppercase tracking-wider text-app-fg-subtle">
-          Next step <span className="font-normal text-app-fg-muted">(required)</span>
-        </p>
-        <Link
-          href="/settings#content-defaults"
-          className="text-[11px] font-semibold text-amber-600 hover:underline dark:text-amber-400"
-        >
-          Edit next steps →
-        </Link>
-      </div>
-      <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="CTA">
-        {library.map((cta) => {
-          const active = selectedId === cta.id;
-          const typeLabel = CTA_TYPE_LABEL[cta.type] ?? cta.type;
-          return (
-            <button
-              key={cta.id}
-              type="button"
-              role="radio"
-              aria-checked={active}
-              title={
-                cta.traffic_goal
-                  ? `${typeLabel} · ${cta.traffic_goal}`
-                  : typeLabel
-              }
-              onClick={() => onSelect(cta.id)}
-              className={`rounded-xl border px-3 py-2 text-xs font-semibold transition-colors ${
-                active
-                  ? "border-amber-500/50 bg-amber-500/10 text-app-fg"
-                  : "border-app-divider bg-app-chip-bg/40 text-app-fg-muted hover:bg-app-chip-bg/70"
-              }`}
-            >
-              {cta.label}
-              <span className="ml-1.5 font-normal text-app-fg-subtle">· {typeLabel}</span>
-            </button>
-          );
-        })}
-      </div>
-      <p className="mt-2 text-[11px] leading-relaxed text-app-fg-muted">
-        Caption, script, and on-screen text will adapt to this destination.
-      </p>
-    </div>
-  );
-}
-
-function CtaPickerEmpty() {
-  return (
-    <div className="rounded-xl border border-dashed border-app-divider bg-app-chip-bg/20 p-3 text-[11px] leading-relaxed text-app-fg-muted">
-      No next steps configured yet.{" "}
-      <Link
-        href="/settings#content-defaults"
-        className="font-semibold text-amber-600 hover:underline dark:text-amber-400"
-      >
-        Add one in Settings
-      </Link>{" "}
-      so future posts know where to send viewers. We&apos;ll fall back to a generic ending otherwise.
-    </div>
-  );
-}
-
-function CarouselSlideCountPicker({
-  value,
-  onChange,
-}: {
-  value: number;
-  onChange: (n: number) => void;
-}) {
-  return (
-    <div>
-      <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-app-fg-subtle">
-        Slides in this carousel <span className="font-normal text-app-fg-muted">(3–10)</span>
-      </p>
-      <div className="flex flex-wrap items-center gap-3">
-        <input
-          type="range"
-          min={3}
-          max={10}
-          step={1}
-          value={value}
-          onChange={(e) => onChange(Number(e.target.value))}
-          className="w-44 max-w-full accent-amber-500"
-          aria-label="Number of carousel slides"
-        />
-        <span className="min-w-[2ch] text-sm font-bold text-app-fg">{value}</span>
-      </div>
-      <p className="mt-2 text-[11px] leading-relaxed text-app-fg-muted">
-        We split your angle across this many slides. The style you pick below sets backgrounds and layout cues —
-        not the slide count.
-      </p>
-    </div>
-  );
-}
-
-function CarouselTemplatePicker({
-  templates,
-  selectedId,
-  onSelect,
-}: {
-  templates: ClientCarouselTemplate[];
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-}) {
-  return (
-    <div>
-      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
-        <p className="text-[10px] font-bold uppercase tracking-wider text-app-fg-subtle">
-          Carousel style <span className="font-normal text-app-fg-muted">(required)</span>
-        </p>
-        <Link
-          href="/settings#content-defaults"
-          className="text-[11px] font-semibold text-amber-600 hover:underline dark:text-amber-400"
-        >
-          Edit styles →
-        </Link>
-      </div>
-      <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Carousel style">
-        {templates.map((template) => {
-          const active = selectedId === template.id;
-          return (
-            <button
-              key={template.id}
-              type="button"
-              role="radio"
-              aria-checked={active}
-              title={template.description ?? undefined}
-              onClick={() => onSelect(template.id)}
-              className={`rounded-xl border px-3 py-2 text-xs font-semibold transition-colors ${
-                active
-                  ? "border-amber-500/50 bg-amber-500/10 text-app-fg"
-                  : "border-app-divider bg-app-chip-bg/40 text-app-fg-muted hover:bg-app-chip-bg/70"
-              }`}
-            >
-              {template.name}
-              <span className="ml-1.5 font-normal text-app-fg-subtle">
-                · {template.slides.length} ref. backgrounds
-              </span>
-            </button>
-          );
-        })}
-      </div>
-      <p className="mt-2 text-[11px] leading-relaxed text-app-fg-muted">
-        Backgrounds and roles from your Media library — we cycle them if you generate more slides than references.
-      </p>
-    </div>
-  );
-}
-
-function CarouselTemplatePickerEmpty() {
-  return (
-    <div className="rounded-xl border border-dashed border-app-divider bg-app-chip-bg/20 p-3 text-[11px] leading-relaxed text-app-fg-muted">
-      No carousel styles configured yet.{" "}
-      <Link
-        href="/settings#content-defaults"
-        className="font-semibold text-amber-600 hover:underline dark:text-amber-400"
-      >
-        Add one in Settings
-      </Link>{" "}
-      to reuse slide structures from example images.
-    </div>
-  );
-}
-
-function CoverTemplatePicker({
-  templates,
-  selectedId,
-  onSelect,
-}: {
-  templates: ClientCoverTemplate[];
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-}) {
-  return (
-    <div>
-      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
-        <p className="text-[10px] font-bold uppercase tracking-wider text-app-fg-subtle">
-          Cover style <span className="font-normal text-app-fg-muted">(required)</span>
-        </p>
-        <Link
-          href="/settings#content-defaults"
-          className="text-[11px] font-semibold text-amber-600 hover:underline dark:text-amber-400"
-        >
-          Edit styles →
-        </Link>
-      </div>
-      <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Cover style">
-        {templates.map((template) => {
-          const active = selectedId === template.id;
-          return (
-            <button
-              key={template.id}
-              type="button"
-              role="radio"
-              aria-checked={active}
-              title={template.instruction || template.reference_label || undefined}
-              onClick={() => onSelect(template.id)}
-              className={`rounded-xl border px-3 py-2 text-xs font-semibold transition-colors ${
-                active
-                  ? "border-amber-500/50 bg-amber-500/10 text-app-fg"
-                  : "border-app-divider bg-app-chip-bg/40 text-app-fg-muted hover:bg-app-chip-bg/70"
-              }`}
-            >
-              {template.name}
-              <span className="ml-1.5 font-normal text-app-fg-subtle">
-                · {template.reference_label ?? "1 image"}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-      <p className="mt-2 text-[11px] leading-relaxed text-app-fg-muted">
-        The cover workspace will start from this example image.
-      </p>
-    </div>
-  );
-}
-
-function CoverTemplatePickerEmpty() {
-  return (
-    <div className="rounded-xl border border-dashed border-app-divider bg-app-chip-bg/20 p-3 text-[11px] leading-relaxed text-app-fg-muted">
-      No cover styles configured yet.{" "}
-      <Link
-        href="/settings#content-defaults"
-        className="font-semibold text-amber-600 hover:underline dark:text-amber-400"
-      >
-        Add one in Settings
-      </Link>{" "}
-      to reuse cover examples from Media.
-    </div>
-  );
-}
 
 function str(v: unknown): string {
   return typeof v === "string" ? v : v != null ? String(v) : "";
@@ -917,6 +674,11 @@ export default function GeneratePage() {
   const router = useRouter();
   const params = useParams<{ sessionId?: string | string[] }>();
   const searchParams = useSearchParams();
+  const editorEntryPoint = useMemo((): StudioEditorEntryPoint => {
+    const from = searchParams.get("from");
+    if (from === "media" || from === "home" || from === "onboarding") return from;
+    return "create";
+  }, [searchParams]);
   const sessionIdFromPath = Array.isArray(params?.sessionId) ? params.sessionId[0] : params?.sessionId;
   const sessionIdFromQuery = searchParams.get("session");
   const sessionIdFromUrl = sessionIdFromPath ?? sessionIdFromQuery;
@@ -1176,6 +938,75 @@ export default function GeneratePage() {
     if (formatPreset === "carousel") return true;
     return formatPreset === "auto" && composerInput.trim().length >= 8 && autoFormatHint === "carousel";
   }, [mode, formatPreset, composerInput, autoFormatHint, recreateFormat]);
+
+  const startBlockedReason = useMemo((): string | null => {
+    if (!clientSlug) return "No workspace client";
+    if (ctaLibrary.length > 0 && !selectedCtaId) return "Pick where viewers should go";
+    if (mode === "recreate") {
+      if (!composerInput.trim()) return "Pick a reel or paste a URL";
+      if (!isLikelyInstagramReelUrl(composerInput)) return "Enter a valid Instagram reel URL";
+      if (!recreateFormat) return "Pick a post type";
+      if (
+        recreateFormat === "carousel" &&
+        carouselTemplates.length > 0 &&
+        !selectedCarouselTemplateId
+      ) {
+        return "Pick a carousel look";
+      }
+      if (
+        recreateFormat !== "carousel" &&
+        coverTemplates.length > 0 &&
+        !selectedCoverTemplateId
+      ) {
+        return "Pick a thumbnail / cover look";
+      }
+      return null;
+    }
+    if (formatPreset === "carousel" && carouselTemplates.length > 0 && !selectedCarouselTemplateId) {
+      return "Pick a carousel look";
+    }
+    if (
+      formatPreset !== "auto" &&
+      formatPreset !== "carousel" &&
+      coverTemplates.length > 0 &&
+      !selectedCoverTemplateId
+    ) {
+      return "Pick a thumbnail / cover look";
+    }
+    if (
+      formatPreset === "auto" &&
+      composerInput.trim().length >= 8 &&
+      autoFormatHint === "carousel" &&
+      carouselTemplates.length > 0 &&
+      !selectedCarouselTemplateId
+    ) {
+      return "Pick a carousel look";
+    }
+    if (
+      formatPreset === "auto" &&
+      composerInput.trim().length >= 8 &&
+      autoFormatHint !== null &&
+      autoFormatHint !== "carousel" &&
+      coverTemplates.length > 0 &&
+      !selectedCoverTemplateId
+    ) {
+      return "Pick a thumbnail / cover look";
+    }
+    return null;
+  }, [
+    clientSlug,
+    ctaLibrary.length,
+    selectedCtaId,
+    mode,
+    composerInput,
+    recreateFormat,
+    carouselTemplates.length,
+    selectedCarouselTemplateId,
+    coverTemplates.length,
+    selectedCoverTemplateId,
+    formatPreset,
+    autoFormatHint,
+  ]);
 
   /** Top competitor reels by comments÷views — quick-pick URLs into the composer. */
   useEffect(() => {
@@ -1793,9 +1624,82 @@ export default function GeneratePage() {
                 </>
               ) : (
                 <>
+                  <div className="rounded-xl border border-app-divider bg-app-chip-bg/25 p-4">
+                    <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+                      <div>
+                        <p className="text-xs font-semibold text-app-fg">Browse reels to recreate</p>
+                        <p className="mt-0.5 text-[11px] leading-relaxed text-app-fg-muted">
+                          Top competitor reels by engagement ratio — tap one to start.
+                        </p>
+                      </div>
+                      <Link
+                        href="/intelligence/breakouts"
+                        className="shrink-0 text-xs font-semibold text-amber-600 hover:underline dark:text-amber-400"
+                      >
+                        Browse breakouts →
+                      </Link>
+                    </div>
+                    {adaptPreviewLoading ? (
+                      <div className="flex justify-center py-6">
+                        <Loader2 className="size-5 animate-spin text-app-fg-subtle" />
+                      </div>
+                    ) : adaptPreviewError ? (
+                      <p className="text-xs text-red-400/90" role="alert">
+                        {adaptPreviewError}
+                      </p>
+                    ) : adaptPreviewRows.length === 0 ? (
+                      <p className="text-xs text-app-fg-muted">
+                        No competitor reels yet. Refresh data in{" "}
+                        <Link
+                          href="/intelligence/reels"
+                          className="font-semibold text-amber-600 hover:underline dark:text-amber-400"
+                        >
+                          Intelligence → Reels
+                        </Link>
+                        .
+                      </p>
+                    ) : (
+                      <ul className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                        {adaptPreviewRows.slice(0, 4).map((row) => {
+                          const url = (row.post_url ?? "").trim();
+                          const selected = url.length > 0 && composerInput.trim() === url;
+                          return (
+                            <li key={row.id}>
+                              <button
+                                type="button"
+                                disabled={!url}
+                                onClick={() => {
+                                  if (url) setComposerInput(url);
+                                }}
+                                className={`flex w-full flex-col gap-1.5 rounded-xl border p-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                                  selected
+                                    ? "border-amber-500/55 bg-amber-500/10"
+                                    : "border-app-divider hover:border-amber-500/30"
+                                }`}
+                              >
+                                <ReelThumbnail
+                                  src={row.thumbnail_url}
+                                  href={url || undefined}
+                                  size="sm"
+                                  alt={row.account_username ? `@${row.account_username}` : "Reel"}
+                                />
+                                <span className="line-clamp-2 text-[10px] leading-snug text-app-fg-secondary">
+                                  {(row.hook_text || row.caption || "").trim().slice(0, 72) || "Reel"}
+                                </span>
+                                <span className="text-center text-[10px] tabular-nums text-app-fg-muted">
+                                  {formatCommentViewPct(row)} engagement
+                                </span>
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </div>
+
                   <div>
                     <label htmlFor="gen-url" className="mb-2 block text-sm font-semibold text-app-fg">
-                      Which reel?
+                      Or paste a reel URL
                     </label>
                     <input
                       id="gen-url"
@@ -1882,82 +1786,12 @@ export default function GeneratePage() {
                     ) : null}
                   </div>
 
-                  <div>
-                    <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-app-fg-subtle">
-                      How should we recreate it?
-                    </p>
-                    <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Recreation mode">
-                      {(
-                        [
-                          { key: "one_to_one" as const, label: "1:1 copy", hint: "Copy the original on-screen text exactly, just translated. Skips angle selection." },
-                          { key: "adapt" as const, label: "Adapt", hint: "Rework the idea into new angles for your client. You'll pick an angle next." },
-                        ]
-                      ).map(({ key, label, hint }) => {
-                        const active = recreateMode === key;
-                        return (
-                          <button
-                            key={key}
-                            type="button"
-                            role="radio"
-                            aria-checked={active}
-                            title={hint}
-                            onClick={() => setRecreateMode(key)}
-                            className={`rounded-xl border px-3 py-2 text-left text-xs font-semibold transition-colors ${
-                              active
-                                ? "border-amber-500/55 bg-amber-500/10 text-app-fg"
-                                : "border-app-divider bg-app-chip-bg/20 text-app-fg-muted hover:border-amber-500/30"
-                            }`}
-                          >
-                            {label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <p className="mt-2 text-[11px] leading-relaxed text-app-fg-muted">
-                      {recreateMode === "one_to_one"
-                        ? "Faithful recreation: the same on-screen text as the original, translated to your client's language. No angle questions — straight to the studio."
-                        : "Reframe the source idea into angle options tailored to your client."}
-                    </p>
-                  </div>
+                  <RecreationModePicker value={recreateMode} onChange={setRecreateMode} />
 
-                  <div>
-                    <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-app-fg-subtle">
-                      Recreate as <span className="font-normal text-app-fg-muted">(required)</span>
-                    </p>
-                    <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Target format">
-                      {(
-                        [
-                          { key: "text_overlay" as const, label: "Text overlay", hint: "Static visuals + on-screen text blocks" },
-                          { key: "talking_head" as const, label: "Talking head", hint: "You speak to camera the whole reel" },
-                          { key: "carousel" as const, label: "Carousel", hint: "Swipeable image slides (Instagram carousel)" },
-                        ] as const
-                      ).map(({ key, label, hint }) => {
-                        const active = recreateFormat === key;
-                        return (
-                          <button
-                            key={key}
-                            type="button"
-                            role="radio"
-                            aria-checked={active}
-                            title={hint}
-                            onClick={() => setRecreateFormat(key)}
-                            className={`rounded-xl border px-3 py-2 text-xs font-semibold transition-colors ${
-                              active
-                                ? "border-amber-500/50 bg-amber-500/10 text-app-fg"
-                                : "border-app-divider bg-app-chip-bg/40 text-app-fg-muted hover:bg-app-chip-bg/70"
-                            }`}
-                          >
-                            {label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <p className="mt-2 text-[11px] leading-relaxed text-app-fg-muted">
-                      {recreateFormat
-                        ? "We keep the original idea and payoff, and rewrite beats and on-screen text for the format you chose."
-                        : "Choose the kind of post you want to create — text on video, talking head, or carousel."}
-                    </p>
-                  </div>
+                  <RecreateFormatPicker
+                    value={recreateFormat}
+                    onChange={(key) => setRecreateFormat(key)}
+                  />
 
                   {showCarouselSlideCountRow ? (
                     <CarouselSlideCountPicker
@@ -1997,78 +1831,6 @@ export default function GeneratePage() {
                   ) : (
                     <CtaPickerEmpty />
                   )}
-
-                  <div className="rounded-xl border border-app-divider bg-app-chip-bg/25 p-4">
-                    <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-                      <div>
-                        <p className="text-xs font-semibold text-app-fg">No URL handy? Quick picks</p>
-                        <p className="mt-0.5 text-[11px] leading-relaxed text-app-fg-muted">
-                          Top competitor reels by{" "}
-                          <span className="text-app-fg-secondary">C/V</span> — tap to use one.
-                        </p>
-                      </div>
-                      <Link
-                        href="/intelligence/breakouts"
-                        className="shrink-0 text-xs font-semibold text-amber-600 hover:underline dark:text-amber-400"
-                      >
-                        Browse breakouts →
-                      </Link>
-                    </div>
-                    {adaptPreviewLoading ? (
-                      <div className="flex justify-center py-6">
-                        <Loader2 className="size-5 animate-spin text-app-fg-subtle" />
-                      </div>
-                    ) : adaptPreviewError ? (
-                      <p className="text-xs text-red-400/90">{adaptPreviewError}</p>
-                    ) : adaptPreviewRows.length === 0 ? (
-                      <p className="text-xs text-app-fg-muted">
-                        No competitor reels yet. Refresh data in{" "}
-                        <Link
-                          href="/intelligence/reels"
-                          className="font-semibold text-amber-600 hover:underline dark:text-amber-400"
-                        >
-                          Intelligence → Reels
-                        </Link>
-                        .
-                      </p>
-                    ) : (
-                      <ul className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                        {adaptPreviewRows.slice(0, 4).map((row) => {
-                          const url = (row.post_url ?? "").trim();
-                          const selected = url.length > 0 && composerInput.trim() === url;
-                          return (
-                            <li key={row.id}>
-                              <button
-                                type="button"
-                                disabled={!url}
-                                onClick={() => {
-                                  if (url) setComposerInput(url);
-                                }}
-                                className={`flex w-full flex-col gap-1.5 rounded-xl border p-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-                                  selected
-                                    ? "border-amber-500/55 bg-amber-500/10"
-                                    : "border-app-divider hover:bg-white/[0.04]"
-                                }`}
-                              >
-                                <ReelThumbnail
-                                  src={row.thumbnail_url}
-                                  alt={`@${row.account_username} reel`}
-                                  size="md"
-                                  className="mx-auto"
-                                />
-                                <span className="truncate text-center text-[10px] font-semibold text-app-fg">
-                                  @{row.account_username}
-                                </span>
-                                <span className="text-center text-[10px] tabular-nums text-app-fg-muted">
-                                  {formatCommentViewPct(row)} C/V
-                                </span>
-                              </button>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
-                  </div>
                 </>
               )}
 
@@ -2114,7 +1876,7 @@ export default function GeneratePage() {
               <div className="flex flex-col items-end gap-2">
                 <button
                   type="button"
-                  disabled={loading || !clientSlug || (mode === "recreate" && !recreateFormat)}
+                  disabled={loading || Boolean(startBlockedReason)}
                   onClick={() => void onStart()}
                   className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-500 px-5 py-2.5 text-sm font-bold text-zinc-950 shadow-md shadow-amber-900/20 transition-opacity hover:opacity-95 disabled:opacity-50"
                 >
@@ -2127,10 +1889,10 @@ export default function GeneratePage() {
                     ? mode === "recreate" && recreateMode === "one_to_one"
                       ? "Creating 1:1 copy…"
                       : "Preparing angles…"
-                    : mode === "recreate" && !recreateFormat
-                    ? "Pick a target format"
+                    : startBlockedReason
+                    ? startBlockedReason
                     : mode === "recreate" && recreateMode === "one_to_one"
-                    ? "Create 1:1 copy"
+                    ? "Create exact copy"
                     : "Generate angles"}
                 </button>
                 {mode === "recreate" ? (
@@ -2400,6 +2162,7 @@ export default function GeneratePage() {
             clientSlug={clientSlug}
             orgSlug={orgSlug}
             sessionId={session.id}
+            entryPoint={editorEntryPoint}
             onSessionUpdated={(s) => {
               currentSessionIdRef.current = s.id;
               setSession(s);

@@ -725,6 +725,9 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
     min_views_per_day = float(
         nset.get("min_views_per_day") or payload.get("min_views_per_day") or DEFAULT_MIN_VIEWS_PER_DAY
     )
+    if payload.get("onboarding_fast"):
+        min_views_per_day = min(min_views_per_day, float(payload.get("min_views_per_day") or 800))
+    max_score_cap = int(payload.get("max_score_cap") or MAX_SCORE_SAFETY_CAP)
     search_window = str(nset.get("search_window") or payload.get("search_window") or DEFAULT_SEARCH_WINDOW)
 
     keywords, kw_provenance = similarity_scan_keywords(
@@ -944,7 +947,7 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
     ranked = prerank_reels_for_similarity(filtered, keywords=keywords, recency_days=days)
     # Score everything that passed the filters — no arbitrary quality cap.
     # Safety ceiling only: prevents runaway jobs if upstream filters misconfigure.
-    to_score = ranked[:MAX_SCORE_SAFETY_CAP]
+    to_score = ranked[:max_score_cap]
 
     score_carousel_n = sum(
         1 for r in to_score if _ig_type_is_static_multimodal(str(r.get("ig_type") or ""))
@@ -997,6 +1000,16 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
     supabase.table("background_jobs").update({"result": dict(progress)}).eq("id", job_id).execute()
 
     qualifying = [r for r in scored if r["similarity_score"] >= threshold]
+    if payload.get("onboarding_fast") and not qualifying and scored:
+        # Safety net for genuinely sparse niches only — with a proper discovery window
+        # (see ONBOARDING_KEYWORD_PAYLOAD) this should rarely trigger. Keeps the taste-training
+        # step from showing zero examples rather than lowering the real 85-point quality bar.
+        floor = int(payload.get("onboarding_save_floor") or 50)
+        min_save = int(payload.get("min_onboarding_save") or 8)
+        near = [r for r in scored if int(r.get("similarity_score") or 0) >= floor]
+        qualifying = sorted(near or scored, key=lambda x: x["similarity_score"], reverse=True)[:min_save]
+        progress["onboarding_fallback_saved"] = len(qualifying)
+        progress["onboarding_fallback_floor"] = floor
     if qualifying:
         # Persist replay payload before DB write — if upsert throws, worker keeps status=failed
         # but result.recovery_snapshot remains for apply_keyword_similarity_recovery_snapshot().

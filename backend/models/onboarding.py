@@ -47,6 +47,7 @@ class OnboardingStatusOut(BaseModel):
     completed_steps: List[str] = Field(default_factory=list)
     quiz_answers: Dict[str, Any] = Field(default_factory=dict)
     pipeline_progress: Dict[str, Any] = Field(default_factory=dict)
+    ig_prefill: Dict[str, Any] = Field(default_factory=dict)
     job_ids: Dict[str, Any] = Field(default_factory=dict)
     selected_reel_id: Optional[str] = None
     selected_analysis_id: Optional[str] = None

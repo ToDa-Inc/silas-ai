@@ -107,6 +107,7 @@ export type PipelinePhaseId =
   | "baseline_scrape"
   | "auto_profile"
   | "competitor_discovery"
+  | "keyword_scan"
   | "profile_scrapes"
   | "auto_analyze"
   | "complete"
@@ -114,10 +115,8 @@ export type PipelinePhaseId =
 
 export const PIPELINE_PHASES: { id: PipelinePhaseId; label: string; hint: string }[] = [
   { id: "dna_compile", label: "Build your Creator Brain", hint: "Positioning, audience, voice, and offers" },
-  { id: "baseline_scrape", label: "Read your Instagram", hint: "Your existing reels and captions" },
-  { id: "auto_profile", label: "Sharpen the niche map", hint: "Merging AI signals with your answers" },
-  { id: "competitor_discovery", label: "Find creators like you", hint: "Relevant accounts and adjacent angles" },
-  { id: "profile_scrapes", label: "Collect winning reels", hint: "Outliers from similar creators" },
+  { id: "competitor_discovery", label: "Find creators in your niche", hint: "Adjacent accounts worth studying" },
+  { id: "keyword_scan", label: "Scan trending niche reels", hint: "Quick examples from your topic keywords" },
   { id: "auto_analyze", label: "Detect repeatable patterns", hint: "Hooks, formats, structures, and payoff" },
 ];
 
@@ -144,7 +143,11 @@ export function pipelinePhaseStatus(
 ): "done" | "active" | "pending" | "failed" {
   if (current === "failed" && phaseId !== "complete") return "pending";
   if (current === "failed") return "failed";
-  if (!current || current === "queued") return phaseId === "dna_compile" ? "active" : "pending";
+  // No phase at all means the pipeline job hasn't been started yet — don't show
+  // a spinner as if it's already running. "queued" means the job was created
+  // and is waiting for a worker, which is worth showing as active.
+  if (!current) return "pending";
+  if (current === "queued") return phaseId === "dna_compile" ? "active" : "pending";
   if (current === "complete") return "done";
   const order = PIPELINE_PHASES.map((p) => p.id);
   const curIdx = order.indexOf(current as PipelinePhaseId);

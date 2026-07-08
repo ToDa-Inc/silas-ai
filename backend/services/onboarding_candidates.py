@@ -81,9 +81,9 @@ def list_onboarding_reel_candidates(
     res = (
         supabase.table("scraped_reels")
         .select(
-            "id, shortcode, post_url, caption, likes, comments, views, posted_at, "
+            "id, post_url, caption, likes, comments, views, posted_at, "
             "source, similarity_score, is_outlier, outlier_likes_ratio, competitor_id, "
-            "thumbnail_url, video_url, format_guess"
+            "thumbnail_url, format"
         )
         .eq("client_id", client_id)
         .order("similarity_score", desc=True)

@@ -73,6 +73,7 @@ export function AgentTeamDrawers({
         open={activeAgent === "analyst"}
         title={HOME_COPY.analystDrawerTitle}
         onClose={onClose}
+        defaultExpanded
       >
         <AnalystDrawerBody
           clientSlug={clientSlug}
@@ -192,7 +193,7 @@ function AnalystDrawerBody({
 }) {
   return (
     <div className="space-y-4">
-      <DashboardKpiStrip stats={stats} />
+      <DashboardKpiStrip stats={stats} className="mb-4" />
       {summary.analyst.outliers > 0 ? (
         <p className="text-xs text-app-fg-muted">
           {summary.analyst.outliers} breakout

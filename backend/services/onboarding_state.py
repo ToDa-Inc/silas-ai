@@ -95,6 +95,7 @@ def update_onboarding_state(
     complete_step: Optional[str] = None,
     quiz_answers: Optional[Dict[str, Any]] = None,
     pipeline_progress: Optional[Dict[str, Any]] = None,
+    ig_prefill_patch: Optional[Dict[str, Any]] = None,
     job_ids_patch: Optional[Dict[str, Any]] = None,
     selected_reel_id: Optional[str] = None,
     selected_analysis_id: Optional[str] = None,
@@ -129,6 +130,10 @@ def update_onboarding_state(
         merged = dict(row.get("pipeline_progress") or {})
         merged.update(pipeline_progress)
         patch["pipeline_progress"] = merged
+    if ig_prefill_patch is not None:
+        merged = dict(row.get("ig_prefill") or {})
+        merged.update(ig_prefill_patch)
+        patch["ig_prefill"] = merged
     if job_ids_patch is not None:
         merged = dict(row.get("job_ids") or {})
         merged.update(job_ids_patch)

@@ -1,7 +1,18 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Check, Loader2, Sparkles } from "lucide-react";
+import {
+  Check,
+  Heart,
+  Instagram,
+  Loader2,
+  MessageCircle,
+  Play,
+  Sparkles,
+  TrendingUp,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
 import { OnboardingSkipToStudioButton } from "@/components/onboarding/onboarding-bypass-controls";
 import { cn } from "@/lib/cn";
 import {
@@ -11,23 +22,86 @@ import {
   type OnboardingStepKey,
 } from "@/lib/onboarding-ui";
 
-export type OnboardingLayoutVariant = "card" | "page";
+/** "raw" skips the title/description card chrome — used for steps (like the
+ * per-question Q&A flow) that render their own panel but still want the
+ * branded backdrop, header, and chapter progress. */
+export type OnboardingLayoutVariant = "card" | "page" | "raw";
 
 type Props = {
   variant: OnboardingLayoutVariant;
   currentStep: OnboardingStepKey;
   completedSteps: string[];
-  title: string;
-  description: string;
+  title?: string;
+  description?: string;
   children: ReactNode;
   onboardingBypassActive?: boolean;
 };
 
-const FLOATING_CARDS = [
-  { title: "Hook pattern", body: "Contrarian opener + payoff in 7 seconds", className: "left-[7%] top-[18%]" },
-  { title: "Creator Brain", body: "Audience, voice, offers, proof, angles", className: "right-[8%] top-[13%]" },
-  { title: "First win", body: "Outlier found. Adaptation ready.", className: "bottom-[14%] left-[10%]" },
-  { title: "Signal", body: "3.8x engagement match", className: "bottom-[20%] right-[11%]" },
+type FloatingCard = {
+  label: string;
+  metric: string;
+  detail: string;
+  badge: string;
+  icon: LucideIcon;
+  className: string;
+  driftClass: string;
+  accentClass: string;
+};
+
+const FLOATING_CARDS: FloatingCard[] = [
+  {
+    label: "Instagram scan",
+    metric: "48 reels",
+    detail: "Posts, captions, and audience reactions ready to analyze.",
+    badge: "@creator",
+    icon: Instagram,
+    className: "left-2 top-[19%] 2xl:left-5",
+    driftClass: "onboarding-float-card-slow",
+    accentClass: "border-pink-300/30 bg-pink-400/15 text-pink-200",
+  },
+  {
+    label: "Comments pulled",
+    metric: "+600",
+    detail: "Real follower phrases, objections, and content requests.",
+    badge: "Audience",
+    icon: MessageCircle,
+    className: "right-2 top-[17%] 2xl:right-5",
+    driftClass: "onboarding-float-card",
+    accentClass: "border-sky-300/30 bg-sky-400/15 text-sky-200",
+  },
+  {
+    label: "Reach spike",
+    metric: "3.8x",
+    detail: "A reel performing above baseline in the same niche.",
+    badge: "Outlier",
+    icon: TrendingUp,
+    className: "bottom-[18%] left-2 2xl:left-5",
+    driftClass: "onboarding-float-card-wide",
+    accentClass: "border-emerald-300/30 bg-emerald-400/15 text-emerald-200",
+  },
+  {
+    label: "Follower lift",
+    metric: "+1.2K",
+    detail: "Growth tied to formats worth adapting, not copying.",
+    badge: "Momentum",
+    icon: Users,
+    className: "bottom-[22%] right-2 2xl:right-5",
+    driftClass: "onboarding-float-card-slow",
+    accentClass: "border-amber-300/35 bg-amber-400/15 text-amber-200",
+  },
+];
+
+const FLOATING_REACTIONS: { value: string; icon: LucideIcon; className: string }[] = [
+  {
+    value: "12.4K",
+    icon: Heart,
+    className: "left-4 top-[45%] 2xl:left-8",
+  },
+  {
+    value: "84K",
+    icon: Play,
+    className: "right-4 top-[49%] 2xl:right-8",
+  },
 ];
 
 function chapterNumber(firstStep: OnboardingStepKey): string {
@@ -115,24 +189,75 @@ function OnboardingChapterProgress({
 function OnboardingBackdrop() {
   return (
     <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(251,191,36,0.22),transparent_35%),radial-gradient(circle_at_80%_20%,rgba(45,212,191,0.14),transparent_28%),linear-gradient(135deg,#050505_0%,#09090b_45%,#1c1205_100%)]" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(251,191,36,0.26),transparent_36%),radial-gradient(circle_at_80%_20%,rgba(236,72,153,0.16),transparent_30%),radial-gradient(circle_at_20%_85%,rgba(45,212,191,0.12),transparent_28%),linear-gradient(135deg,#050505_0%,#09090b_44%,#1c1205_100%)]" />
       <div className="onboarding-orb absolute left-1/2 top-1/2 h-[34rem] w-[34rem] -translate-x-1/2 -translate-y-1/2 rounded-full bg-amber-400/10 blur-3xl" />
-      <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.035)_1px,transparent_1px)] bg-[size:72px_72px] opacity-35 [mask-image:radial-gradient(circle_at_center,black,transparent_72%)]" />
       {FLOATING_CARDS.map((card, index) => (
-        <div
-          key={card.title}
-          className={cn(
-            "onboarding-float-card absolute hidden w-48 rounded-2xl border border-white/10 bg-white/[0.06] p-4 text-left shadow-2xl backdrop-blur-xl lg:block",
-            card.className,
-          )}
-          style={{ animationDelay: `${index * 700}ms` }}
-        >
-          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-amber-300/80">
-            {card.title}
-          </p>
-          <p className="mt-2 text-xs leading-relaxed text-zinc-300">{card.body}</p>
-        </div>
+        <FloatingMetricCard
+          key={card.label}
+          card={card}
+          animationDelay={`${index * 650}ms`}
+        />
       ))}
+      {FLOATING_REACTIONS.map((reaction, index) => {
+        const Icon = reaction.icon;
+        return (
+          <div
+            key={reaction.value}
+            className={cn(
+              "onboarding-float-card-wide absolute hidden items-center gap-2 rounded-full border border-white/10 bg-zinc-950/50 px-3 py-2 text-xs font-black text-white shadow-2xl backdrop-blur-2xl xl:flex",
+              reaction.className,
+            )}
+            style={{ animationDelay: `${index * 900 + 350}ms` }}
+          >
+            <Icon className="h-3.5 w-3.5 text-pink-200" aria-hidden />
+            {reaction.value}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function FloatingMetricCard({
+  card,
+  animationDelay,
+}: {
+  card: FloatingCard;
+  animationDelay: string;
+}) {
+  const Icon = card.icon;
+  return (
+    <div
+      className={cn(
+        "absolute hidden w-28 rounded-3xl border border-white/10 bg-zinc-950/45 p-2.5 text-left opacity-75 shadow-2xl backdrop-blur-2xl xl:block 2xl:w-40 2xl:p-3.5 2xl:opacity-100",
+        card.driftClass,
+        card.className,
+      )}
+      style={{ animationDelay }}
+    >
+      <div className="flex items-start justify-between gap-2 2xl:gap-3">
+        <div
+          className={cn(
+            "flex h-8 w-8 shrink-0 items-center justify-center rounded-2xl border 2xl:h-9 2xl:w-9",
+            card.accentClass,
+          )}
+        >
+          <Icon className="h-3.5 w-3.5 2xl:h-4 2xl:w-4" aria-hidden />
+        </div>
+        <span className="hidden rounded-full border border-white/10 bg-white/[0.06] px-2 py-1 text-[9px] font-bold uppercase tracking-[0.16em] text-zinc-400 2xl:inline-flex">
+          {card.badge}
+        </span>
+      </div>
+      <p className="mt-3 text-xl font-black tracking-tight text-white 2xl:mt-4 2xl:text-2xl">{card.metric}</p>
+      <p className="mt-1 text-[9px] font-bold uppercase tracking-[0.16em] text-amber-300/85 2xl:text-[10px] 2xl:tracking-[0.18em]">
+        {card.label}
+      </p>
+      <p className="mt-2 hidden text-[11px] leading-relaxed text-zinc-400 2xl:block">{card.detail}</p>
+      <div className="mt-3 flex gap-1">
+        <span className="h-1.5 flex-1 rounded-full bg-amber-300/80" />
+        <span className="h-1.5 flex-1 rounded-full bg-pink-300/50" />
+        <span className="h-1.5 flex-1 rounded-full bg-sky-300/40" />
+      </div>
     </div>
   );
 }
@@ -251,9 +376,32 @@ function PageLayout({
   );
 }
 
+/** Same branded frame as the other layouts, but leaves the panel to `children`. */
+function RawLayout({
+  currentStep,
+  completedSteps,
+  children,
+  onboardingBypassActive,
+}: Props) {
+  return (
+    <OnboardingFrame
+      currentStep={currentStep}
+      completedSteps={completedSteps}
+      onboardingBypassActive={onboardingBypassActive}
+    >
+      <section className="flex flex-1 items-center justify-center py-4">
+        {children}
+      </section>
+    </OnboardingFrame>
+  );
+}
+
 export function OnboardingShell(props: Props) {
   if (props.variant === "page") {
     return <PageLayout {...props} />;
+  }
+  if (props.variant === "raw") {
+    return <RawLayout {...props} />;
   }
   return <CardLayout {...props} />;
 }
@@ -337,86 +485,84 @@ export function OnboardingQuestionScreen({
   children: ReactNode;
 }) {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-surface-container-lowest px-4 py-10">
-      <div className="grid w-full max-w-3xl overflow-hidden rounded-2xl border border-outline-variant/10 bg-surface-container shadow-xl md:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
-        <aside className="hidden flex-col justify-between gap-8 border-r border-outline-variant/10 bg-surface-container-low p-8 md:flex">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-amber-400">
-              {stepTitle}
-            </p>
-            {stepDescription ? (
-              <p className="mt-3 text-sm leading-relaxed text-zinc-400">{stepDescription}</p>
-            ) : null}
-          </div>
-          {hideProgress ? null : (
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">
-                Question {index + 1} of {total}
-              </p>
-              <div className="mt-3 flex gap-1.5">
-                {Array.from({ length: total }).map((_, i) => (
-                  <span
-                    key={i}
-                    className={cn(
-                      "h-1.5 flex-1 rounded-full transition-colors",
-                      i <= index ? "bg-amber-500" : "bg-zinc-700",
-                    )}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-        </aside>
-
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            onContinue();
-          }}
-          className="flex flex-col p-8 sm:p-10"
-        >
-          <p className="mb-5 text-[10px] font-bold uppercase tracking-widest text-zinc-500 md:hidden">
+    <div className="onboarding-panel grid w-full max-w-3xl overflow-hidden rounded-[2rem] border border-white/10 bg-zinc-950/70 shadow-2xl backdrop-blur-2xl md:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+      <aside className="hidden flex-col justify-between gap-8 border-r border-white/10 bg-white/[0.03] p-8 md:flex">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-amber-300">
             {stepTitle}
-            {hideProgress ? "" : ` · Question ${index + 1} of ${total}`}
           </p>
-          <h1 className="text-xl font-bold text-on-surface sm:text-2xl">
-            {question}
-            {optional ? (
-              <span className="ml-2 align-middle text-xs font-medium text-zinc-500">
-                (optional)
-              </span>
-            ) : null}
-          </h1>
-          <p className="mt-3 text-sm leading-relaxed text-zinc-400">{helper}</p>
-          {example ? <p className="mt-2 text-sm italic text-zinc-500">{example}</p> : null}
-          <div key={index} className="mt-6">
-            {children}
-          </div>
-          {error ? <p className="mt-3 text-sm text-red-400">{error}</p> : null}
-          {hideActions ? null : (
-            <div className="mt-8 flex items-center gap-3">
-              {canBack ? (
-                <button
-                  type="button"
-                  onClick={onBack}
-                  disabled={busy}
-                  className="rounded-lg border border-outline-variant/20 px-5 py-2.5 text-sm font-bold text-zinc-300 transition hover:bg-surface-container-high disabled:opacity-50"
-                >
-                  Back
-                </button>
-              ) : null}
-              <button
-                type="submit"
-                disabled={busy}
-                className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-primary-container py-2.5 text-sm font-bold text-on-primary-container transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
-                {isLast ? submitLabel : "Continue"}
-              </button>
+          {stepDescription ? (
+            <p className="mt-3 text-sm leading-relaxed text-zinc-400">{stepDescription}</p>
+          ) : null}
+        </div>
+        {hideProgress ? null : (
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">
+              Question {index + 1} of {total}
+            </p>
+            <div className="mt-3 flex gap-1.5">
+              {Array.from({ length: total }).map((_, i) => (
+                <span
+                  key={i}
+                  className={cn(
+                    "h-1.5 flex-1 rounded-full transition-colors",
+                    i <= index ? "bg-amber-400" : "bg-white/10",
+                  )}
+                />
+              ))}
             </div>
-          )}
-        </form>
-      </div>
-    </main>
+          </div>
+        )}
+      </aside>
+
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          onContinue();
+        }}
+        className="flex flex-col p-8 sm:p-10"
+      >
+        <p className="mb-5 text-[10px] font-bold uppercase tracking-widest text-zinc-500 md:hidden">
+          {stepTitle}
+          {hideProgress ? "" : ` · Question ${index + 1} of ${total}`}
+        </p>
+        <h1 className="text-xl font-black tracking-tight text-white sm:text-2xl">
+          {question}
+          {optional ? (
+            <span className="ml-2 align-middle text-xs font-medium text-zinc-500">
+              (optional)
+            </span>
+          ) : null}
+        </h1>
+        <p className="mt-3 text-sm leading-relaxed text-zinc-400">{helper}</p>
+        {example ? <p className="mt-2 text-sm italic text-zinc-500">{example}</p> : null}
+        <div key={index} className="mt-6">
+          {children}
+        </div>
+        {error ? <p className="mt-3 text-sm text-red-400">{error}</p> : null}
+        {hideActions ? null : (
+          <div className="mt-8 flex items-center gap-3">
+            {canBack ? (
+              <button
+                type="button"
+                onClick={onBack}
+                disabled={busy}
+                className="rounded-xl border border-white/10 px-5 py-2.5 text-sm font-bold text-zinc-300 transition hover:bg-white/[0.06] disabled:opacity-50"
+              >
+                Back
+              </button>
+            ) : null}
+            <button
+              type="submit"
+              disabled={busy}
+              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-amber-300 to-amber-500 py-2.5 text-sm font-black text-zinc-950 shadow-[0_12px_34px_rgba(245,158,11,0.24)] transition hover:-translate-y-0.5 hover:shadow-[0_18px_44px_rgba(245,158,11,0.32)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
+            >
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+              {isLast ? submitLabel : "Continue"}
+            </button>
+          </div>
+        )}
+      </form>
+    </div>
   );
 }

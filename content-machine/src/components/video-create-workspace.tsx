@@ -24,6 +24,8 @@ import {
   Trash2,
   Video,
 } from "lucide-react";
+import { InstagramPostChecklist } from "@/components/instagram-post-checklist";
+import { StudioEditorHeader } from "@/components/studio-editor-header";
 import {
   AlignmentPad,
   CarouselEditableEmptyState,
@@ -78,6 +80,7 @@ import { CarouselEditor } from "@/components/editors/carousel/CarouselEditor";
 import { EditorCommandPalette } from "@/components/editors/shared/EditorCommandPalette";
 import { StudioFormatTabs } from "@/components/editors/shared/StudioShell";
 import { useStudioShell } from "@/components/studio-shell-context";
+import type { StudioEditorEntryPoint } from "@/lib/studio-editor-context";
 import { useEditorSelection } from "@/components/editors/shared/useEditorSelection";
 import { buildVideoActions } from "@/components/editors/video/videoActions";
 import { UndoPill } from "@/components/undo-pill";
@@ -333,6 +336,8 @@ export type VideoCreateWorkspaceProps = {
   onGuidedComplete?: () => void;
   /** Home studio overlay: wider layout and relaxed scroll clipping. */
   embedded?: boolean;
+  /** Where the user opened this editor — drives breadcrumb when not embedded. */
+  entryPoint?: StudioEditorEntryPoint;
 };
 
 /**
@@ -356,6 +361,7 @@ export function VideoCreateWorkspace({
   guidedMode = false,
   onGuidedComplete,
   embedded = false,
+  entryPoint = "create",
 }: VideoCreateWorkspaceProps) {
   const { show } = useToast();
   const studioShell = useStudioShell();
@@ -2986,6 +2992,12 @@ export function VideoCreateWorkspace({
 
   return (
     <div className="space-y-4">
+      {!embedded ? (
+        <StudioEditorHeader
+          entryPoint={entryPoint}
+          sessionLabel={hooks[0]?.text?.slice(0, 60) || session.caption_body?.slice(0, 60) || null}
+        />
+      ) : null}
       {guidedMode ? (
         <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
           <p className="font-semibold text-amber-900 dark:text-amber-100">First-run editor</p>
@@ -4127,52 +4139,12 @@ export function VideoCreateWorkspace({
                 ) : null}
               </div>
               <div className="flex min-w-0 flex-1 flex-col gap-4">
-                <div>
-                  <p className="text-sm font-semibold text-app-fg">Your video is ready.</p>
-                  <p className="mt-1 text-xs leading-relaxed text-app-fg-muted">
-                    Download the MP4 and open it in Instagram. Add a trending sound before publishing — audio
-                    boosts reach significantly.
-                  </p>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <a
-                    href={session.rendered_video_url}
-                    download="reel.mp4"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 text-xs font-bold text-zinc-950 shadow-md shadow-emerald-900/25 hover:opacity-90"
-                  >
-                    <Download className="h-3.5 w-3.5" /> Download MP4
-                  </a>
-                  <button
-                    type="button"
-                    onClick={() => setPreviewOpen(true)}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-app-divider px-3 py-2 text-xs font-bold text-app-fg hover:bg-white/5"
-                  >
-                    <Eye className="h-3.5 w-3.5" /> Preview post
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void copyText("caption + hashtags", captionFull)}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-app-divider px-3 py-2 text-xs font-bold text-app-fg hover:bg-white/5"
-                  >
-                    <Copy className="h-3.5 w-3.5" /> Copy caption
-                  </button>
-                </div>
-
-                {session.caption_body ? (
-                  <p className="line-clamp-3 whitespace-pre-line rounded-lg border border-app-divider/60 bg-app-chip-bg/20 px-3 py-2 text-[13px] leading-relaxed text-app-fg-secondary">
-                    {session.caption_body}
-                  </p>
-                ) : null}
-
-                <div className="rounded-lg border border-amber-500/20 bg-amber-500/[0.07] px-3 py-2.5">
-                  <p className="text-xs font-semibold text-amber-700 dark:text-amber-300">Before publishing</p>
-                  <p className="mt-0.5 text-xs leading-relaxed text-app-fg-muted">
-                    Open as a draft in Instagram → Add sound → pick a trending audio in your niche → publish.
-                  </p>
-                </div>
+                <InstagramPostChecklist
+                  videoUrl={session.rendered_video_url}
+                  onCopyCaption={() => void copyText("caption + hashtags", captionFull)}
+                  onPreview={() => setPreviewOpen(true)}
+                  captionPreview={session.caption_body || null}
+                />
               </div>
             </div>
           ) : (

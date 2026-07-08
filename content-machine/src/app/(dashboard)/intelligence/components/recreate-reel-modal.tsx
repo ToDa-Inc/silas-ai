@@ -4,6 +4,17 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { FileText, Images, Loader2, Sparkles, UserRound, Video, X } from "lucide-react";
 import { ReelThumbnail } from "@/components/reel-thumbnail";
+import {
+  CarouselSlideCountPicker,
+  CarouselTemplatePicker,
+  CarouselTemplatePickerEmpty,
+  CoverTemplatePicker,
+  CoverTemplatePickerEmpty,
+  CtaPicker,
+  CtaPickerEmpty,
+  RecreationModePicker,
+  RecreateFormatPicker,
+} from "@/components/generation-pickers";
 import type { ClientCarouselTemplate, ClientCoverTemplate, ClientCta, ScrapedReelRow } from "@/lib/api";
 import {
   CONTENT_DEFAULTS_UPDATED_EVENT,
@@ -26,21 +37,6 @@ type Props = {
 
 /** Target production format — explicit choice only (server routes by format_key). */
 type RecreateFormatChoice = "text_overlay" | "talking_head" | "carousel";
-
-const RECREATE_FORMAT_OPTIONS: ReadonlyArray<{ key: RecreateFormatChoice; label: string; hint: string }> = [
-  { key: "text_overlay", label: "Text overlay", hint: "Static visuals + on-screen text blocks" },
-  { key: "talking_head", label: "Talking head", hint: "You speak to camera the whole reel" },
-  { key: "carousel", label: "Carousel", hint: "Swipeable image slides (Instagram carousel)" },
-];
-
-const CTA_TYPE_LABEL: Record<string, string> = {
-  website: "Website",
-  newsletter: "Newsletter",
-  video: "Video",
-  lead_magnet: "Free resource",
-  booking: "Booking",
-  other: "Other",
-};
 
 function sourceMediaLabel(reel: ScrapedReelRow): {
   icon: typeof Video;
@@ -88,168 +84,6 @@ function sourceMediaLabel(reel: ScrapedReelRow): {
   };
 }
 
-function CarouselTemplatePicker({
-  templates,
-  selectedId,
-  onSelect,
-  disabled,
-}: {
-  templates: ClientCarouselTemplate[];
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-  disabled?: boolean;
-}) {
-  return (
-    <div className="mt-4">
-      <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-2">
-        <p className="text-xs font-semibold text-app-fg">
-          Carousel style <span className="font-normal text-app-fg-muted">(required)</span>
-        </p>
-        <Link
-          href="/settings#content-defaults"
-          className="text-[10px] font-semibold text-amber-700 hover:underline dark:text-amber-400"
-        >
-          Edit styles →
-        </Link>
-      </div>
-      <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Carousel style">
-        {templates.map((template) => {
-          const active = selectedId === template.id;
-          return (
-            <button
-              key={template.id}
-              type="button"
-              role="radio"
-              aria-checked={active}
-              disabled={disabled}
-              onClick={() => onSelect(template.id)}
-              className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-50 ${
-                active
-                  ? "border-amber-500/55 bg-amber-500/10 text-app-fg"
-                  : "border-zinc-200/90 bg-white text-zinc-700 hover:border-zinc-300 dark:border-white/10 dark:bg-zinc-900/60 dark:text-app-fg-muted dark:hover:border-white/20"
-              }`}
-            >
-              {template.name}
-              <span className="ml-1 font-normal text-app-fg-subtle">
-                · {template.slides.length} slides
-              </span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function CoverTemplatePicker({
-  templates,
-  selectedId,
-  onSelect,
-  disabled,
-}: {
-  templates: ClientCoverTemplate[];
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-  disabled?: boolean;
-}) {
-  return (
-    <div className="mt-4">
-      <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-2">
-        <p className="text-xs font-semibold text-app-fg">
-          Cover style <span className="font-normal text-app-fg-muted">(required)</span>
-        </p>
-        <Link
-          href="/settings#content-defaults"
-          className="text-[10px] font-semibold text-amber-700 hover:underline dark:text-amber-400"
-        >
-          Edit styles →
-        </Link>
-      </div>
-      <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Cover style">
-        {templates.map((template) => {
-          const active = selectedId === template.id;
-          return (
-            <button
-              key={template.id}
-              type="button"
-              role="radio"
-              aria-checked={active}
-              disabled={disabled}
-              onClick={() => onSelect(template.id)}
-              className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-50 ${
-                active
-                  ? "border-amber-500/55 bg-amber-500/10 text-app-fg"
-                  : "border-zinc-200/90 bg-white text-zinc-700 hover:border-zinc-300 dark:border-white/10 dark:bg-zinc-900/60 dark:text-app-fg-muted dark:hover:border-white/20"
-              }`}
-            >
-              {template.name}
-              <span className="ml-1 font-normal text-app-fg-subtle">
-                · {template.reference_label ?? "1 image"}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function NextStepPicker({
-  library,
-  selectedId,
-  onSelect,
-  disabled,
-}: {
-  library: ClientCta[];
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-  disabled?: boolean;
-}) {
-  return (
-    <div className="mt-4">
-      <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-2">
-        <p className="text-xs font-semibold text-app-fg">
-          Next step <span className="font-normal text-app-fg-muted">(required)</span>
-        </p>
-        <Link
-          href="/settings#content-defaults"
-          className="text-[10px] font-semibold text-amber-700 hover:underline dark:text-amber-400"
-        >
-          Edit next steps →
-        </Link>
-      </div>
-      <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Next step">
-        {library.map((cta) => {
-          const active = selectedId === cta.id;
-          const typeLabel = CTA_TYPE_LABEL[cta.type] ?? cta.type;
-          return (
-            <button
-              key={cta.id}
-              type="button"
-              role="radio"
-              aria-checked={active}
-              title={cta.traffic_goal ? `${typeLabel} · ${cta.traffic_goal}` : typeLabel}
-              disabled={disabled}
-              onClick={() => onSelect(cta.id)}
-              className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-50 ${
-                active
-                  ? "border-amber-500/55 bg-amber-500/10 text-app-fg"
-                  : "border-zinc-200/90 bg-white text-zinc-700 hover:border-zinc-300 dark:border-white/10 dark:bg-zinc-900/60 dark:text-app-fg-muted dark:hover:border-white/20"
-              }`}
-            >
-              {cta.label}
-              <span className="ml-1 font-normal text-app-fg-subtle">· {typeLabel}</span>
-            </button>
-          );
-        })}
-      </div>
-      <p className="mt-1.5 text-[10px] leading-relaxed text-app-fg-subtle">
-        Caption, script, and on-screen text will adapt to this destination.
-      </p>
-    </div>
-  );
-}
-
 function isLikelyInstagramReelUrl(s: string): boolean {
   const t = s.trim().toLowerCase();
   return (
@@ -284,6 +118,7 @@ export function RecreateReelModal({
   const [selectedCoverTemplateId, setSelectedCoverTemplateId] = useState<string | null>(null);
   const [ctaLibrary, setCtaLibrary] = useState<ClientCta[]>([]);
   const [selectedCtaId, setSelectedCtaId] = useState<string | null>(null);
+  const [carouselSlideCount, setCarouselSlideCount] = useState(6);
   const [templatesLoading, setTemplatesLoading] = useState(false);
   const phaseTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const hasAnalysis = Boolean(reel?.analysis);
@@ -478,6 +313,7 @@ export function RecreateReelModal({
         selected_carousel_template: selectedCarouselTemplate ?? undefined,
         selected_cover_template: selectedCoverTemplate ?? undefined,
         selected_cta: selectedCta ?? undefined,
+        carousel_slide_count: formatChoice === "carousel" ? carouselSlideCount : undefined,
       });
       clearPhaseTimer();
       setPhase(null);
@@ -594,81 +430,21 @@ export function RecreateReelModal({
         {!sessionId ? (
           <>
             <div className="mt-4">
-              <p className="mb-1.5 block text-xs font-semibold text-app-fg">How should we recreate it?</p>
-              <div className="grid grid-cols-2 gap-1.5" role="radiogroup" aria-label="Recreation mode">
-                {([
-                  {
-                    key: "one_to_one" as const,
-                    label: "1:1 copy",
-                    hint: "Copy the original on-screen text exactly, just translated. Skips angle selection.",
-                  },
-                  {
-                    key: "adapt" as const,
-                    label: "Adapt",
-                    hint: "Rework the idea into new angles for your client. You'll pick an angle next.",
-                  },
-                ]).map(({ key, label, hint }) => {
-                  const active = recreateMode === key;
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      role="radio"
-                      aria-checked={active}
-                      title={hint}
-                      disabled={busy}
-                      onClick={() => setRecreateMode(key)}
-                      className={`rounded-lg border px-2.5 py-2 text-left text-[11px] font-semibold transition-colors disabled:opacity-50 ${
-                        active
-                          ? "border-amber-500/55 bg-amber-500/10 text-app-fg"
-                          : "border-zinc-200/90 bg-white text-zinc-700 hover:border-zinc-300 dark:border-white/10 dark:bg-zinc-900/60 dark:text-app-fg-muted dark:hover:border-white/20"
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
-              </div>
-              <p className="mt-1.5 text-[10px] leading-relaxed text-app-fg-subtle">
-                {recreateMode === "one_to_one"
-                  ? "Faithful recreation: the same on-screen text as the original, translated to your client's language. No angle questions."
-                  : "Reframe the source idea into angle options tailored to your client."}
-              </p>
+              <RecreationModePicker value={recreateMode} onChange={setRecreateMode} />
             </div>
 
             <div className="mt-4">
-              <p className="mb-1.5 block text-xs font-semibold text-app-fg">
-                Recreate as <span className="font-normal text-app-fg-muted">(required)</span>
-              </p>
-              <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Target format">
-                {RECREATE_FORMAT_OPTIONS.map(({ key, label, hint }) => {
-                  const active = formatChoice === key;
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      role="radio"
-                      aria-checked={active}
-                      title={hint}
-                      disabled={busy}
-                      onClick={() => setFormatChoice(key)}
-                      className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-50 ${
-                        active
-                          ? "border-amber-500/55 bg-amber-500/10 text-app-fg"
-                          : "border-zinc-200/90 bg-white text-zinc-700 hover:border-zinc-300 dark:border-white/10 dark:bg-zinc-900/60 dark:text-app-fg-muted dark:hover:border-white/20"
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
-              </div>
-              <p className="mt-1.5 text-[10px] leading-relaxed text-app-fg-subtle">
-                {formatChoice
-                  ? "We keep the source reel's idea and payoff, but rewrite beats and on-screen text for the format you chose."
-                  : "Choose the type of post you want — text-on-video, talking head, or carousel."}
-              </p>
+              <RecreateFormatPicker
+                value={formatChoice}
+                onChange={(key) => setFormatChoice(key)}
+              />
             </div>
+
+            {formatChoice === "carousel" ? (
+              <div className="mt-4">
+                <CarouselSlideCountPicker value={carouselSlideCount} onChange={setCarouselSlideCount} />
+              </div>
+            ) : null}
 
             {templatesLoading ? (
               <div className="mt-4 flex items-center gap-2 rounded-xl border border-zinc-200/80 bg-white/70 px-3 py-3 text-[11px] text-app-fg-muted dark:border-white/10 dark:bg-zinc-900/50">
@@ -677,63 +453,45 @@ export function RecreateReelModal({
               </div>
             ) : formatChoice === "carousel" ? (
               carouselTemplates.length > 0 ? (
-                <CarouselTemplatePicker
-                  templates={carouselTemplates}
-                  selectedId={selectedCarouselTemplateId}
-                  onSelect={setSelectedCarouselTemplateId}
-                  disabled={busy || templatesLoading}
-                />
+                <div className="mt-4">
+                  <CarouselTemplatePicker
+                    templates={carouselTemplates}
+                    selectedId={selectedCarouselTemplateId}
+                    onSelect={setSelectedCarouselTemplateId}
+                  />
+                </div>
               ) : (
-                <div className="mt-4 rounded-xl border border-dashed border-zinc-200/90 bg-white/60 p-3 text-[11px] leading-relaxed text-app-fg-muted dark:border-white/10 dark:bg-zinc-900/50">
-                  No carousel styles configured yet.{" "}
-                  <Link
-                    href="/settings#content-defaults"
-                    className="font-semibold text-amber-700 hover:underline dark:text-amber-400"
-                  >
-                    Add in Settings
-                  </Link>{" "}
-                  to reuse a slide structure from example images.
+                <div className="mt-4">
+                  <CarouselTemplatePickerEmpty />
                 </div>
               )
             ) : formatChoice ? (
               coverTemplates.length > 0 ? (
-                <CoverTemplatePicker
-                  templates={coverTemplates}
-                  selectedId={selectedCoverTemplateId}
-                  onSelect={setSelectedCoverTemplateId}
-                  disabled={busy || templatesLoading}
-                />
+                <div className="mt-4">
+                  <CoverTemplatePicker
+                    templates={coverTemplates}
+                    selectedId={selectedCoverTemplateId}
+                    onSelect={setSelectedCoverTemplateId}
+                  />
+                </div>
               ) : (
-                <div className="mt-4 rounded-xl border border-dashed border-zinc-200/90 bg-white/60 p-3 text-[11px] leading-relaxed text-app-fg-muted dark:border-white/10 dark:bg-zinc-900/50">
-                  No cover styles configured yet.{" "}
-                  <Link
-                    href="/settings#content-defaults"
-                    className="font-semibold text-amber-700 hover:underline dark:text-amber-400"
-                  >
-                    Add in Settings
-                  </Link>{" "}
-                  to start covers from a saved example.
+                <div className="mt-4">
+                  <CoverTemplatePickerEmpty />
                 </div>
               )
             ) : null}
 
             {ctaLibrary.length > 0 ? (
-              <NextStepPicker
-                library={ctaLibrary}
-                selectedId={selectedCtaId}
-                onSelect={setSelectedCtaId}
-                disabled={busy || templatesLoading}
-              />
+              <div className="mt-4">
+                <CtaPicker
+                  library={ctaLibrary}
+                  selectedId={selectedCtaId}
+                  onSelect={setSelectedCtaId}
+                />
+              </div>
             ) : (
-              <div className="mt-4 rounded-xl border border-dashed border-zinc-200/90 bg-white/60 p-3 text-[11px] leading-relaxed text-app-fg-muted dark:border-white/10 dark:bg-zinc-900/50">
-                No next steps configured yet.{" "}
-                <Link
-                  href="/settings#content-defaults"
-                  className="font-semibold text-amber-700 hover:underline dark:text-amber-400"
-                >
-                  Add in Settings
-                </Link>{" "}
-                so adapted posts know where to send viewers.
+              <div className="mt-4">
+                <CtaPickerEmpty />
               </div>
             )}
 

@@ -33,7 +33,7 @@ export const studioNav: NavItem[] = [
   { href: "/media", label: "Media", icon: FolderOpen },
   { href: "/context", label: "Context", icon: Database },
   { href: "/settings", label: "Settings", icon: Settings },
-  { href: "/scheduling", label: "Scheduling", icon: Calendar, comingSoon: true },
+  { href: "/scheduling", label: "How to post", icon: Calendar },
 ];
 
 /** @deprecated Prefer `primaryNav` + `studioNav`. Kept for any legacy imports. */

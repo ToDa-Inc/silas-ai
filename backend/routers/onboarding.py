@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -42,6 +43,62 @@ class PipelineStartOut(BaseModel):
     already_running: bool = False
 
 
+_PIPELINE_TERMINAL_PHASES = {"complete", "failed"}
+
+
+def _reconcile_stuck_pipeline(supabase: Client, client_id: str, row: Dict[str, Any]) -> Dict[str, Any]:
+    """Self-heal ``pipeline_progress`` if the underlying job died without updating it.
+
+    A job can fail outside of its own try/except (e.g. a worker picks it up but
+    doesn't recognize the job type, or the job row is abandoned/stale) and never
+    calls back into ``update_onboarding_state``. When that happens the client
+    stays stuck showing "queued"/"in progress" forever even though nothing is
+    running anymore. We check the referenced job row on every status poll and
+    patch the state to "failed" (with a real error message + retry path) if
+    it's actually dead.
+    """
+    pp = row.get("pipeline_progress") or {}
+    phase = pp.get("phase")
+    job_id = (row.get("job_ids") or {}).get("pipeline")
+    if not phase or phase in _PIPELINE_TERMINAL_PHASES or not job_id:
+        return row
+    try:
+        res = (
+            supabase.table("background_jobs")
+            .select("status,error_message,created_at")
+            .eq("id", job_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception:
+        return row
+    jobs = res.data or []
+    if not jobs:
+        return row
+    job = jobs[0]
+    job_status = job.get("status")
+    is_dead = job_status == "failed"
+    if not is_dead and job_status == "queued":
+        # Never claimed by any worker after a while -> treat as dead so the
+        # user gets a retry button instead of an infinite spinner.
+        created_at = job.get("created_at")
+        if created_at:
+            try:
+                created = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+                is_dead = (datetime.now(timezone.utc) - created) > timedelta(minutes=5)
+            except ValueError:
+                is_dead = False
+    if not is_dead:
+        return row
+    err = job.get("error_message") or "Discovery job stopped unexpectedly."
+    return update_onboarding_state(
+        supabase,
+        client_id,
+        pipeline_progress={"phase": "failed", "error": err[:2000]},
+        last_error=err[:2000],
+    )
+
+
 @router.get("/{slug}/onboarding/status", response_model=OnboardingStatusOut)
 def onboarding_status(
     slug: str,
@@ -50,6 +107,7 @@ def onboarding_status(
 ) -> Dict[str, Any]:
     _ = slug
     row = ensure_onboarding_state(supabase, client_id)
+    row = _reconcile_stuck_pipeline(supabase, client_id, row)
     return row
 
 
@@ -127,6 +185,51 @@ def start_onboarding_pipeline(
     return {"job_id": jid, "already_running": False}
 
 
+@router.post("/{slug}/onboarding/ig-prefill/start", response_model=PipelineStartOut)
+def start_onboarding_ig_prefill(
+    slug: str,
+    org_id: Annotated[str, Depends(require_org_access)],
+    client_id: Annotated[str, Depends(resolve_client_id)],
+    supabase: Annotated[Client, Depends(get_supabase)],
+) -> Dict[str, Any]:
+    """Best-effort: quick IG read to draft quiz/source answers ahead of those steps."""
+    _ = slug
+    fail_abandoned_queued_jobs(supabase, client_id=client_id, job_type="onboarding_ig_prefill")
+    if has_active_job(supabase, client_id=client_id, job_type="onboarding_ig_prefill"):
+        res = (
+            supabase.table("background_jobs")
+            .select("id")
+            .eq("client_id", client_id)
+            .eq("job_type", "onboarding_ig_prefill")
+            .in_("status", ["queued", "running"])
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if res.data:
+            return {"job_id": str(res.data[0]["id"]), "already_running": True}
+
+    jid = generate_job_id()
+    supabase.table("background_jobs").insert(
+        {
+            "id": jid,
+            "org_id": org_id,
+            "client_id": client_id,
+            "job_type": "onboarding_ig_prefill",
+            "payload": {},
+            "status": "queued",
+            "priority": 40,
+        }
+    ).execute()
+    update_onboarding_state(
+        supabase,
+        client_id,
+        ig_prefill_patch={"status": "pending"},
+        job_ids_patch={"ig_prefill": jid},
+    )
+    return {"job_id": jid, "already_running": False}
+
+
 @router.get("/{slug}/onboarding/reel-candidates", response_model=List[ReelCandidateOut])
 def reel_candidates(
     slug: str,
@@ -177,7 +280,7 @@ def start_first_content(
 
     reel_res = (
         supabase.table("scraped_reels")
-        .select("id, post_url, shortcode")
+        .select("id, post_url")
         .eq("client_id", client_id)
         .eq("id", body.scraped_reel_id)
         .limit(1)

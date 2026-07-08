@@ -1,7 +1,9 @@
 "use client";
 
+import type { ReactNode } from "react";
 import Link from "next/link";
-import { ArrowRight, RotateCcw } from "lucide-react";
+import { useState } from "react";
+import { ArrowRight, Loader2, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/cn";
 import {
   ONBOARDING_BYPASS_RESUME_HREF,
@@ -9,7 +11,10 @@ import {
 } from "@/lib/onboarding-bypass";
 
 const btnClass =
-  "inline-flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-[11px] font-bold transition";
+  "inline-flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-[11px] font-bold transition disabled:cursor-wait disabled:opacity-80";
+
+const skipLinkClass =
+  "inline-flex items-center gap-1 text-[11px] font-medium text-zinc-500 underline-offset-2 transition hover:text-zinc-300 hover:underline disabled:cursor-wait disabled:opacity-60";
 
 const ghostClass = cn(
   btnClass,
@@ -21,6 +26,42 @@ const amberClass = cn(
   "border-amber-400/35 bg-amber-400/10 text-amber-100 hover:bg-amber-400/20",
 );
 
+function BypassActionButton({
+  href,
+  className,
+  children,
+  pendingLabel,
+}: {
+  href: string;
+  className: string;
+  children: ReactNode;
+  pendingLabel: string;
+}) {
+  const [pending, setPending] = useState(false);
+
+  return (
+    <button
+      type="button"
+      className={className}
+      disabled={pending}
+      aria-busy={pending}
+      onClick={() => {
+        setPending(true);
+        window.location.assign(href);
+      }}
+    >
+      {pending ? (
+        <>
+          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+          {pendingLabel}
+        </>
+      ) : (
+        children
+      )}
+    </button>
+  );
+}
+
 /** Shown in onboarding header — skip gate and open the app. */
 export function OnboardingSkipToStudioButton({ bypassActive }: { bypassActive?: boolean }) {
   if (bypassActive) {
@@ -30,19 +71,18 @@ export function OnboardingSkipToStudioButton({ bypassActive }: { bypassActive?: 
           Open studio
           <ArrowRight className="h-3.5 w-3.5" aria-hidden />
         </Link>
-        <Link href={ONBOARDING_BYPASS_RESUME_HREF} className={amberClass}>
+        <BypassActionButton href={ONBOARDING_BYPASS_RESUME_HREF} className={amberClass} pendingLabel="Resuming…">
           <RotateCcw className="h-3.5 w-3.5" aria-hidden />
           Resume setup
-        </Link>
+        </BypassActionButton>
       </div>
     );
   }
 
   return (
-    <Link href={ONBOARDING_BYPASS_SKIP_HREF} className={ghostClass}>
+    <BypassActionButton href={ONBOARDING_BYPASS_SKIP_HREF} className={skipLinkClass} pendingLabel="Opening studio…">
       Skip setup
-      <ArrowRight className="h-3.5 w-3.5" aria-hidden />
-    </Link>
+    </BypassActionButton>
   );
 }
 
@@ -60,13 +100,14 @@ export function OnboardingBypassBanner({ active }: BannerProps) {
       <span className="hidden text-amber-900/70 sm:inline dark:text-amber-200/70">
         — you can return to onboarding anytime
       </span>
-      <Link
+      <BypassActionButton
         href={ONBOARDING_BYPASS_RESUME_HREF}
         className="inline-flex items-center gap-1 rounded-lg border border-amber-500/40 bg-amber-500/15 px-2.5 py-1 text-[11px] font-bold text-amber-950 hover:bg-amber-500/25 dark:text-amber-50"
+        pendingLabel="Resuming…"
       >
         <RotateCcw className="h-3 w-3" aria-hidden />
         Resume onboarding
-      </Link>
+      </BypassActionButton>
       <Link
         href="/onboarding"
         className="inline-flex items-center gap-1 rounded-lg border border-amber-500/25 bg-white/40 px-2.5 py-1 text-[11px] font-bold text-amber-950 hover:bg-white/60 dark:bg-white/10 dark:text-amber-50 dark:hover:bg-white/15"

@@ -11,6 +11,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  Legend,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -20,6 +21,8 @@ import {
 } from "recharts";
 import { fetchOwnReelsMetrics } from "@/lib/api-client";
 import type { OwnReelsMetricsSeries } from "@/lib/reel-types";
+import { ChartSkeleton } from "@/components/ui/app-skeleton";
+import { useSideDrawerExpanded } from "@/components/home/side-drawer";
 
 const LINE_COLORS_LIGHT = [
   "#b45309",
@@ -156,24 +159,29 @@ function pickSeries(
   return reels.filter((r) => r.points.some((p) => metricAtPoint(p, m) !== null));
 }
 
+function daysSincePost(postedAt: string | null | undefined, scrapedAt: string): number | null {
+  if (!postedAt) return null;
+  const postMs = new Date(postedAt).getTime();
+  const scrapeMs = new Date(scrapedAt).getTime();
+  if (!Number.isFinite(postMs) || !Number.isFinite(scrapeMs)) return null;
+  return Math.max(0, Math.round((scrapeMs - postMs) / MS_PER_DAY));
+}
+
 /**
- * Merge series onto a shared time axis using “as-of” values: at each snapshot time, each reel shows
- * its latest known metric at or before that time. Keeps lines continuous across staggered syncs
- * (no sparse nulls that fragment strokes in Recharts).
+ * Merge series onto shared "days since post" axis using as-of values at each snapshot.
  */
 function buildMergedRows(
   series: OwnReelsMetricsSeries[],
   m: MetricKey,
 ): { rows: ChartRow[]; dataKeys: string[]; labels: string[] } {
-  const times = new Set<string>();
+  const times = new Set<number>();
   for (const r of series) {
     for (const p of r.points) {
-      times.add(p.scraped_at);
+      const d = daysSincePost(r.posted_at, p.scraped_at);
+      if (d !== null) times.add(d);
     }
   }
-  const sortedT = [...times].sort(
-    (a, b) => new Date(a).getTime() - new Date(b).getTime(),
-  );
+  const sortedT = [...times].sort((a, b) => a - b);
   const dataKeys = series.map((_, i) => `s${i}`);
   const labels = series.map((r) => reelDisplayLabel(r));
 
@@ -183,14 +191,14 @@ function buildMergedRows(
     ),
   );
 
-  const rows: ChartRow[] = sortedT.map((t) => {
-    const short = formatTickDate(t);
-    const row: ChartRow = { t, tShort: short };
-    const tMs = new Date(t).getTime();
+  const rows: ChartRow[] = sortedT.map((day) => {
+    const row: ChartRow = { t: day, tShort: day === 0 ? "Post day" : `Day ${day}` };
     sortedPoints.forEach((points, i) => {
+      const reelPosted = series[i]?.posted_at;
       let last: number | null = null;
       for (const p of points) {
-        if (new Date(p.scraped_at).getTime() > tMs) break;
+        const d = daysSincePost(reelPosted, p.scraped_at);
+        if (d === null || d > day) continue;
         const v = metricAtPoint(p, m);
         if (v !== null) last = v;
       }
@@ -211,30 +219,19 @@ function formatTickDate(iso: string): string {
   }
 }
 
-/** X-axis: include time so same-day syncs don’t collapse; readable on dark backgrounds. */
-function formatXAxisTick(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleString(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    });
-  } catch {
-    return iso;
-  }
+/** X-axis: days since the reel was published. */
+function formatXAxisTick(day: string | number): string {
+  const n = typeof day === "number" ? day : Number(day);
+  if (!Number.isFinite(n)) return String(day);
+  if (n === 0) return "Day 0";
+  if (n % 7 === 0) return `Wk ${n / 7}`;
+  return `D${n}`;
 }
 
-function formatTooltipWhen(iso: string): string {
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short",
-    });
-  } catch {
-    return iso;
-  }
+function formatTooltipWhen(day: string | number): string {
+  const n = typeof day === "number" ? day : Number(day);
+  if (!Number.isFinite(n)) return String(day);
+  return n === 0 ? "Day posted" : `${n} day${n === 1 ? "" : "s"} after posting`;
 }
 
 function formatAxisNumber(n: number): string {
@@ -343,7 +340,7 @@ function ThumbnailTooltip({
   labelStyle,
 }: ThumbTooltipProps) {
   if (!active || !payload?.length) return null;
-  const rowT = (payload[0] as unknown as { payload?: { t?: string } })?.payload?.t;
+  const rowT = (payload[0] as unknown as { payload?: { t?: string | number } })?.payload?.t;
   return (
     <div style={containerStyle}>
       <div style={labelStyle}>{rowT ? formatTooltipWhen(rowT) : ""}</div>
@@ -383,6 +380,7 @@ function ThumbnailTooltip({
 
 export function OwnReelMetricsDashboard({ clientSlug, orgSlug, focusReelId }: Props) {
   const { resolvedTheme } = useTheme();
+  const drawerExpanded = useSideDrawerExpanded();
   const appliedFocusKey = useRef<string | null>(null);
   const [metric, setMetric] = useState<MetricKey>("views");
   const [chartKind, setChartKind] = useState<ChartKind>("line");
@@ -534,7 +532,9 @@ export function OwnReelMetricsDashboard({ clientSlug, orgSlug, focusReelId }: Pr
   const gridColor = isDark ? "rgba(244,244,245,0.1)" : "rgba(24,24,27,0.08)";
   const lineColors = isDark ? LINE_COLORS_DARK : LINE_COLORS_LIGHT;
 
-  const chartMargin = { top: 16, right: 14, left: 4, bottom: 36 } as const;
+  const chartMargin = { top: 16, right: 14, left: 8, bottom: 36 } as const;
+  const chartHeight = drawerExpanded ? 520 : 420;
+  const metricLabel = metric.charAt(0).toUpperCase() + metric.slice(1);
 
   const effectiveRaw = canFetch ? raw : null;
 
@@ -707,6 +707,7 @@ export function OwnReelMetricsDashboard({ clientSlug, orgSlug, focusReelId }: Pr
             {(
               [
                 ["line", "Line"],
+                ["area", "Area"],
                 ["bars", "Bars"],
               ] as const
             ).map(([k, label]) => (
@@ -825,11 +826,11 @@ export function OwnReelMetricsDashboard({ clientSlug, orgSlug, focusReelId }: Pr
       {!canFetch ? (
         <p className="text-sm text-app-fg-muted">Select a workspace client to see metrics.</p>
       ) : loading ? (
-        <div className="flex h-[420px] items-center justify-center text-sm text-app-fg-muted">
-          Loading metrics…
-        </div>
+        <ChartSkeleton className="h-[420px]" />
       ) : err ? (
-        <p className="text-sm text-app-callout-warning-fg">{err}</p>
+        <p className="text-sm text-red-500 dark:text-red-400" role="alert">
+          {err}
+        </p>
       ) : !effectiveRaw?.length ? (
         <div className="space-y-2 py-12 text-center">
           <p className="text-sm font-medium text-app-fg">
@@ -1016,7 +1017,7 @@ export function OwnReelMetricsDashboard({ clientSlug, orgSlug, focusReelId }: Pr
             hidden={hiddenReelIds}
             onToggle={toggleReelVisibility}
           />
-          <div className="h-[420px] w-full min-w-0">
+          <div style={{ height: chartHeight }} className="w-full min-w-0">
             <ResponsiveContainer width="100%" height="100%">
               {chartKind === "line" ? (
                 <LineChart data={rows} margin={chartMargin}>
@@ -1030,6 +1031,13 @@ export function OwnReelMetricsDashboard({ clientSlug, orgSlug, focusReelId }: Pr
                     axisLine={{ stroke: axisLineStroke }}
                     height={48}
                     interval="preserveStartEnd"
+                    label={{
+                      value: "Days since posted",
+                      position: "insideBottom",
+                      offset: -4,
+                      fill: tickFill,
+                      fontSize: 10,
+                    }}
                   />
                   <YAxis
                     tick={{ fill: tickFill, fontSize: 11 }}
@@ -1037,11 +1045,17 @@ export function OwnReelMetricsDashboard({ clientSlug, orgSlug, focusReelId }: Pr
                     axisLine={{ stroke: axisLineStroke }}
                     tickFormatter={formatAxisNumber}
                     width={56}
+                    label={{
+                      value: metricLabel,
+                      angle: -90,
+                      position: "insideLeft",
+                      fill: tickFill,
+                      fontSize: 10,
+                    }}
                     {...yAxisScaleProps}
                   />
                   <Tooltip
                     wrapperStyle={{ pointerEvents: "auto" }}
-                    position={{ x: 72, y: 10 }}
                     content={
                       <ThumbnailTooltip
                         series={series}
@@ -1052,6 +1066,13 @@ export function OwnReelMetricsDashboard({ clientSlug, orgSlug, focusReelId }: Pr
                         labelStyle={tooltipLabelStyle}
                       />
                     }
+                  />
+                  <Legend
+                    formatter={(value) => {
+                      const idx = dataKeys.indexOf(String(value));
+                      return idx >= 0 ? labels[idx] : String(value);
+                    }}
+                    wrapperStyle={{ fontSize: 10, paddingTop: 8 }}
                   />
                   {dataKeys.map((key, i) => {
                     const c = lineColors[i % lineColors.length];
@@ -1107,6 +1128,13 @@ export function OwnReelMetricsDashboard({ clientSlug, orgSlug, focusReelId }: Pr
                     axisLine={{ stroke: axisLineStroke }}
                     height={48}
                     interval="preserveStartEnd"
+                    label={{
+                      value: "Days since posted",
+                      position: "insideBottom",
+                      offset: -4,
+                      fill: tickFill,
+                      fontSize: 10,
+                    }}
                   />
                   <YAxis
                     tick={{ fill: tickFill, fontSize: 11 }}
@@ -1114,11 +1142,17 @@ export function OwnReelMetricsDashboard({ clientSlug, orgSlug, focusReelId }: Pr
                     axisLine={{ stroke: axisLineStroke }}
                     tickFormatter={formatAxisNumber}
                     width={56}
+                    label={{
+                      value: metricLabel,
+                      angle: -90,
+                      position: "insideLeft",
+                      fill: tickFill,
+                      fontSize: 10,
+                    }}
                     {...yAxisScaleProps}
                   />
                   <Tooltip
                     wrapperStyle={{ pointerEvents: "auto" }}
-                    position={{ x: 72, y: 10 }}
                     content={
                       <ThumbnailTooltip
                         series={series}
@@ -1129,6 +1163,13 @@ export function OwnReelMetricsDashboard({ clientSlug, orgSlug, focusReelId }: Pr
                         labelStyle={tooltipLabelStyle}
                       />
                     }
+                  />
+                  <Legend
+                    formatter={(value) => {
+                      const idx = dataKeys.indexOf(String(value));
+                      return idx >= 0 ? labels[idx] : String(value);
+                    }}
+                    wrapperStyle={{ fontSize: 10, paddingTop: 8 }}
                   />
                   {dataKeys.map((key, i) => {
                     const isHidden = hiddenReelIds.has(series[i]?.reel_id ?? "");

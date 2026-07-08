@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useMemo, useState } from "react";
 import { Copy, Download, X } from "lucide-react";
+import { InstagramPostChecklist } from "@/components/instagram-post-checklist";
 
 /**
  * Reusable "this is the finished post" preview.
@@ -177,6 +178,16 @@ export function PostPreviewModal({
                   ))}
                 </div>
               </div>
+            ) : null}
+
+            {videoUrl ? (
+              <InstagramPostChecklist
+                compact
+                videoUrl={videoUrl}
+                onCopyCaption={() => void onCopy()}
+                captionPreview={fullCaption || null}
+                className="mt-2"
+              />
             ) : null}
           </div>
         </div>

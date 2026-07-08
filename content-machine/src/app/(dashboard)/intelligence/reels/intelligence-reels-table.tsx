@@ -1435,7 +1435,14 @@ export function IntelligenceReelsTable({
           </span>
         ) : null}
         {bulkMsg ? (
-          <p className="text-xs text-zinc-600 dark:text-app-fg-muted" role="status">
+          <p
+            className={
+              /fail|error|couldn't|missing/i.test(bulkMsg)
+                ? "text-xs text-red-500 dark:text-red-400"
+                : "text-xs text-app-fg-muted"
+            }
+            role={/fail|error|couldn't|missing/i.test(bulkMsg) ? "alert" : "status"}
+          >
             {bulkMsg}
           </p>
         ) : null}

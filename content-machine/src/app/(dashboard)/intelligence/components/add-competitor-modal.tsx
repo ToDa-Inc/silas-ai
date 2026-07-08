@@ -269,7 +269,7 @@ export function AddCompetitorModal({
         </div>
 
         {error ? (
-          <p className="mt-3 text-xs text-amber-800 dark:text-amber-200/90" role="alert">
+          <p className="mt-3 text-xs text-red-500 dark:text-red-400" role="alert">
             {error}
           </p>
         ) : null}

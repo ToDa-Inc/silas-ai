@@ -172,6 +172,18 @@ class Settings(BaseSettings):
         description="Bounded per-job worker count for similarity scoring calls.",
     )
 
+    worker_concurrency: int = Field(
+        default=4,
+        ge=1,
+        le=16,
+        validation_alias=AliasChoices("WORKER_CONCURRENCY"),
+        description=(
+            "Max background_jobs processed concurrently by one worker process. Must be >1 "
+            "so orchestration jobs (e.g. onboarding_pipeline) that block on wait_for_jobs() "
+            "for their own enqueued sub-jobs don't deadlock a single-worker deployment."
+        ),
+    )
+
     openrouter_reel_analyze_model: str = Field(
         default="google/gemini-3-flash-preview",
         description="OpenRouter model id for single-reel MP4 analysis.",

@@ -21,6 +21,8 @@ type Props = {
   className?: string;
   /** Show expand / collapse control in the header. */
   expandable?: boolean;
+  /** Start in expanded (full-width) mode — used for analytics charts. */
+  defaultExpanded?: boolean;
 };
 
 export function SideDrawer({
@@ -30,9 +32,14 @@ export function SideDrawer({
   children,
   className,
   expandable = true,
+  defaultExpanded = false,
 }: Props) {
   const reducedMotion = usePrefersReducedMotion();
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(defaultExpanded);
+
+  useEffect(() => {
+    if (open && defaultExpanded) setExpanded(true);
+  }, [open, defaultExpanded]);
 
   useEffect(() => {
     if (!open) setExpanded(false);

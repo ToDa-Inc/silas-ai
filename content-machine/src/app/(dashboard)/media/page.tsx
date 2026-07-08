@@ -23,7 +23,7 @@ import {
   clientImagesDelete,
   clientImagesList,
   contentApiFetch,
-  creationListSessions,
+  generationListSessions,
   type BrollClipRow,
   type ClientImageRow,
   type GenerationSession,
@@ -139,7 +139,7 @@ function MediaPageInner() {
       setOrgSlug(os);
       if (cs && os) {
         const [sRes, bRes, iRes] = await Promise.all([
-          creationListSessions(cs, os, 200),
+          generationListSessions(cs, os, 200),
           brollList(cs, os),
           clientImagesList(cs, os),
         ]);
@@ -383,7 +383,7 @@ function MediaPageInner() {
                       go from "browsing finished posts" → "edit / re-publish this one" without
                       having to copy the session ID by hand. */}
                   <Link
-                    href={generateSessionHref(s.id)}
+                    href={generateSessionHref(s.id, "media")}
                     title="Open session"
                     className="group relative block overflow-hidden rounded-xl bg-black"
                     style={{ aspectRatio: "9/16" }}
@@ -437,7 +437,7 @@ function MediaPageInner() {
                     </a>
                   </div>
                   <PendingLink
-                    href={generateSessionHref(s.id)}
+                    href={generateSessionHref(s.id, "media")}
                     className="text-center text-[11px] font-semibold text-sky-500 hover:underline dark:text-sky-400"
                     pendingLabel="Opening session"
                   >
@@ -459,7 +459,7 @@ function MediaPageInner() {
                 <div key={s.id} className="glass flex flex-col gap-2 rounded-2xl p-3">
                   {/* Cover thumbnail clicks back to the source session, same as Renders. */}
                   <Link
-                    href={generateSessionHref(s.id)}
+                    href={generateSessionHref(s.id, "media")}
                     title="Open session"
                     className="group relative block overflow-hidden rounded-xl border border-app-divider"
                     style={{ aspectRatio: "9/16" }}
@@ -504,7 +504,7 @@ function MediaPageInner() {
                     </a>
                   </div>
                   <PendingLink
-                    href={generateSessionHref(s.id)}
+                    href={generateSessionHref(s.id, "media")}
                     className="text-center text-[11px] font-semibold text-sky-500 hover:underline dark:text-sky-400"
                     pendingLabel="Opening session"
                   >
