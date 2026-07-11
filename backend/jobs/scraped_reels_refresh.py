@@ -15,9 +15,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from core.config import Settings
+from core.errors import MissingCredentialsError
 from core.database import get_supabase_for_settings
 from services.apify import enrich_reel_urls_direct
 from services.instagram_post_url import canonical_instagram_post_url
+from services.reel_thumbnail_refresh import (
+    load_priority_refresh_rows,
+    merge_priority_into_refresh_pool,
+)
 from services.reel_thumbnail_url import reel_thumbnail_url_from_apify_item
 
 DEFAULT_MAX_AGE_DAYS = 14
@@ -112,7 +117,7 @@ def select_refresh_candidates(
 
 def run_scraped_reels_refresh(settings: Settings, job: Dict[str, Any]) -> None:
     if not settings.apify_api_token:
-        raise RuntimeError("APIFY_API_TOKEN required")
+        raise MissingCredentialsError("APIFY_API_TOKEN required")
 
     supabase = get_supabase_for_settings(settings)
     job_id = job["id"]
@@ -151,6 +156,10 @@ def run_scraped_reels_refresh(settings: Settings, job: Dict[str, Any]) -> None:
     pool = _fetch_reels_in_age_window(
         supabase, client_id=client_id, cutoff=cutoff, fetch_limit=fetch_limit
     )
+    if client_id:
+        pool = merge_priority_into_refresh_pool(
+            load_priority_refresh_rows(supabase, client_id), pool
+        )
     rows, skipped_recent = select_refresh_candidates(
         pool,
         now_utc=now_utc,

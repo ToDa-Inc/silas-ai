@@ -7,7 +7,7 @@ import logging
 import re
 from typing import Any, Dict, List, Literal, Optional, Sequence
 
-from core.config import Settings
+from core.config import Settings, generation_llm_model
 from services.client_dna_compile import _context_texts_only
 from services.format_classifier import canonicalize_stored_format_key
 from services.openrouter import chat_json_completion, chat_text_completion
@@ -191,7 +191,7 @@ def _apply_german_natural_polish(
                 )
                 polished = chat_text_completion(
                     settings.openrouter_api_key,
-                    settings.openrouter_model,
+                    generation_llm_model(settings),
                     system=_GERMANIZER_SCRIPT_SYSTEM,
                     user=user,
                     max_tokens=12_288,
@@ -219,7 +219,7 @@ def _apply_german_natural_polish(
                 )
                 polished = chat_text_completion(
                     settings.openrouter_api_key,
-                    settings.openrouter_model,
+                    generation_llm_model(settings),
                     system=_GERMANIZER_CAPTION_TEXT_SYSTEM,
                     user=user,
                     max_tokens=4096,
@@ -251,7 +251,7 @@ def _apply_german_natural_polish(
             )
             data = chat_json_completion(
                 settings.openrouter_api_key,
-                settings.openrouter_model,
+                generation_llm_model(settings),
                 system=_GERMANIZER_JSON_SYSTEM,
                 user=user,
                 max_tokens=2048,
@@ -292,7 +292,7 @@ def _apply_german_natural_polish(
             )
             data = chat_json_completion(
                 settings.openrouter_api_key,
-                settings.openrouter_model,
+                generation_llm_model(settings),
                 system=_GERMANIZER_JSON_SYSTEM,
                 user=user,
                 max_tokens=4096,
@@ -758,7 +758,7 @@ def run_pattern_synthesis(
 
     return chat_json_completion(
         settings.openrouter_api_key,
-        settings.openrouter_model,
+        generation_llm_model(settings),
         system=_SYSTEM_JSON,
         user=user,
         max_tokens=8192,
@@ -827,7 +827,7 @@ def run_angle_generation(
 
     data = chat_json_completion(
         settings.openrouter_api_key,
-        settings.openrouter_model,
+        generation_llm_model(settings),
         system=_SYSTEM_JSON,
         user=user,
         max_tokens=8192,
@@ -1529,7 +1529,7 @@ def run_cover_text_options(
     )
     data = chat_json_completion(
         settings.openrouter_api_key,
-        settings.openrouter_model,
+        generation_llm_model(settings),
         system=_SYSTEM_COVER_JSON,
         user=user,
         max_tokens=1024,
@@ -1547,7 +1547,7 @@ def run_cover_text_options(
     try:
         retry_data = chat_json_completion(
             settings.openrouter_api_key,
-            settings.openrouter_model,
+            generation_llm_model(settings),
             system=_SYSTEM_COVER_JSON,
             user=retry_user,
             max_tokens=1024,
@@ -1629,7 +1629,7 @@ def run_carousel_copy_package(
     )
     data = chat_json_completion(
         settings.openrouter_api_key,
-        settings.openrouter_model,
+        generation_llm_model(settings),
         system=_SYSTEM_JSON,
         user=user,
         max_tokens=8192,
@@ -1835,7 +1835,7 @@ def run_content_package(
 
     data = chat_json_completion(
         settings.openrouter_api_key,
-        settings.openrouter_model,
+        generation_llm_model(settings),
         system=_SYSTEM_JSON,
         user=user,
         max_tokens=12_288,
@@ -1946,7 +1946,7 @@ def _run_regenerate_carousel_hooks_narrow(
     )
     data = chat_json_completion(
         settings.openrouter_api_key,
-        settings.openrouter_model,
+        generation_llm_model(settings),
         system=_SYSTEM_JSON,
         user=user,
         max_tokens=4096,
@@ -1993,7 +1993,7 @@ def _run_regenerate_reel_hooks_narrow(
     )
     data = chat_json_completion(
         settings.openrouter_api_key,
-        settings.openrouter_model,
+        generation_llm_model(settings),
         system=_SYSTEM_JSON,
         user=user,
         max_tokens=4096,
@@ -2043,7 +2043,7 @@ def _run_regenerate_carousel_caption_narrow(
     )
     data = chat_json_completion(
         settings.openrouter_api_key,
-        settings.openrouter_model,
+        generation_llm_model(settings),
         system=_SYSTEM_JSON,
         user=user,
         max_tokens=8192,
@@ -2113,7 +2113,7 @@ def _run_regenerate_reel_caption_narrow(
     )
     data = chat_json_completion(
         settings.openrouter_api_key,
-        settings.openrouter_model,
+        generation_llm_model(settings),
         system=_SYSTEM_JSON,
         user=user,
         max_tokens=8192,
@@ -2214,7 +2214,7 @@ def _run_regenerate_script_narrow(
     )
     data = chat_json_completion(
         settings.openrouter_api_key,
-        settings.openrouter_model,
+        generation_llm_model(settings),
         system=_SYSTEM_JSON,
         user=user,
         max_tokens=12_288,
@@ -2325,7 +2325,7 @@ def _run_regenerate_text_blocks_narrow(
     )
     data = chat_json_completion(
         settings.openrouter_api_key,
-        settings.openrouter_model,
+        generation_llm_model(settings),
         system=_SYSTEM_JSON,
         user=user,
         max_tokens=8192,
@@ -2589,7 +2589,7 @@ def run_adaptation_synthesis(
     )
     return chat_json_completion(
         settings.openrouter_api_key,
-        settings.openrouter_model,
+        generation_llm_model(settings),
         system=_SYSTEM_JSON,
         user=user,
         max_tokens=8192,
@@ -2629,7 +2629,7 @@ def run_script_adaptation_synthesis(
     )
     return chat_json_completion(
         settings.openrouter_api_key,
-        settings.openrouter_model,
+        generation_llm_model(settings),
         system=_SYSTEM_JSON,
         user=user,
         max_tokens=8192,
@@ -2658,7 +2658,7 @@ def run_format_recommendation(
     )
     data = chat_json_completion(
         settings.openrouter_api_key,
-        settings.openrouter_model,
+        generation_llm_model(settings),
         system=_SYSTEM_JSON,
         user=user,
         max_tokens=4096,
@@ -2705,7 +2705,7 @@ def run_auto_video_idea(
     )
     data = chat_json_completion(
         settings.openrouter_api_key,
-        settings.openrouter_model,
+        generation_llm_model(settings),
         system=_SYSTEM_JSON,
         user=user,
         max_tokens=4096,
@@ -2850,7 +2850,7 @@ def run_carousel_slide_texts(
     )
     data = chat_json_completion(
         settings.openrouter_api_key,
-        settings.openrouter_model,
+        generation_llm_model(settings),
         system=_SYSTEM_JSON,
         user=user,
         max_tokens=2048,

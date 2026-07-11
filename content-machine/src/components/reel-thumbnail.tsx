@@ -24,6 +24,8 @@ type Props = {
   /** Instagram / CDN URL from `thumbnail_url` (Apify `displayUrl` / `thumbnailUrl`). */
   src: string | null | undefined;
   alt?: string;
+  /** Shown when thumbnail is missing or proxy/CDN fails (e.g. `@username`). */
+  fallbackLabel?: string | null;
   /** When set, the whole thumb is a link (e.g. `post_url`). */
   href?: string | null;
   size?: Size;
@@ -37,23 +39,31 @@ const dim: Record<Size, string> = {
   lg: "h-40 w-[90px] rounded-xl",
 };
 
-export function ReelThumbnail({ src, alt = "Reel thumbnail", href, size = "md", className }: Props) {
+export function ReelThumbnail({
+  src,
+  alt = "Reel thumbnail",
+  fallbackLabel,
+  href,
+  size = "md",
+  className,
+}: Props) {
   /** Which `url` last fired onError — avoids an effect when the thumbnail URL changes. */
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
 
   const url = src?.trim() ?? "";
   const imgBroken = failedUrl === url && url.length > 0;
+  const label = fallbackLabel?.trim() || (size === "sm" ? "—" : "Reel");
 
   const empty = (
     <div
       className={cn(
-        "flex shrink-0 items-center justify-center bg-zinc-800 font-medium text-app-fg-faint",
+        "flex shrink-0 flex-col items-center justify-center bg-gradient-to-br from-zinc-800 via-zinc-900 to-zinc-950 font-medium text-app-fg-faint",
         dim[size],
         size === "sm" ? "text-[8px]" : "text-[10px]",
         className,
       )}
     >
-      {size === "sm" ? "—" : "Reel"}
+      <span className="max-w-full truncate px-1 text-center leading-tight">{label}</span>
     </div>
   );
 

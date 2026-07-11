@@ -1,4 +1,7 @@
+"use client";
+
 import { Eye, Film, Heart, TrendingDown, TrendingUp } from "lucide-react";
+import { useTranslations } from "next-intl";
 import type { IntelligenceStatsRow } from "@/lib/api";
 import { cn } from "@/lib/cn";
 
@@ -9,20 +12,19 @@ function formatInt(n: number | null | undefined): string {
   return n.toLocaleString();
 }
 
-function formatTrendPct(pct: number | null | undefined): string | null {
-  if (pct === null || pct === undefined || !Number.isFinite(pct)) return null;
-  const sign = pct > 0 ? "+" : "";
-  return `${sign}${pct.toFixed(1)}% vs last week`;
-}
-
 type Props = {
   stats: IntelligenceStatsRow | null;
   className?: string;
 };
 
 export function DashboardKpiStrip({ stats, className }: Props) {
-  const trend = formatTrendPct(stats?.avg_views_change_vs_prior_week_pct ?? null);
-  const trendUp = (stats?.avg_views_change_vs_prior_week_pct ?? 0) >= 0;
+  const t = useTranslations("dashboard");
+  const pct = stats?.avg_views_change_vs_prior_week_pct ?? null;
+  const trendUp = (pct ?? 0) >= 0;
+  const trend =
+    pct !== null && pct !== undefined && Number.isFinite(pct)
+      ? t("vsLastWeek", { pct: `${pct > 0 ? "+" : ""}${pct.toFixed(1)}` })
+      : null;
 
   return (
     <div className={cn("grid grid-cols-1 gap-4 sm:grid-cols-3", className)}>
@@ -31,12 +33,12 @@ export function DashboardKpiStrip({ stats, className }: Props) {
         <div className="relative flex items-start justify-between gap-3">
           <div className="space-y-1">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-app-fg-subtle">
-              Your reels stored
+              {t("reelsStored")}
             </p>
             <p className="text-2xl font-bold tabular-nums tracking-tight text-app-fg">
               {stats ? stats.total_own_reels.toLocaleString() : "—"}
             </p>
-            <p className="text-[11px] text-app-fg-muted">From your Instagram account</p>
+            <p className="text-[11px] text-app-fg-muted">{t("fromInstagram")}</p>
           </div>
           <div className="rounded-xl bg-app-icon-btn-bg p-2.5 text-app-accent">
             <Film className="h-5 w-5" aria-hidden />
@@ -49,7 +51,7 @@ export function DashboardKpiStrip({ stats, className }: Props) {
         <div className="relative flex items-start justify-between gap-3">
           <div className="space-y-1">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-app-fg-subtle">
-              Average views
+              {t("averageViews")}
             </p>
             <p className="text-2xl font-bold tabular-nums tracking-tight text-app-fg">
               {formatInt(stats?.average_views_last_30_reels ?? null)}
@@ -69,7 +71,7 @@ export function DashboardKpiStrip({ stats, className }: Props) {
                 {trend}
               </p>
             ) : (
-              <p className="text-[11px] text-app-fg-muted">Across your latest reels</p>
+              <p className="text-[11px] text-app-fg-muted">{t("acrossLatestReels")}</p>
             )}
           </div>
           <div className="rounded-xl bg-app-icon-btn-bg p-2.5 text-teal-500 dark:text-teal-400">
@@ -82,12 +84,12 @@ export function DashboardKpiStrip({ stats, className }: Props) {
         <div className="relative flex items-start justify-between gap-3">
           <div className="space-y-1">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-app-fg-subtle">
-              Average likes
+              {t("averageLikes")}
             </p>
             <p className="text-2xl font-bold tabular-nums tracking-tight text-app-fg">
               {formatInt(stats?.average_likes_last_30_reels ?? null)}
             </p>
-            <p className="text-[11px] text-app-fg-muted">Across your latest reels</p>
+            <p className="text-[11px] text-app-fg-muted">{t("acrossLatestReels")}</p>
           </div>
           <div className="rounded-xl bg-app-icon-btn-bg p-2.5 text-rose-500 dark:text-rose-400">
             <Heart className="h-5 w-5" aria-hidden />

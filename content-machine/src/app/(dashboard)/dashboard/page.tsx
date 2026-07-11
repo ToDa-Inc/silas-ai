@@ -1,7 +1,6 @@
 import {
   fetchAdaptPreviewReels,
-  fetchDashboardCompetitorWins,
-  fetchDashboardFreshNiche,
+  fetchDashboardTodayPicks,
   fetchHomeSummary,
   fetchIntelligenceStats,
   getCachedServerApiContext,
@@ -38,18 +37,18 @@ export default async function DashboardPage({
   const { clientSlug, orgSlug } = await getCachedServerApiContext();
   const syncDisabled = !clientSlug.trim() || !orgSlug.trim();
 
-  const [summaryRes, statsRes, freshRes, winsRes, adaptRes] = await Promise.all([
+  const [summaryRes, statsRes, picksRes, adaptRes] = await Promise.all([
     fetchHomeSummary(),
     fetchIntelligenceStats(),
-    fetchDashboardFreshNiche(),
-    fetchDashboardCompetitorWins(),
+    fetchDashboardTodayPicks(),
     fetchAdaptPreviewReels(12),
   ]);
 
   const summary = summaryRes.ok && summaryRes.data ? summaryRes.data : EMPTY_SUMMARY;
   const stats = statsRes.ok ? statsRes.data : null;
-  const freshReels = freshRes.ok ? freshRes.data : [];
-  const winReels = winsRes.ok ? winsRes.data : [];
+  const picks = picksRes.ok && picksRes.data ? picksRes.data : null;
+  const freshReels = picks?.fresh_niche ?? [];
+  const winReels = picks?.competitor_wins ?? [];
   const adaptReels = adaptRes.ok ? adaptRes.data : [];
 
   return (
@@ -59,6 +58,11 @@ export default async function DashboardPage({
         freshReels={freshReels}
         winReels={winReels}
         adaptReels={adaptReels}
+        picksComputedAt={picks?.computed_at ?? null}
+        picksIsFallback={picks?.is_fallback ?? false}
+        dailySessionId={picks?.daily_session_id ?? null}
+        dailyDraftStatus={picks?.draft_status ?? null}
+        primaryReelId={picks?.primary_reel_id ?? null}
         clientSlug={clientSlug}
         orgSlug={orgSlug}
         disabled={syncDisabled}

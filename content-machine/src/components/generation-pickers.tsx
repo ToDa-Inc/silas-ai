@@ -1,48 +1,28 @@
 "use client";
 
 import Link from "next/link";
+import { useTranslations } from "next-intl";
 import type { ClientCarouselTemplate, ClientCoverTemplate, ClientCta } from "@/lib/api";
 import { cn } from "@/lib/cn";
 
-export const CTA_TYPE_LABEL: Record<string, string> = {
-  website: "Website",
-  newsletter: "Newsletter",
-  video: "Video",
-  lead_magnet: "Free resource",
-  booking: "Booking",
-  other: "Other",
-};
-
-export const FORMAT_OPTIONS = [
-  {
-    key: "text_overlay" as const,
-    label: "Text on video",
-    hint: "B-roll or images with bold on-screen text — great for tips and lists.",
-  },
-  {
-    key: "talking_head" as const,
-    label: "You on camera",
-    hint: "You speak directly to camera for the whole reel.",
-  },
-  {
-    key: "carousel" as const,
-    label: "Carousel",
-    hint: "Swipeable image slides — like a mini slideshow on Instagram.",
-  },
-];
-
-export const RECREATION_MODES = [
-  {
-    key: "one_to_one" as const,
-    label: "Exact copy",
-    hint: "Same on-screen text as the original, translated. Skips angle picking — straight to the editor.",
-  },
-  {
-    key: "adapt" as const,
-    label: "Adapt for me",
-    hint: "Rework the idea into new angles tailored to your audience. You'll pick one next.",
-  },
-] as const;
+function ctaTypeLabel(type: string, t: ReturnType<typeof useTranslations<"generate">>): string {
+  switch (type) {
+    case "website":
+      return t("ctaWebsite");
+    case "newsletter":
+      return t("ctaNewsletter");
+    case "video":
+      return t("ctaVideo");
+    case "lead_magnet":
+      return t("ctaFreeResource");
+    case "booking":
+      return t("ctaBooking");
+    case "other":
+      return t("ctaOther");
+    default:
+      return type;
+  }
+}
 
 function ctaDestinationLine(cta: ClientCta): string {
   const dest = (cta.destination || "").trim();
@@ -98,23 +78,25 @@ export function CtaPicker({
   onSelect: (id: string) => void;
   settingsHref?: string;
 }) {
+  const t = useTranslations("generate");
+
   return (
     <div>
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
         <p className="text-[10px] font-bold uppercase tracking-wider text-app-fg-subtle">
-          Where should viewers go? <span className="font-normal text-app-fg-muted">(required)</span>
+          {t("whereViewersGo")}
         </p>
         <Link
           href={settingsHref}
           className="text-[11px] font-semibold text-amber-600 hover:underline dark:text-amber-400"
         >
-          Edit next steps →
+          {t("editNextSteps")}
         </Link>
       </div>
       <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Next step">
         {library.map((cta) => {
           const active = selectedId === cta.id;
-          const typeLabel = CTA_TYPE_LABEL[cta.type] ?? cta.type;
+          const typeLabel = ctaTypeLabel(cta.type, t);
           const destination = ctaDestinationLine(cta);
           return (
             <button
@@ -146,21 +128,12 @@ export function CtaPicker({
   );
 }
 
-export function CtaPickerEmpty({
-  settingsHref = "/settings#content-defaults",
-}: {
-  settingsHref?: string;
-}) {
+export function CtaPickerEmpty(_props: { settingsHref?: string } = {}) {
+  const t = useTranslations("generate");
+
   return (
     <div className="rounded-xl border border-dashed border-app-divider bg-app-chip-bg/20 p-3 text-[11px] leading-relaxed text-app-fg-muted">
-      No next steps configured yet.{" "}
-      <Link
-        href={settingsHref}
-        className="font-semibold text-amber-600 hover:underline dark:text-amber-400"
-      >
-        Add one in Settings
-      </Link>{" "}
-      so posts know where to send viewers.
+      {t("noNextSteps")}
     </div>
   );
 }
@@ -172,11 +145,12 @@ export function CarouselSlideCountPicker({
   value: number;
   onChange: (n: number) => void;
 }) {
+  const t = useTranslations("generate");
   const presets = [5, 7, 10];
   return (
     <div>
       <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-app-fg-subtle">
-        How many slides? <span className="font-normal text-app-fg-muted">(3–10)</span>
+        {t("howManySlides")} <span className="font-normal text-app-fg-muted">(3–10)</span>
       </p>
       <div className="flex flex-wrap items-center gap-2">
         {presets.map((n) => (
@@ -191,7 +165,7 @@ export function CarouselSlideCountPicker({
                 : "border-app-divider bg-app-chip-bg/40 text-app-fg-muted hover:bg-app-chip-bg/70",
             )}
           >
-            {n} slides
+            {t("slidesCount", { count: n })}
           </button>
         ))}
         <div className="flex items-center gap-2">
@@ -277,18 +251,12 @@ export function CarouselTemplatePicker({
   );
 }
 
-export function CarouselTemplatePickerEmpty({
-  settingsHref = "/settings#content-defaults",
-}: {
-  settingsHref?: string;
-}) {
+export function CarouselTemplatePickerEmpty(_props: { settingsHref?: string } = {}) {
+  const t = useTranslations("generate");
+
   return (
     <div className="rounded-xl border border-dashed border-app-divider bg-app-chip-bg/20 p-3 text-[11px] leading-relaxed text-app-fg-muted">
-      No carousel styles yet.{" "}
-      <Link href={settingsHref} className="font-semibold text-amber-600 hover:underline dark:text-amber-400">
-        Add one in Settings
-      </Link>{" "}
-      using example images from Media.
+      {t("noCarouselStyles")}
     </div>
   );
 }
@@ -356,18 +324,12 @@ export function CoverTemplatePicker({
   );
 }
 
-export function CoverTemplatePickerEmpty({
-  settingsHref = "/settings#content-defaults",
-}: {
-  settingsHref?: string;
-}) {
+export function CoverTemplatePickerEmpty(_props: { settingsHref?: string } = {}) {
+  const t = useTranslations("generate");
+
   return (
     <div className="rounded-xl border border-dashed border-app-divider bg-app-chip-bg/20 p-3 text-[11px] leading-relaxed text-app-fg-muted">
-      No cover styles yet.{" "}
-      <Link href={settingsHref} className="font-semibold text-amber-600 hover:underline dark:text-amber-400">
-        Add one in Settings
-      </Link>{" "}
-      using an example from Media.
+      {t("noCoverStyles")}
     </div>
   );
 }
@@ -379,13 +341,19 @@ export function RecreationModePicker({
   value: "one_to_one" | "adapt";
   onChange: (mode: "one_to_one" | "adapt") => void;
 }) {
+  const t = useTranslations("generate");
+  const modes = [
+    { key: "one_to_one" as const, label: t("modeExactCopy") },
+    { key: "adapt" as const, label: t("modeAdapt") },
+  ];
+
   return (
     <div>
       <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-app-fg-subtle">
         How should we recreate it?
       </p>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Recreation mode">
-        {RECREATION_MODES.map(({ key, label, hint }) => {
+        {modes.map(({ key, label }) => {
           const active = value === key;
           return (
             <button
@@ -402,7 +370,6 @@ export function RecreationModePicker({
               )}
             >
               <span className="block text-xs font-semibold text-app-fg">{label}</span>
-              <span className="mt-1 block text-[11px] leading-relaxed text-app-fg-muted">{hint}</span>
             </button>
           );
         })}
@@ -418,13 +385,20 @@ export function RecreateFormatPicker({
   value: string | null;
   onChange: (key: "text_overlay" | "talking_head" | "carousel") => void;
 }) {
+  const t = useTranslations("generate");
+  const formats = [
+    { key: "text_overlay" as const, label: t("formatTextOverlay") },
+    { key: "talking_head" as const, label: t("formatTalkingHead") },
+    { key: "carousel" as const, label: t("formatCarousel") },
+  ];
+
   return (
     <div>
       <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-app-fg-subtle">
         Post type <span className="font-normal text-app-fg-muted">(required)</span>
       </p>
       <div className="grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Target format">
-        {FORMAT_OPTIONS.map(({ key, label, hint }) => {
+        {formats.map(({ key, label }) => {
           const active = value === key;
           return (
             <button
@@ -441,7 +415,6 @@ export function RecreateFormatPicker({
               )}
             >
               <span className="block text-xs font-semibold text-app-fg">{label}</span>
-              <span className="mt-1 block text-[10px] leading-relaxed text-app-fg-muted">{hint}</span>
             </button>
           );
         })}

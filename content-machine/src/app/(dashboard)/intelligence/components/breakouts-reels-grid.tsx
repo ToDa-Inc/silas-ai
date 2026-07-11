@@ -6,6 +6,7 @@ import { ReelThumbnail } from "@/components/reel-thumbnail";
 import type { ScrapedReelRow } from "@/lib/api";
 import { formatTheirUsualMultiplier, getReelProvenance } from "@/lib/reel-provenance";
 import { ReelCardWithAnalysis } from "./reel-card-with-analysis";
+import { ReelPreviewTooltip } from "./reel-preview-tooltip";
 import { ReelEngagementInline } from "./reel-engagement-inline";
 import { RecreateButton } from "@/components/recreate-button";
 
@@ -46,12 +47,14 @@ export function BreakoutsReelsGrid({ reels, clientSlug, orgSlug }: Props) {
       {reels.map((row) => (
         <ReelCardWithAnalysis key={row.id} row={row} clientSlug={clientSlug} orgSlug={orgSlug}>
           <div className="relative shrink-0">
-            <ReelThumbnail
-              src={row.thumbnail_url}
-              alt={`@${row.account_username} reel`}
-              href={row.post_url}
-              size="md"
-            />
+            <ReelPreviewTooltip reel={row} className="inline-flex">
+              <ReelThumbnail
+                src={row.thumbnail_url}
+                alt={`@${row.account_username} reel`}
+                href={row.post_url}
+                size="md"
+              />
+            </ReelPreviewTooltip>
             {row.outlier_ratio != null ? (
               <span className="absolute -right-1 -top-1 rounded-md bg-amber-500 px-1.5 py-0.5 text-[9px] font-bold text-zinc-950 shadow">
                 {Number(row.outlier_ratio).toFixed(1)}× avg

@@ -139,7 +139,7 @@ export function HelpHint({
 }
 
 const CHIP_ON =
-  "border-amber-500 bg-amber-500/15 text-amber-200 shadow-[0_0_0_1px_rgba(245,158,11,0.4)]";
+  "border-app-accent bg-app-accent/15 text-app-accent-bright shadow-[0_0_0_1px_var(--glow-accent)]";
 const CHIP_OFF = "border-app-divider text-app-fg-muted hover:border-amber-500/40 hover:text-app-fg";
 
 const LOOK_THEME_FONT: Record<VideoSpec["themeId"], string> = {

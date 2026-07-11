@@ -14,6 +14,8 @@ export type OnboardingStatus = {
   quiz_answers: Record<string, unknown>;
   pipeline_progress: Record<string, unknown>;
   ig_prefill: Record<string, unknown>;
+  voice_transcript: Record<string, unknown>;
+  context_preview_locked: boolean;
   job_ids: Record<string, unknown>;
   selected_reel_id: string | null;
   selected_generation_session_id: string | null;
@@ -49,6 +51,15 @@ export async function fetchOnboardingStatusClient(
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "fetch failed" };
   }
+}
+
+/** Go to the previous onboarding step without clearing progress or jobs. */
+export async function goBackInOnboarding(
+  clientSlug: string,
+  orgSlug: string,
+  previousStep: string,
+): Promise<{ ok: true; data: OnboardingStatus } | { ok: false; error: string }> {
+  return patchOnboardingStatus(clientSlug, orgSlug, { current_step: previousStep });
 }
 
 export async function patchOnboardingStatus(
@@ -109,6 +120,86 @@ export async function startOnboardingIgPrefill(
     const res = await contentApiFetch(
       `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/onboarding/ig-prefill/start`,
       { method: "POST", headers },
+    );
+    const json = (await res.json().catch(() => ({}))) as { job_id?: string; detail?: unknown };
+    if (!res.ok || !json.job_id) {
+      return { ok: false, error: formatFastApiError(json, `Failed (${res.status})`) };
+    }
+    return { ok: true, job_id: json.job_id };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "fetch failed" };
+  }
+}
+
+export async function uploadOnboardingVoice(
+  clientSlug: string,
+  orgSlug: string,
+  blob: Blob,
+  audioFormat: string,
+  language: "de" | "en" | "auto" = "auto",
+): Promise<{ ok: true; job_id: string } | { ok: false; error: string }> {
+  const base = getContentApiBase();
+  const headers = await clientApiHeaders({ orgSlug });
+  const form = new FormData();
+  form.append("file", blob, `onboarding.${audioFormat}`);
+  form.append("audio_format", audioFormat);
+  form.append("language", language);
+  try {
+    const res = await contentApiFetch(
+      `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/onboarding/voice/upload`,
+      { method: "POST", headers, body: form },
+    );
+    const json = (await res.json().catch(() => ({}))) as { job_id?: string; detail?: unknown };
+    if (!res.ok || !json.job_id) {
+      return { ok: false, error: formatFastApiError(json, `Failed (${res.status})`) };
+    }
+    return { ok: true, job_id: json.job_id };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "upload failed" };
+  }
+}
+
+export async function submitOnboardingVoiceText(
+  clientSlug: string,
+  orgSlug: string,
+  text: string,
+): Promise<{ ok: true; job_id: string } | { ok: false; error: string }> {
+  const base = getContentApiBase();
+  const headers = await clientApiHeaders({ orgSlug });
+  try {
+    const res = await contentApiFetch(
+      `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/onboarding/voice/submit-text`,
+      {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      },
+    );
+    const json = (await res.json().catch(() => ({}))) as { job_id?: string; detail?: unknown };
+    if (!res.ok || !json.job_id) {
+      return { ok: false, error: formatFastApiError(json, `Failed (${res.status})`) };
+    }
+    return { ok: true, job_id: json.job_id };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "submit failed" };
+  }
+}
+
+export async function startOnboardingBrainGenerate(
+  clientSlug: string,
+  orgSlug: string,
+  answers: Record<string, string>,
+): Promise<{ ok: true; job_id: string } | { ok: false; error: string }> {
+  const base = getContentApiBase();
+  const headers = await clientApiHeaders({ orgSlug });
+  try {
+    const res = await contentApiFetch(
+      `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/onboarding/voice/generate`,
+      {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ answers }),
+      },
     );
     const json = (await res.json().catch(() => ({}))) as { job_id?: string; detail?: unknown };
     if (!res.ok || !json.job_id) {

@@ -18,7 +18,7 @@ const { fontFamily: COVER_PATRICK_FONT } = loadPatrickHand("normal", {
 export type UiFormat = "center" | "card" | "stack";
 
 export const STYLE_CHIP_ON =
-  "border-amber-500 bg-amber-500/15 text-amber-200 shadow-[0_0_0_1px_rgba(245,158,11,0.4)]";
+  "border-app-accent bg-app-accent/15 text-app-accent-bright shadow-[0_0_0_1px_var(--glow-accent)]";
 export const STYLE_CHIP_OFF =
   "border-app-divider text-app-fg-muted hover:border-amber-500/40 hover:text-app-fg";
 
@@ -110,7 +110,7 @@ export const LOOK_VISUAL: {
     label: "Hand",
     title: "Friendly handwritten feel",
     fontFamily: "'Segoe Print', 'Bradley Hand', cursive",
-    swatches: ["#1f2937", "#ffffff", "#fbbf24"],
+    swatches: ["#0a1a1c", "#f3f4f2", "#00e5d8"],
   },
   {
     id: "clean-minimal",

@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from supabase import Client
 
-from core.config import Settings
+from core.config import Settings, generation_llm_model
 from services.format_classifier import canonicalize_stored_format_key, normalize_format_from_analysis
 from services.content_generation import _pack_client_row_for_llm, compact_analysis_for_prompt
 from services.openrouter import chat_json_completion
@@ -202,7 +202,7 @@ def _llm_synthesize_format_digest(
     )
     return chat_json_completion(
         settings.openrouter_api_key,
-        settings.openrouter_model,
+        generation_llm_model(settings),
         system=_SYSTEM_JSON,
         user=user,
         max_tokens=8192,

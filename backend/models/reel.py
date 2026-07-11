@@ -68,6 +68,10 @@ class ReelAnalysisSummary(BaseModel):
     prompt_version: Optional[str] = None
     weighted_total: Optional[float] = None
     silas_rating: Optional[str] = None
+    preview_summary: Optional[str] = Field(
+        None,
+        description="One-line topic summary from Silas or niche analysis, for list/hover UI.",
+    )
 
 
 class ReelAnalysisDetailOut(BaseModel):

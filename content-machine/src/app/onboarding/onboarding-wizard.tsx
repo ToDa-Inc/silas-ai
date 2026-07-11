@@ -6,6 +6,8 @@ import { Brain, ChevronDown, FileText, Loader2, Sparkles } from "lucide-react";
 import { ContextEditor } from "@/app/(dashboard)/context/context-editor";
 import { OnboardingPipelineProgress } from "@/components/onboarding/onboarding-pipeline-progress";
 import { OnboardingReelVoteCard } from "@/components/onboarding/onboarding-reel-vote-card";
+import { OnboardingVoiceStep } from "@/components/onboarding/onboarding-voice-step";
+import { StrategyDocPreviewCard } from "@/components/onboarding/strategy-doc-preview-card";
 import { OpportunityCard } from "@/components/home/opportunity-card";
 import {
   OnboardingError,
@@ -19,7 +21,9 @@ import type { OnboardingStatusRow, ScrapedReelRow } from "@/lib/api";
 import {
   fetchOnboardingReelCandidates,
   fetchOnboardingStatusClient,
+  fetchClientRowClient,
   generateOnboardingActionPlan,
+  goBackInOnboarding,
   patchOnboardingStatus,
   postOnboardingReelFeedback,
   startOnboardingFirstContent,
@@ -32,9 +36,12 @@ import {
 } from "@/lib/api-client";
 import {
   ONBOARDING_STEP_ORDER,
-  STEP_HEADINGS,
+  previousOnboardingStep,
   type OnboardingStepKey,
 } from "@/lib/onboarding-ui";
+import { useStepHeadings } from "@/lib/use-onboarding-ui";
+import { useOnboardingLang } from "@/lib/use-onboarding-lang";
+import { useLocale } from "next-intl";
 import { cn } from "@/lib/cn";
 
 type Props = {
@@ -83,18 +90,6 @@ function splitList(value: string): string[] {
     .filter(Boolean);
 }
 
-function PreviewCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-5 hover:border-amber-300/20 hover:bg-white/[0.03] transition-all duration-300 shadow-sm">
-      <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-amber-300/90 flex items-center gap-1.5">
-        <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-        {label}
-      </p>
-      <p className="mt-2.5 text-sm leading-relaxed text-zinc-300 font-medium whitespace-pre-wrap">{value}</p>
-    </div>
-  );
-}
-
 export function OnboardingWizard({
   hasTenancy,
   clientSlug,
@@ -103,6 +98,9 @@ export function OnboardingWizard({
   initialContext,
   onboardingBypassActive = false,
 }: Props) {
+  const stepHeadings = useStepHeadings();
+  const appLocale = useLocale();
+  const defaultContentLang = useOnboardingLang();
   const router = useRouter();
   const [status, setStatus] = useState<OnboardingStatusRow | null>(initialStatus);
   const [busy, setBusy] = useState(false);
@@ -116,7 +114,7 @@ export function OnboardingWizard({
   const [clientName, setClientName] = useState("");
   const [clientSlugInput] = useState("");
   const [instagram, setInstagram] = useState("");
-  const [language, setLanguage] = useState<"de" | "en">("de");
+  const [language, setLanguage] = useState<"de" | "en">(defaultContentLang);
   const [nicheSummary] = useState("");
   const [nicheKeywords] = useState("");
 
@@ -141,6 +139,9 @@ export function OnboardingWizard({
   const [actionPlan, setActionPlan] = useState<Record<string, unknown> | null>(
     (initialStatus?.action_plan as Record<string, unknown>) ?? null,
   );
+  const [liveContext, setLiveContext] = useState<Record<string, unknown> | null>(
+    initialContext ?? null,
+  );
 
   const currentStep: OnboardingStepKey = useMemo(() => {
     if (!hasTenancy) return "workspace";
@@ -149,7 +150,7 @@ export function OnboardingWizard({
   }, [hasTenancy, status?.current_step]);
 
   const completedSteps = status?.completed_steps ?? [];
-  const heading = STEP_HEADINGS[currentStep] ?? STEP_HEADINGS.quiz;
+  const heading = stepHeadings[currentStep] ?? stepHeadings.quiz;
   const layoutVariant: OnboardingLayoutVariant =
     currentStep === "strategy_docs" ||
     currentStep === "editor" ||
@@ -197,9 +198,16 @@ export function OnboardingWizard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentStep, clientSlug, orgSlug, status?.pipeline_progress]);
 
-  // Silas reads the creator's Instagram in the background right after workspace
-  // setup; while they answer quiz/source questions, poll for that draft so
-  // empty fields can be pre-filled instead of starting from a blank page.
+  useEffect(() => {
+    setLanguage(defaultContentLang);
+  }, [appLocale, defaultContentLang]);
+
+  useEffect(() => {
+    const saved = status?.quiz_answers?.language;
+    if (saved === "de" || saved === "en") setLanguage(saved);
+  }, [status?.quiz_answers?.language]);
+
+  // Silas reads the creator's Instagram in the background right after workspace setup.
   useEffect(() => {
     if (currentStep !== "quiz" && currentStep !== "source") return;
     if (!clientSlug || igPrefillAppliedRef.current) return;
@@ -243,6 +251,23 @@ export function OnboardingWizard({
     if (filled.size > 0) setAutofilledKeys(filled);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status?.ig_prefill]);
+
+  useEffect(() => {
+    if (currentStep === "source" && completedSteps.includes("source")) {
+      void advance({ current_step: "strategy_docs" });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentStep, completedSteps]);
+
+  useEffect(() => {
+    if (currentStep !== "strategy_docs" || !clientSlug || !orgSlug) return;
+    void (async () => {
+      const r = await fetchClientRowClient(clientSlug, orgSlug);
+      if (r.ok && r.data?.client_context) {
+        setLiveContext(r.data.client_context as Record<string, unknown>);
+      }
+    })();
+  }, [currentStep, clientSlug, orgSlug, status?.voice_transcript]);
 
   useEffect(() => {
     if (currentStep !== "reel_review" && currentStep !== "first_content") return;
@@ -323,6 +348,36 @@ export function OnboardingWizard({
       setBusy(false);
     }
   }
+
+  const minBackStep: OnboardingStepKey = hasTenancy ? "quiz" : "workspace";
+
+  const goBack = useCallback(async () => {
+    if (!clientSlug || !orgSlug || busy) return;
+    const prev = previousOnboardingStep(currentStep, {
+      completedSteps,
+      minStep: minBackStep,
+    });
+    if (!prev) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await goBackInOnboarding(clientSlug, orgSlug, prev);
+      if (!r.ok) {
+        setError(r.error);
+        return;
+      }
+      setStatus(r.data as OnboardingStatusRow);
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }, [clientSlug, orgSlug, busy, router, currentStep, completedSteps, minBackStep]);
+
+  const shellBackProps = {
+    onBack: () => void goBack(),
+    backBusy: busy,
+    minBackStep,
+  };
 
   async function saveQuiz() {
     await advance({
@@ -447,8 +502,12 @@ export function OnboardingWizard({
       scraped_reel_id,
       verdict,
     }));
-    if (items.length < 3) {
-      setError("Vote on at least 3 candidate reels (Yes or No).");
+    if (items.length < requiredVotes) {
+      setError(
+        requiredVotes === 1
+          ? "Vote on the candidate reel (Yes or No) before continuing."
+          : `Vote on at least ${requiredVotes} candidate reels (Yes or No).`,
+      );
       return;
     }
     setBusy(true);
@@ -515,7 +574,27 @@ export function OnboardingWizard({
   const pipelineComplete = pipelinePhase === "complete";
   const pipelineFailed = pipelinePhase === "failed";
   const votedCount = Object.keys(votes).length;
+  // Discovery sometimes only surfaces 1-2 candidates worth showing (small niche,
+  // strict quality bar) — require voting on all of them rather than a fixed 3,
+  // so a thin result set can never hard-block onboarding.
+  const requiredVotes = Math.max(1, Math.min(3, candidates.length));
   const sourceLength = sourceText.trim().length;
+
+  const contextLocked = Boolean(status?.context_preview_locked);
+
+  function lockedPreviewChars(locked: boolean): number {
+    return locked ? 1800 : 6000;
+  }
+
+  function sectionText(key: string, fallback: string): string {
+    const sec = liveContext?.[key];
+    if (sec && typeof sec === "object" && sec !== null && "text" in sec) {
+      const t = String((sec as { text?: string }).text || "").trim();
+      if (t) return t.slice(0, lockedPreviewChars(contextLocked));
+    }
+    return fallback;
+  }
+
   const brainPreview = {
     audience:
       quizAudience.trim() ||
@@ -533,6 +612,16 @@ export function OnboardingWizard({
       quizOffers.trim() ||
       String(status?.quiz_answers?.offers || "").trim() ||
       "Add what you sell or promote so the AI can aim the content.",
+  };
+
+  const documentPreviews = {
+    icp: sectionText("icp", brainPreview.audience),
+    brand_map: sectionText("brand_map", brainPreview.offer),
+    story_board: sectionText("story_board", "Your origin stories and key anecdotes will appear here."),
+    communication_guideline: sectionText(
+      "communication_guideline",
+      brainPreview.voice,
+    ),
   };
 
   const qInputClass =
@@ -840,13 +929,31 @@ export function OnboardingWizard({
     quiz: { questions: quizQuestions, submitLabel: "Continue", onSubmit: saveQuiz },
   };
 
-  if (currentStep === "workspace" || currentStep === "quiz") {
-    const flow = stepFlow[currentStep];
+  if (currentStep === "quiz") {
+    return (
+      <OnboardingVoiceStep
+        clientSlug={clientSlug}
+        orgSlug={orgSlug}
+        status={status}
+        currentStep={currentStep}
+        completedSteps={completedSteps}
+        stepTitle={heading.title}
+        stepDescription={heading.description}
+        language={language}
+        onboardingBypassActive={onboardingBypassActive}
+        onStatus={(s) => setStatus(s as OnboardingStatusRow)}
+        onError={setError}
+      />
+    );
+  }
+
+  if (currentStep === "workspace") {
+    const flow = stepFlow.workspace;
     const questions = flow.questions;
     const safeIdx = Math.min(qIdx, questions.length - 1);
     const q = questions[safeIdx];
     const isLast = safeIdx >= questions.length - 1;
-    const stepHeading = STEP_HEADINGS[currentStep];
+    const stepHeading = stepHeadings[currentStep];
 
     const handleContinue = () => {
       const validationError = q.validate?.();
@@ -868,6 +975,7 @@ export function OnboardingWizard({
         currentStep={currentStep}
         completedSteps={completedSteps}
         onboardingBypassActive={onboardingBypassActive}
+        {...shellBackProps}
       >
         <OnboardingQuestionScreen
           stepTitle={stepHeading.title}
@@ -897,7 +1005,7 @@ export function OnboardingWizard({
   }
 
   if (currentStep === "source") {
-    const stepHeading = STEP_HEADINGS.source;
+    const stepHeading = stepHeadings.source;
 
     if (sourceMode === null) {
       return (
@@ -906,6 +1014,7 @@ export function OnboardingWizard({
           currentStep={currentStep}
           completedSteps={completedSteps}
           onboardingBypassActive={onboardingBypassActive}
+          {...shellBackProps}
         >
           <OnboardingQuestionScreen
             stepTitle={stepHeading.title}
@@ -985,6 +1094,7 @@ export function OnboardingWizard({
         currentStep={currentStep}
         completedSteps={completedSteps}
         onboardingBypassActive={onboardingBypassActive}
+        {...shellBackProps}
       >
         <OnboardingQuestionScreen
           stepTitle={stepHeading.title}
@@ -1042,11 +1152,15 @@ export function OnboardingWizard({
               </p>
             </div>
           </div>
-          <div className="grid gap-3 md:grid-cols-2">
-            <PreviewCard label="Audience" value={brainPreview.audience} />
-            <PreviewCard label="Content goals" value={brainPreview.goals} />
-            <PreviewCard label="Voice" value={brainPreview.voice} />
-            <PreviewCard label="Offer" value={brainPreview.offer} />
+          <div className="grid gap-4 md:grid-cols-2">
+            <StrategyDocPreviewCard label="ICP" value={documentPreviews.icp} locked={contextLocked} />
+            <StrategyDocPreviewCard label="Brand Map" value={documentPreviews.brand_map} locked={contextLocked} />
+            <StrategyDocPreviewCard label="Storyboard" value={documentPreviews.story_board} locked={contextLocked} />
+            <StrategyDocPreviewCard
+              label="Communication Guideline"
+              value={documentPreviews.communication_guideline}
+              locked={contextLocked}
+            />
           </div>
           <button
             type="button"
@@ -1109,7 +1223,10 @@ export function OnboardingWizard({
           <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
             <p className="text-sm font-bold text-white">Your job: teach taste, not strategy.</p>
             <p className="mt-2 text-sm leading-relaxed text-zinc-400">
-              Mark what feels useful and on-brand. Three votes are enough for Silas to adapt the first piece with better judgment.
+              Mark what feels useful and on-brand.{" "}
+              {requiredVotes === 1
+                ? "One vote is enough for Silas to adapt the first piece with better judgment."
+                : `${requiredVotes} votes are enough for Silas to adapt the first piece with better judgment.`}
             </p>
           </div>
           {candidatesLoading ? (
@@ -1142,7 +1259,7 @@ export function OnboardingWizard({
             </div>
           )}
           <p className="text-center text-xs font-semibold text-zinc-400">
-            {votedCount}/3 minimum taste votes
+            {votedCount}/{requiredVotes} minimum taste votes
           </p>
           <OnboardingPrimaryButton busy={busy} onClick={() => void submitVotes()}>
             Save my choices and continue
@@ -1252,6 +1369,7 @@ export function OnboardingWizard({
         title={heading.title}
         description={heading.description}
         onboardingBypassActive={onboardingBypassActive}
+        {...shellBackProps}
       >
         {body}
       </OnboardingShell>
@@ -1266,6 +1384,7 @@ export function OnboardingWizard({
       title={heading.title}
       description={heading.description}
       onboardingBypassActive={onboardingBypassActive}
+      {...shellBackProps}
     >
       {body}
     </OnboardingShell>

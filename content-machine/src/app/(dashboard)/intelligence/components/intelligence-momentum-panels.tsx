@@ -1,9 +1,11 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import type { ScrapedReelRow, WeekBreakoutsPayload } from "@/lib/api";
 import { commentViewRatio, formatCommentViewPct } from "@/lib/reel-comment-view";
 import { ReelThumbnail } from "@/components/reel-thumbnail";
 import { ReelCardWithAnalysis } from "./reel-card-with-analysis";
+import { ReelPreviewTooltip } from "./reel-preview-tooltip";
 
 export function formatWindowHint(wb: WeekBreakoutsPayload | undefined): string {
   if (wb?.scope === "growth_7d_post_age") {
@@ -82,6 +84,7 @@ export function CompactBreakoutRow({
   weeklyMomentumBadge?: string;
   onOpenDetail?: () => void;
 }) {
+  const tCommon = useTranslations("common");
   const hv = highlight === "views";
   const hl = highlight === "likes";
   const hc = highlight === "comments";
@@ -89,7 +92,7 @@ export function CompactBreakoutRow({
   const gv = growthDeltaForMetric(reel, "views");
   const gl = growthDeltaForMetric(reel, "likes");
   const gc = growthDeltaForMetric(reel, "comments");
-  const metricWord = highlight === "views" ? "views" : highlight === "likes" ? "likes" : "comments";
+  const metricWord = tCommon(highlight);
   const growthTitle =
     growth != null
       ? `${formatCompactDeltaSigned(growth)} ${metricWord} since last check (~7 days)`
@@ -120,7 +123,7 @@ export function CompactBreakoutRow({
         }`}
         title="View change vs an earlier check (~2 weeks after posting, or your last refresh)"
       >
-        {formatCompactDeltaSigned(provenGrowth)} views
+        {formatCompactDeltaSigned(provenGrowth)} {tCommon("views")}
       </span>
     ) : lane === "weekly" && growth != null ? (
       <span
@@ -142,12 +145,14 @@ export function CompactBreakoutRow({
   const card = (
     <ReelCardWithAnalysis row={reel} clientSlug={clientSlug} orgSlug={orgSlug} compact>
       <div className="group/thumb relative shrink-0 overflow-hidden rounded">
-        <ReelThumbnail
-          src={reel.thumbnail_url}
-          alt={`@${reel.account_username} reel`}
-          href={reel.post_url}
-          size="sm"
-        />
+        <ReelPreviewTooltip reel={reel} className="inline-flex">
+          <ReelThumbnail
+            src={reel.thumbnail_url}
+            alt={`@${reel.account_username} reel`}
+            href={reel.post_url}
+            size="sm"
+          />
+        </ReelPreviewTooltip>
         {thumbOverlay}
       </div>
       <div className="min-w-0 flex-1">
@@ -155,7 +160,7 @@ export function CompactBreakoutRow({
         <p className="mt-0.5 line-clamp-1 text-[10px] text-app-fg-muted">{reel.hook_text || reel.caption || "—"}</p>
         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[9px] tabular-nums text-app-fg-subtle">
           <span className={`inline-flex flex-col gap-0 ${hv ? "font-semibold text-amber-600 dark:text-amber-400" : ""}`}>
-            <span>{reel.views != null ? `${Number(reel.views).toLocaleString()} views` : "—"}</span>
+            <span>{reel.views != null ? `${Number(reel.views).toLocaleString()} ${tCommon("views")}` : "—"}</span>
             {showWeeklyDeltas && gv != null ? (
               <span
                 className={`font-medium text-[8px] leading-tight ${
@@ -172,7 +177,7 @@ export function CompactBreakoutRow({
             ) : null}
           </span>
           <span className={`inline-flex flex-col gap-0 ${hl ? "font-semibold text-amber-600 dark:text-amber-400" : ""}`}>
-            <span>{reel.likes != null ? `${Number(reel.likes).toLocaleString()} likes` : "—"}</span>
+            <span>{reel.likes != null ? `${Number(reel.likes).toLocaleString()} ${tCommon("likes")}` : "—"}</span>
             {showWeeklyDeltas && gl != null ? (
               <span
                 className={`font-medium text-[8px] leading-tight ${
@@ -189,7 +194,7 @@ export function CompactBreakoutRow({
             ) : null}
           </span>
           <span className={`inline-flex flex-col gap-0 ${hc ? "font-semibold text-amber-600 dark:text-amber-400" : ""}`}>
-            <span>{reel.comments != null ? `${Number(reel.comments).toLocaleString()} comments` : "—"}</span>
+            <span>{reel.comments != null ? `${Number(reel.comments).toLocaleString()} ${tCommon("comments")}` : "—"}</span>
             {showWeeklyDeltas && gc != null ? (
               <span
                 className={`font-medium text-[8px] leading-tight ${
@@ -302,10 +307,11 @@ export function WeeklyMomentumGrid({
   weeklyMomentumBadge?: string;
   onOpenReel: (reel: ScrapedReelRow) => void;
 }) {
+  const tIntel = useTranslations("intelligence");
   if (!slots.length) {
     return (
       <div className="flex min-h-[120px] flex-col rounded-xl border border-dashed border-zinc-300/80 bg-zinc-50/50 p-3 dark:border-white/15 dark:bg-white/[0.02]">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-app-fg-subtle">Top 3</p>
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-app-fg-subtle">{tIntel("topThree")}</p>
         <p className="mt-2 flex-1 text-xs leading-relaxed text-app-fg-muted">
           No reels in your catalog yet. Refresh data or open Reels to browse.
         </p>

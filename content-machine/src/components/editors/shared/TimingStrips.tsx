@@ -629,7 +629,7 @@ export function LayerTimingStrip({
             {/* Elegant vertical playhead line spanning from top ruler to bottom track */}
             <span
               aria-hidden
-              className="pointer-events-none absolute top-1 bottom-1 z-30 w-[1.5px] -translate-x-1/2 bg-amber-400/90 shadow-[0_0_4px_rgba(245,158,11,0.5)]"
+              className="pointer-events-none absolute top-1 bottom-1 z-30 w-[1.5px] -translate-x-1/2 bg-app-accent/90 shadow-[0_0_4px_var(--shadow-accent)]"
               style={{ left: `${playheadPct}%` }}
             />
             {playheadDraggable ? (

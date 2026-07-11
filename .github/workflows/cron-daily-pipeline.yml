@@ -1,20 +1,24 @@
 # Daily pipeline: sync-all + niche discovery + scraped-reels-refresh in one scheduled run.
-# All three jobs start together when this workflow is triggered (parallel jobs, no needs:).
+# A second schedule (~45 min later) snapshots today's home-feed opportunity picks.
+# All jobs start together when this workflow is triggered (parallel jobs, no needs:).
 #
 # Secrets (Settings → Secrets and variables → Actions):
 #   CRON_SECRET — required
 #   SYNC_ALL_URL — required; base for sync-all; niche + refresh paths derived from it
 #   NICHE_DISCOVERY_CRON_URL — optional override for niche POST
 #   SCRAPED_REELS_REFRESH_URL — optional override for refresh POST
+#   DAILY_SNAPSHOT_URL — optional override for daily-opportunity-snapshot POST
 #
 # Schedules only run from the repository default branch.
-# GitHub may delay schedule triggers under load; all three still fire in the same run.
+# GitHub may delay schedule triggers under load; jobs in the same run still fire together.
 
 name: Cron daily pipeline
 
 on:
   schedule:
     - cron: "30 14 * * *"
+      timezone: Asia/Makassar
+    - cron: "15 15 * * *"
       timezone: Asia/Makassar
   workflow_dispatch:
 
@@ -147,6 +151,47 @@ jobs:
             *scraped-reels-refresh*) ;;
             *)
               echo "::error::URL must include scraped-reels-refresh (got host-only?)"
+              exit 1
+              ;;
+          esac
+
+          curl -fsS --max-time 600 -X POST "$POST_URL" \
+            -H "X-Cron-Secret: ${CRON_SECRET}" \
+            -H "Content-Type: application/json" \
+            -w "\nHTTP %{http_code}\n"
+
+  daily-opportunity-snapshot:
+    if: github.event.schedule == '15 15 * * *'
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST daily-opportunity-snapshot
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          DAILY_SNAPSHOT_URL: ${{ secrets.DAILY_SNAPSHOT_URL }}
+          SYNC_ALL_URL: ${{ secrets.SYNC_ALL_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${CRON_SECRET:-}" ]; then
+            echo "::error::Set Actions secret CRON_SECRET"
+            exit 1
+          fi
+
+          POST_URL="${DAILY_SNAPSHOT_URL:-}"
+          if [ -z "$POST_URL" ]; then
+            if [ -z "${SYNC_ALL_URL:-}" ]; then
+              echo "::error::Set DAILY_SNAPSHOT_URL or SYNC_ALL_URL"
+              exit 1
+            fi
+            _base="${SYNC_ALL_URL%/}"
+            POST_URL="${_base%/sync-all}/daily-opportunity-snapshot"
+            echo "::notice::DAILY_SNAPSHOT_URL empty — using ${POST_URL}"
+          fi
+
+          case "$POST_URL" in
+            *daily-opportunity-snapshot*) ;;
+            *)
+              echo "::error::URL must include daily-opportunity-snapshot"
               exit 1
               ;;
           esac

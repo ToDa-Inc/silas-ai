@@ -124,7 +124,24 @@ def _post_chat_completions_with_optional_fallback(
                 body = {**payload, "model": model}
                 _wait_for_process_slot(min_interval)
                 wait_for_openrouter_request_slot(settings)
-                r = client.post(_OPENROUTER_CHAT_URL, headers=headers, json=body)
+                try:
+                    r = client.post(_OPENROUTER_CHAT_URL, headers=headers, json=body)
+                except (httpx.RemoteProtocolError, httpx.ReadTimeout, httpx.ConnectError, httpx.WriteError) as e:
+                    delay = min(max_sleep, 2.0 * (attempt + 1))
+                    logger.warning(
+                        "OpenRouter transport error model=%s attempt=%s/%s sleep=%.1fs err=%s",
+                        model,
+                        attempt + 1,
+                        max_attempts,
+                        delay,
+                        e,
+                    )
+                    if attempt < max_attempts - 1:
+                        time.sleep(delay)
+                        continue
+                    if model_idx < len(models) - 1:
+                        break
+                    raise RuntimeError(f"OpenRouter connection failed: {e}") from e
                 last = r
                 if r.status_code == 429:
                     delay = _sleep_seconds_for_429(r, attempt, max_sleep)

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 import { ChevronDown, ChevronUp, Loader2, Sparkles, Trash2 } from "lucide-react";
 import { ReelThumbnail } from "@/components/reel-thumbnail";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -507,6 +508,7 @@ function SessionCard({
   onOpen: () => void;
   onDelete: () => void;
 }) {
+  const t = useTranslations("generate");
   const isDone = session.render_status === "done" && Boolean(session.thumbnail_url);
   const formatKey = canonicalFormatKey(session.source_format_key);
   const captionSnippet = (session.caption_body ?? "").trim().replace(/\s+/g, " ");
@@ -524,7 +526,7 @@ function SessionCard({
           {opening ? (
             <span className="absolute inset-0 z-10 flex items-center justify-center gap-2 rounded-xl bg-zinc-950/65 text-xs font-semibold text-white backdrop-blur-[1px]">
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-              Opening session…
+              {t("openingSession")}
             </span>
           ) : null}
           {isDone ? (
@@ -670,6 +672,8 @@ function BlueprintBadge() {
 }
 
 export default function GeneratePage() {
+  const t = useTranslations("generate");
+  const tc = useTranslations("common");
   const { show } = useToast();
   const router = useRouter();
   const params = useParams<{ sessionId?: string | string[] }>();
@@ -1356,11 +1360,14 @@ export default function GeneratePage() {
       }
       currentSessionIdRef.current = res.data.id;
       setSession(res.data);
-      // 1:1 recreate packages content on /start (no angles), so land directly in the studio.
       const landedWithPackage = sessionHasPackage(res.data);
       setStep(landedWithPackage ? "create" : "angles");
       router.replace(generateSessionHref(res.data.id), { scroll: false });
-      show(landedWithPackage ? "1:1 copy ready." : "Angles ready — pick one.", "success");
+      if (res.data.last_error) {
+        show(res.data.last_error, "error");
+      } else {
+        show(landedWithPackage ? "1:1 copy ready." : "Angles ready — pick one.", "success");
+      }
       const lr = await generationListSessions(ctx.clientSlug, ctx.orgSlug, 15);
       if (lr.ok) setSessions(lr.data);
     } finally {
@@ -1404,12 +1411,16 @@ export default function GeneratePage() {
           return;
         }
         setSession(res.data);
-        setStep("create");
-        const fk = canonicalFormatKey(res.data.source_format_key ?? "");
-        show(
-          fk === "carousel" ? "Carousel slides and caption ready." : "Script and captions generated.",
-          "success",
-        );
+        if (res.data.status === "content_ready" || sessionHasPackage(res.data)) {
+          setStep("create");
+          const fk = canonicalFormatKey(res.data.source_format_key ?? "");
+          show(
+            fk === "carousel" ? "Carousel slides and caption ready." : "Script and captions generated.",
+            "success",
+          );
+        } else if (res.data.last_error) {
+          show(res.data.last_error, "error");
+        }
       } finally {
         setChoosingAngleIndex(null);
       }
@@ -1446,18 +1457,15 @@ export default function GeneratePage() {
     <main className="mx-auto max-w-[1400px] p-4 pb-16 pt-6 md:p-8 md:pt-10 lg:p-12">
       <header className="mb-8 md:mb-10">
         <span className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-app-fg-subtle">
-          Create
+          {t("eyebrow")}
         </span>
-        <h1 className="mb-2 max-w-2xl text-lg font-semibold text-app-fg">New reel, cover or carousel</h1>
-        <p className="max-w-2xl text-xs leading-relaxed text-app-fg-muted">
-          Start from an idea or recreate a winning reel — we&apos;ll propose five angles in your client&apos;s
-          voice (Client DNA), then hooks, script, and caption.
-        </p>
+        <h1 className="mb-2 max-w-2xl text-lg font-semibold text-app-fg">{t("title")}</h1>
+        <p className="max-w-2xl text-xs leading-relaxed text-app-fg-muted">{t("subtitle")}</p>
       </header>
 
       {!clientSlug && (
         <p className="mb-6 text-sm text-amber-600 dark:text-amber-400">
-          No active client in workspace — complete onboarding or switch client.
+          {t("noActiveClient")}
         </p>
       )}
 
@@ -1468,8 +1476,8 @@ export default function GeneratePage() {
       {loadingFromUrl && (
         <div className="glass flex flex-col items-center justify-center gap-3 rounded-2xl border border-app-divider/80 px-6 py-16 text-center">
           <Loader2 className="h-6 w-6 animate-spin text-app-fg-muted" aria-hidden />
-          <p className="text-sm font-medium text-app-fg">Loading session…</p>
-          <p className="text-xs text-app-fg-subtle">Pulling angles, script, and render status.</p>
+          <p className="text-sm font-medium text-app-fg">{t("loadingSession")}</p>
+          <p className="text-xs text-app-fg-subtle">{t("loadingSessionHint")}</p>
         </div>
       )}
 
@@ -1486,8 +1494,8 @@ export default function GeneratePage() {
                 >
                   {(
                     [
-                      { key: "idea" as const, label: "Start from an idea" },
-                      { key: "recreate" as const, label: "Recreate a reel" },
+                      { key: "idea" as const, label: t("startFromIdea") },
+                      { key: "recreate" as const, label: t("recreateReel") },
                     ] as const
                   ).map(({ key, label }) => {
                     const active = mode === key;
@@ -1914,7 +1922,7 @@ export default function GeneratePage() {
 
           <section className="rounded-2xl border border-app-divider bg-app-chip-bg/30 p-5 md:p-6">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-app-fg-subtle">
-              Recent sessions
+              {t("recentSessions")}
             </h2>
             <p className="mt-2 text-xs leading-relaxed text-app-fg-muted">
               In‑progress runs and finished posts for this client. Done posts show their cover and caption;
@@ -1934,10 +1942,7 @@ export default function GeneratePage() {
                 ))}
               </ul>
             ) : (
-              <p className="mt-4 text-sm text-app-fg-muted">
-                No sessions yet — generate angles above to start. Past runs will appear here with status and
-                format.
-              </p>
+              <p className="mt-4 text-sm text-app-fg-muted">{t("noSessions")}</p>
             )}
           </section>
         </div>
@@ -1956,7 +1961,7 @@ export default function GeneratePage() {
               }}
               className="text-xs font-semibold text-app-fg-muted hover:text-app-fg"
             >
-              ← New session
+              {t("newSession")}
             </button>
             {session.synthesized_patterns && (
               <button
@@ -1965,7 +1970,7 @@ export default function GeneratePage() {
                 onClick={() => setPatternsOpen((o) => !o)}
                 className="flex items-center gap-1 text-xs font-semibold text-app-fg-muted hover:text-app-fg"
               >
-                Synthesized patterns{" "}
+                {t("synthesizedPatterns")}{" "}
                 {patternsOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
               </button>
             )}
@@ -1985,12 +1990,33 @@ export default function GeneratePage() {
               patterns={synthesizedPatterns ?? undefined}
             />
           ) : null}
-          <h2 className="text-sm font-semibold text-app-fg">Pick an angle</h2>
+          {session.status === "angles_ready" && session.last_error ? (
+            <div className="rounded-xl border border-red-500/35 bg-red-500/10 px-4 py-3">
+              <p className="text-sm font-semibold text-red-200">{t("generationFailed")}</p>
+              <p className="mt-1 text-xs leading-relaxed text-red-200/85">{session.last_error}</p>
+              {angles.length === 1 ? (
+                <button
+                  type="button"
+                  disabled={choosingAngleIndex !== null}
+                  onClick={() => void onChooseAngle(0)}
+                  className="mt-3 inline-flex items-center gap-2 rounded-lg bg-red-500/20 px-3 py-2 text-xs font-bold text-red-100 hover:bg-red-500/30 disabled:opacity-60"
+                >
+                  {choosingAngleIndex === 0 ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                  ) : null}
+                  {t("generationFailedRetry")}
+                </button>
+              ) : (
+                <p className="mt-2 text-xs text-red-200/80">{t("generationFailedPickAngle")}</p>
+              )}
+            </div>
+          ) : null}
+          <h2 className="text-sm font-semibold text-app-fg">{t("pickAngle")}</h2>
           {sessionUsesBlueprintFirstAngle(session) ? (
             <p className="max-w-2xl text-xs leading-relaxed text-app-fg-muted">
               The <span className="font-semibold text-app-fg-secondary">first angle</span> recreates the
               source 1-to-1 in German — same hook, story, and structure. Use{" "}
-              <span className="font-semibold text-app-fg-secondary">Anpassen</span> only if you want it
+              <span className="font-semibold text-app-fg-secondary">{t("adaptButton")}</span> only if you want it
               adapted to your client&apos;s voice. Other angles are same-format variants with a twist.
             </p>
           ) : null}
@@ -2047,7 +2073,7 @@ export default function GeneratePage() {
                           }
                           className="inline-flex items-center justify-center rounded-lg border border-app-divider bg-app-surface/40 px-3 py-2 text-xs font-semibold text-app-fg-muted hover:bg-app-surface/70 hover:text-app-fg disabled:opacity-70"
                         >
-                          {anpassenOpen ? "Anpassen ▲" : "Anpassen"}
+                          {anpassenOpen ? `${t("adaptButton")} ▲` : t("adaptButton")}
                         </button>
                       </div>
                       {anpassenOpen ? (
@@ -2074,7 +2100,7 @@ export default function GeneratePage() {
                                 Generating…
                               </>
                             ) : (
-                              "Mit Anpassungen generieren"
+                              t("generateWithAdaptations")
                             )}
                           </button>
                         </div>
@@ -2119,7 +2145,7 @@ export default function GeneratePage() {
               }}
               className="text-xs font-semibold text-app-fg-muted hover:text-app-fg"
             >
-              ← New session
+              {t("newSession")}
             </button>
             {chosenAngle ? (
               <div className="min-w-0 flex-1 truncate text-sm">
@@ -2141,7 +2167,7 @@ export default function GeneratePage() {
               className="flex shrink-0 items-center gap-1.5 rounded-xl border border-red-500/30 px-3 py-1.5 text-[11px] font-bold text-red-400 hover:bg-red-500/10 disabled:opacity-40"
             >
               <Trash2 className="h-3.5 w-3.5" />
-              Delete
+              {tc("delete")}
             </button>
           </div>
 
@@ -2175,10 +2201,10 @@ export default function GeneratePage() {
         onClose={() => {
           if (!deleteSessionBusy) setDeleteSessionId(null);
         }}
-        title="Delete this session?"
-        description="Removes this generation session and its saved progress. This cannot be undone."
-        confirmLabel="Delete"
-        cancelLabel="Cancel"
+        title={t("deleteSessionTitle")}
+        description={t("deleteSessionBody")}
+        confirmLabel={tc("delete")}
+        cancelLabel={tc("cancel")}
         variant="danger"
         busy={deleteSessionBusy}
         onConfirm={executeDeleteSession}

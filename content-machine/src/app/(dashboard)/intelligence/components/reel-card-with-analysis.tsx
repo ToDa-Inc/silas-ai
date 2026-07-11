@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
+import { useTranslations } from "next-intl";
 import type { ScrapedReelRow } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { formatSilasScoreSummary } from "@/lib/silas-score-display";
@@ -17,9 +18,10 @@ type Props = {
 
 /** Readable card surface + optional Silas summary + open full analysis. */
 export function ReelCardWithAnalysis({ row, clientSlug, orgSlug, children, compact }: Props) {
+  const t = useTranslations("common");
   const [open, setOpen] = useState(false);
   const a = row.analysis;
-  const silas = a ? formatSilasScoreSummary(a) : null;
+  const silas = a ? formatSilasScoreSummary(a, t) : null;
 
   return (
     <>

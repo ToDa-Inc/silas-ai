@@ -6,13 +6,14 @@ from datetime import datetime, timezone
 from typing import Any, Dict
 
 from core.config import Settings
+from core.errors import MissingCredentialsError
 from core.database import get_supabase_for_settings
 from services.format_digest import compute_format_digests
 
 
 def run_format_digest_recompute(settings: Settings, job: Dict[str, Any]) -> None:
     if not settings.openrouter_api_key:
-        raise RuntimeError("OPENROUTER_API_KEY required for format digest synthesis")
+        raise MissingCredentialsError("OPENROUTER_API_KEY required for format digest synthesis")
 
     supabase = get_supabase_for_settings(settings)
     job_id = job["id"]

@@ -13,6 +13,7 @@ import {
   Trash2,
   Video,
 } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useToast } from "@/components/ui/toast-provider";
 import { LinkPendingOverlay, PendingLink } from "@/components/ui/pending-link";
 import { PostPreviewModal } from "@/components/post-preview-modal";
@@ -94,6 +95,7 @@ export default function MediaPage() {
 }
 
 function MediaPageInner() {
+  const t = useTranslations("media");
   const { show } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -166,7 +168,7 @@ function MediaPageInner() {
     const os = orgSlug.trim();
     if (!cs || !os) return;
     if (!file.name.toLowerCase().endsWith(".mp4")) {
-      show("Only .mp4 files are supported.", "error");
+      show(t("mp4Only"), "error");
       return;
     }
     setUploadBusy(true);
@@ -184,7 +186,7 @@ function MediaPageInner() {
         show(typeof json.detail === "string" ? json.detail : `Upload failed (${res.status})`, "error");
         return;
       }
-      show("Clip uploaded.", "success");
+      show(t("clipUploaded"), "success");
       const bRes = await brollList(cs, os);
       if (bRes.ok) setClips(bRes.data);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -295,10 +297,10 @@ function MediaPageInner() {
   // (where the full `<GenerationTemplatesPanel>` is mounted), so the tab has
   // been removed. The header now carries a Settings link for discoverability.
   const tabs: { id: Tab; label: string; count: number }[] = [
-    { id: "renders", label: "Renders", count: renders.length },
-    { id: "covers", label: "Covers", count: covers.length },
-    { id: "broll", label: "B-roll", count: clips.length },
-    { id: "images", label: "Images", count: images.length },
+    { id: "renders", label: t("tabRenders"), count: renders.length },
+    { id: "covers", label: t("tabCovers"), count: covers.length },
+    { id: "broll", label: t("tabBroll"), count: clips.length },
+    { id: "images", label: t("tabImages"), count: images.length },
   ];
 
   return (
@@ -306,21 +308,21 @@ function MediaPageInner() {
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-app-fg">Media</h1>
+          <h1 className="text-xl font-bold text-app-fg">{t("title")}</h1>
           <p className="mt-0.5 max-w-xl text-sm text-app-fg-muted">
-            Outputs from Create plus uploaded images and clips.{" "}
+            {t("subtitle")}{" "}
             <Link
               href="/settings#content-defaults"
               className="font-semibold text-amber-600 hover:underline dark:text-amber-400"
             >
-              Manage style templates in Settings →
+              {t("manageTemplates")}
             </Link>
           </p>
         </div>
         {tab === "broll" && (
           <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-amber-500/15 px-4 py-2 text-xs font-bold text-app-on-amber-title hover:bg-amber-500/25 disabled:opacity-50">
             {uploadBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-            {uploadBusy ? "Uploading…" : "Upload .mp4"}
+            {uploadBusy ? t("uploading") : t("uploadMp4")}
             <input
               ref={fileInputRef}
               type="file"
@@ -334,7 +336,7 @@ function MediaPageInner() {
         {tab === "images" && (
           <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-amber-500/15 px-4 py-2 text-xs font-bold text-app-on-amber-title hover:bg-amber-500/25 disabled:opacity-50">
             {imageUploadBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-            {imageUploadBusy ? "Uploading…" : "Upload images"}
+            {imageUploadBusy ? t("uploading") : t("uploadImages")}
             <input
               ref={imageInputRef}
               type="file"
@@ -374,7 +376,7 @@ function MediaPageInner() {
       {/* ── Renders tab ─────────────────────────────────────────────────── */}
       {tab === "renders" && (
         renders.length === 0
-          ? <EmptyState icon={Video} label="No renders yet — finish the Render step in Create." />
+          ? <EmptyState icon={Video} label={t("noRenders")} />
           : (
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
               {renders.map((s) => (
@@ -423,7 +425,7 @@ function MediaPageInner() {
                       className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg bg-amber-500/15 py-1.5 text-[11px] font-bold text-app-on-amber-title hover:bg-amber-500/25"
                     >
                       <Eye className="h-3 w-3" />
-                      Preview
+                      {t("preview")}
                     </button>
                     <a
                       href={s.rendered_video_url!}
@@ -452,7 +454,7 @@ function MediaPageInner() {
       {/* ── Covers tab ──────────────────────────────────────────────────── */}
       {tab === "covers" && (
         covers.length === 0
-          ? <EmptyState icon={ImageIcon} label="No covers yet — use Generate cover in Create." />
+          ? <EmptyState icon={ImageIcon} label={t("noCovers")} />
           : (
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
               {covers.map((s) => (
@@ -490,7 +492,7 @@ function MediaPageInner() {
                       className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg bg-amber-500/15 py-1.5 text-[11px] font-bold text-app-on-amber-title hover:bg-amber-500/25"
                     >
                       <Eye className="h-3 w-3" />
-                      Preview
+                      {t("preview")}
                     </button>
                     <a
                       href={s.thumbnail_url!}
@@ -519,7 +521,7 @@ function MediaPageInner() {
       {/* ── Images tab ──────────────────────────────────────────────────── */}
       {tab === "images" && (
         images.length === 0
-          ? <EmptyState icon={ImageIcon} label="No images yet — upload a PNG, JPG or WEBP." />
+          ? <EmptyState icon={ImageIcon} label={t("noImages")} />
           : (
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
               {images.map((img) => {
@@ -573,7 +575,7 @@ function MediaPageInner() {
       {/* ── B-roll tab ──────────────────────────────────────────────────── */}
       {tab === "broll" && (
         clips.length === 0
-          ? <EmptyState icon={Film} label="No clips yet — upload a .mp4 above." />
+          ? <EmptyState icon={Film} label={t("noClips")} />
           : (
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
               {clips.map((c) => {

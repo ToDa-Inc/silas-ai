@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 from supabase import Client
 
@@ -22,9 +23,10 @@ from models.onboarding import (
     ReelCandidateOut,
     ReelFeedbackBatchBody,
 )
-from services.job_queue import fail_abandoned_queued_jobs, has_active_job
+from services.job_queue import fail_abandoned_queued_jobs, fail_stale_running_jobs, has_active_job
 from services.onboarding_action_plan import generate_action_plan
 from services.onboarding_candidates import list_onboarding_reel_candidates
+from services.onboarding_questions import ONBOARDING_VOICE_QUESTIONS, normalize_lang, question_text
 from services.onboarding_state import (
     apply_quiz_to_client,
     ensure_onboarding_state,
@@ -37,10 +39,75 @@ from services.client_dna_compile import maybe_recompile_client_dna
 router = APIRouter(prefix="/api/v1/clients", tags=["onboarding"])
 logger = logging.getLogger(__name__)
 
+VOICE_STORAGE_BUCKET = "client-context"
+MAX_VOICE_BYTES = 24 * 1024 * 1024
+ALLOWED_AUDIO_FORMATS = frozenset({"webm", "mp4", "m4a", "mp3", "wav", "ogg", "aac"})
+
+
+def _run_voice_transcribe_inline(settings: Settings, job: Dict[str, Any]) -> None:
+    """Run onboarding voice STT in the API process (avoids stale/remote workers on shared Supabase)."""
+    from jobs.onboarding_voice_transcribe import run_onboarding_voice_transcribe
+
+    try:
+        run_onboarding_voice_transcribe(settings, job)
+    except Exception:
+        logger.exception("inline onboarding_voice_transcribe failed job=%s", job.get("id"))
+
+
+def _run_brain_generate_inline(settings: Settings, job: Dict[str, Any]) -> None:
+    from jobs.onboarding_brain_generate import run_onboarding_brain_generate
+
+    try:
+        run_onboarding_brain_generate(settings, job)
+    except Exception:
+        logger.exception("inline onboarding_brain_generate failed job=%s", job.get("id"))
+
+
+def _run_onboarding_pipeline_inline(settings: Settings, job: Dict[str, Any]) -> None:
+    """Run the full onboarding pipeline in the API process (avoids stale/remote workers on
+    shared Supabase — see docstring in jobs/onboarding_pipeline.py for why this matters:
+    competitor_discovery/keyword_reel_similarity used to be enqueued as separate "queued"
+    rows that any worker sharing this Supabase project could steal and instantly fail)."""
+    from jobs.onboarding_pipeline import run_onboarding_pipeline
+
+    try:
+        run_onboarding_pipeline(settings, job)
+    except Exception:
+        logger.exception("inline onboarding_pipeline failed job=%s", job.get("id"))
+
 
 class PipelineStartOut(BaseModel):
     job_id: str
     already_running: bool = False
+
+
+class VoiceGenerateBody(BaseModel):
+    answers: Dict[str, str] = Field(..., min_length=1)
+
+
+class VoiceTextBody(BaseModel):
+    text: str = Field(..., min_length=40)
+
+
+def _context_preview_locked(supabase: Client, client_id: str) -> bool:
+    crow = supabase.table("clients").select("org_id").eq("id", client_id).limit(1).execute()
+    if not crow.data:
+        return False
+    org_id = crow.data[0].get("org_id")
+    if not org_id:
+        return False
+    org = supabase.table("organizations").select("plan").eq("id", org_id).limit(1).execute()
+    if not org.data:
+        return False
+    plan = str(org.data[0].get("plan") or "free").strip().lower()
+    return plan == "free"
+
+
+def _enrich_onboarding_row(supabase: Client, client_id: str, row: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(row)
+    out["context_preview_locked"] = _context_preview_locked(supabase, client_id)
+    out["aha_complete"] = bool(out.get("aha_completed_at"))
+    return out
 
 
 _PIPELINE_TERMINAL_PHASES = {"complete", "failed"}
@@ -99,6 +166,91 @@ def _reconcile_stuck_pipeline(supabase: Client, client_id: str, row: Dict[str, A
     )
 
 
+_VOICE_IN_PROGRESS = frozenset({"pending", "transcribing", "queued_generate", "generating"})
+
+_VOICE_JOB_KEY = {
+    "pending": "voice_transcribe",
+    "transcribing": "voice_transcribe",
+    "queued_generate": "brain_generate",
+    "generating": "brain_generate",
+    "generate_failed": "brain_generate",
+}
+
+
+def _voice_job_is_dead(job: Dict[str, Any]) -> bool:
+    job_status = job.get("status")
+    if job_status == "failed":
+        return True
+    if job_status == "completed":
+        return False
+    ts_raw = job.get("started_at") or job.get("created_at")
+    ts: Optional[datetime] = None
+    if ts_raw:
+        try:
+            ts = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            ts = ts.astimezone(timezone.utc)
+        except ValueError:
+            ts = None
+    if job_status == "running" and ts is not None:
+        # Inline API jobs normally finish in under a few minutes.
+        return (datetime.now(timezone.utc) - ts) > timedelta(minutes=5)
+    if job_status == "queued" and ts is not None:
+        return (datetime.now(timezone.utc) - ts) > timedelta(minutes=5)
+    return False
+
+
+def _reconcile_voice_transcript(supabase: Client, client_id: str, row: Dict[str, Any]) -> Dict[str, Any]:
+    """Self-heal voice_transcript when the background job died without updating state."""
+    vt = dict(row.get("voice_transcript") or {})
+    phase = str(vt.get("status") or "")
+    if phase not in _VOICE_IN_PROGRESS:
+        return row
+
+    job_key = _VOICE_JOB_KEY.get(phase)
+    job_id = (row.get("job_ids") or {}).get(job_key or "")
+    if not job_id:
+        return row
+    try:
+        res = (
+            supabase.table("background_jobs")
+            .select("status,error_message,created_at,started_at")
+            .eq("id", job_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception:
+        return row
+    jobs = res.data or []
+    if not jobs:
+        return row
+    job = jobs[0]
+    if not _voice_job_is_dead(job):
+        return row
+    err = str(job.get("error_message") or vt.get("generate_error") or vt.get("error") or "Voice processing stopped unexpectedly.")
+    # Brain doc generation failed but transcription answers are still usable — keep review UI.
+    if phase in ("generate_failed",) or (
+        phase == "failed" and (vt.get("structured_answers") or vt.get("edited_answers"))
+    ):
+        return update_onboarding_state(
+            supabase,
+            client_id,
+            voice_transcript_patch={
+                "status": "generate_failed",
+                "generate_error": err[:2000],
+                "at": datetime.now(timezone.utc).isoformat(),
+            },
+            last_error=err[:2000],
+        )
+    return update_onboarding_state(
+        supabase,
+        client_id,
+        voice_transcript_patch={"status": "failed", "error": err[:2000], "at": datetime.now(timezone.utc).isoformat()},
+        last_error=err[:2000],
+    )
+
+
 @router.get("/{slug}/onboarding/status", response_model=OnboardingStatusOut)
 def onboarding_status(
     slug: str,
@@ -108,7 +260,8 @@ def onboarding_status(
     _ = slug
     row = ensure_onboarding_state(supabase, client_id)
     row = _reconcile_stuck_pipeline(supabase, client_id, row)
-    return row
+    row = _reconcile_voice_transcript(supabase, client_id, row)
+    return _enrich_onboarding_row(supabase, client_id, row)
 
 
 @router.patch("/{slug}/onboarding/status", response_model=OnboardingStatusOut)
@@ -136,16 +289,249 @@ def patch_onboarding_status(
         selected_generation_session_id=body.selected_generation_session_id,
         mark_aha_complete=bool(body.mark_aha_complete),
     )
-    return row
+    return _enrich_onboarding_row(supabase, client_id, row)
+
+
+@router.get("/{slug}/onboarding/voice/questions")
+def onboarding_voice_questions(slug: str, lang: str = "de") -> List[Dict[str, Any]]:
+    _ = slug
+    locale = normalize_lang(lang)
+    out: List[Dict[str, Any]] = []
+    for q in ONBOARDING_VOICE_QUESTIONS:
+        out.append(
+            {
+                "id": q["id"],
+                "text": question_text(q, locale),
+                "text_de": q.get("text_de"),
+                "text_en": q.get("text_en"),
+            }
+        )
+    return out
+
+
+@router.post("/{slug}/onboarding/voice/upload", response_model=PipelineStartOut)
+async def upload_onboarding_voice(
+    slug: str,
+    background_tasks: BackgroundTasks,
+    org_id: Annotated[str, Depends(require_org_access)],
+    client_id: Annotated[str, Depends(resolve_client_id)],
+    supabase: Annotated[Client, Depends(get_supabase)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    audio_format: Annotated[str, Form()] = "webm",
+    language: Annotated[str, Form()] = "auto",
+    file: UploadFile = File(...),
+) -> Dict[str, Any]:
+    """Upload voice memo and transcribe inline in the API (not the shared worker queue)."""
+    _ = slug
+    fmt = (audio_format or "webm").strip().lower().lstrip(".")
+    lang = (language or "auto").strip().lower()
+    if lang not in ("auto", "de", "en"):
+        lang = "auto"
+    if fmt not in ALLOWED_AUDIO_FORMATS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported audio format. Allowed: {', '.join(sorted(ALLOWED_AUDIO_FORMATS))}",
+        )
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty audio file")
+    if len(data) > MAX_VOICE_BYTES:
+        raise HTTPException(status_code=413, detail="Audio too large (max 24 MB)")
+
+    fail_abandoned_queued_jobs(supabase, client_id=client_id, job_type="onboarding_voice_transcribe")
+    fail_stale_running_jobs(supabase, client_id=client_id, job_type="onboarding_voice_transcribe", max_age_minutes=5)
+    if has_active_job(supabase, client_id=client_id, job_type="onboarding_voice_transcribe"):
+        res = (
+            supabase.table("background_jobs")
+            .select("id")
+            .eq("client_id", client_id)
+            .eq("job_type", "onboarding_voice_transcribe")
+            .in_("status", ["queued", "running"])
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if res.data:
+            return {"job_id": str(res.data[0]["id"]), "already_running": True}
+
+    storage_path = f"{client_id}/onboarding-audio/{uuid.uuid4().hex}.{fmt}"
+    try:
+        supabase.storage.from_(VOICE_STORAGE_BUCKET).upload(
+            storage_path,
+            data,
+            {"content-type": file.content_type or f"audio/{fmt}", "upsert": "true"},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Storage upload failed: {e}") from e
+
+    jid = generate_job_id()
+    now = datetime.now(timezone.utc).isoformat()
+    payload = {"storage_path": storage_path, "audio_format": fmt, "language": lang, "inline_api": True}
+    supabase.table("background_jobs").insert(
+        {
+            "id": jid,
+            "org_id": org_id,
+            "client_id": client_id,
+            "job_type": "onboarding_voice_transcribe",
+            "payload": payload,
+            "status": "running",
+            "started_at": now,
+            "priority": 45,
+        }
+    ).execute()
+    update_onboarding_state(
+        supabase,
+        client_id,
+        voice_transcript_patch={
+            "status": "pending",
+            "error": "",
+            "audio_storage_path": storage_path,
+            "audio_format": fmt,
+        },
+        job_ids_patch={"voice_transcribe": jid},
+    )
+    job_row = {"id": jid, "client_id": client_id, "payload": payload}
+    background_tasks.add_task(_run_voice_transcribe_inline, settings, job_row)
+    logger.info("onboarding_voice_transcribe dispatched inline job=%s client=%s", jid, client_id)
+    return {"job_id": jid, "already_running": False}
+
+
+@router.post("/{slug}/onboarding/voice/submit-text", response_model=PipelineStartOut)
+def submit_onboarding_voice_text(
+    slug: str,
+    body: VoiceTextBody,
+    background_tasks: BackgroundTasks,
+    org_id: Annotated[str, Depends(require_org_access)],
+    client_id: Annotated[str, Depends(resolve_client_id)],
+    supabase: Annotated[Client, Depends(get_supabase)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> Dict[str, Any]:
+    """Paste or upload text — skip STT, structure into per-question answers inline."""
+    _ = slug
+    text = body.text.strip()
+    if len(text) < 40:
+        raise HTTPException(status_code=400, detail="Text too short — add more detail about your business")
+
+    fail_abandoned_queued_jobs(supabase, client_id=client_id, job_type="onboarding_voice_transcribe")
+    fail_stale_running_jobs(supabase, client_id=client_id, job_type="onboarding_voice_transcribe", max_age_minutes=5)
+    if has_active_job(supabase, client_id=client_id, job_type="onboarding_voice_transcribe"):
+        res = (
+            supabase.table("background_jobs")
+            .select("id")
+            .eq("client_id", client_id)
+            .eq("job_type", "onboarding_voice_transcribe")
+            .in_("status", ["queued", "running"])
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if res.data:
+            return {"job_id": str(res.data[0]["id"]), "already_running": True}
+
+    jid = generate_job_id()
+    now = datetime.now(timezone.utc).isoformat()
+    payload = {"source": "text", "text": text, "language": "auto", "inline_api": True}
+    supabase.table("background_jobs").insert(
+        {
+            "id": jid,
+            "org_id": org_id,
+            "client_id": client_id,
+            "job_type": "onboarding_voice_transcribe",
+            "payload": payload,
+            "status": "running",
+            "started_at": now,
+            "priority": 45,
+        }
+    ).execute()
+    update_onboarding_state(
+        supabase,
+        client_id,
+        voice_transcript_patch={
+            "status": "pending",
+            "error": "",
+            "input_source": "text",
+        },
+        job_ids_patch={"voice_transcribe": jid},
+    )
+    job_row = {"id": jid, "client_id": client_id, "payload": payload}
+    background_tasks.add_task(_run_voice_transcribe_inline, settings, job_row)
+    logger.info("onboarding_voice_text dispatched inline job=%s client=%s", jid, client_id)
+    return {"job_id": jid, "already_running": False}
+
+
+@router.post("/{slug}/onboarding/voice/generate", response_model=PipelineStartOut)
+def start_onboarding_brain_generate(
+    slug: str,
+    body: VoiceGenerateBody,
+    background_tasks: BackgroundTasks,
+    org_id: Annotated[str, Depends(require_org_access)],
+    client_id: Annotated[str, Depends(resolve_client_id)],
+    supabase: Annotated[Client, Depends(get_supabase)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> Dict[str, Any]:
+    """After user reviews per-question answers, generate strategy docs inline in the API."""
+    _ = slug
+    answers = {str(k): str(v).strip() for k, v in body.answers.items() if str(v).strip()}
+    if not answers:
+        raise HTTPException(status_code=400, detail="At least one answer is required")
+
+    fail_abandoned_queued_jobs(supabase, client_id=client_id, job_type="onboarding_brain_generate")
+    fail_stale_running_jobs(supabase, client_id=client_id, job_type="onboarding_brain_generate", max_age_minutes=5)
+    if has_active_job(supabase, client_id=client_id, job_type="onboarding_brain_generate"):
+        res = (
+            supabase.table("background_jobs")
+            .select("id")
+            .eq("client_id", client_id)
+            .eq("job_type", "onboarding_brain_generate")
+            .in_("status", ["queued", "running"])
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if res.data:
+            return {"job_id": str(res.data[0]["id"]), "already_running": True}
+
+    jid = generate_job_id()
+    now = datetime.now(timezone.utc).isoformat()
+    payload = {"answers": answers, "inline_api": True}
+    supabase.table("background_jobs").insert(
+        {
+            "id": jid,
+            "org_id": org_id,
+            "client_id": client_id,
+            "job_type": "onboarding_brain_generate",
+            "payload": payload,
+            "status": "running",
+            "started_at": now,
+            "priority": 40,
+        }
+    ).execute()
+    update_onboarding_state(
+        supabase,
+        client_id,
+        voice_transcript_patch={"status": "queued_generate", "edited_answers": answers},
+        job_ids_patch={"brain_generate": jid},
+    )
+    job_row = {"id": jid, "client_id": client_id, "payload": payload}
+    background_tasks.add_task(_run_brain_generate_inline, settings, job_row)
+    logger.info("onboarding_brain_generate dispatched inline job=%s client=%s", jid, client_id)
+    return {"job_id": jid, "already_running": False}
 
 
 @router.post("/{slug}/onboarding/pipeline/start", response_model=PipelineStartOut)
 def start_onboarding_pipeline(
     slug: str,
+    background_tasks: BackgroundTasks,
     org_id: Annotated[str, Depends(require_org_access)],
     client_id: Annotated[str, Depends(resolve_client_id)],
     supabase: Annotated[Client, Depends(get_supabase)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> Dict[str, Any]:
+    """Runs the whole onboarding pipeline inline in this API process — see
+    jobs/onboarding_pipeline.py docstring for why it never goes through the shared
+    background_jobs "queued" state (a teammate's local worker or the production Railway
+    worker sharing this Supabase project would otherwise race to claim and fail it)."""
     _ = slug
     fail_abandoned_queued_jobs(supabase, client_id=client_id, job_type="onboarding_pipeline")
     if has_active_job(supabase, client_id=client_id, job_type="onboarding_pipeline"):
@@ -164,6 +550,7 @@ def start_onboarding_pipeline(
         raise HTTPException(status_code=409, detail="Pipeline already running")
 
     jid = generate_job_id()
+    now = datetime.now(timezone.utc).isoformat()
     supabase.table("background_jobs").insert(
         {
             "id": jid,
@@ -171,7 +558,8 @@ def start_onboarding_pipeline(
             "client_id": client_id,
             "job_type": "onboarding_pipeline",
             "payload": {},
-            "status": "queued",
+            "status": "running",
+            "started_at": now,
             "priority": 30,
         }
     ).execute()
@@ -179,9 +567,12 @@ def start_onboarding_pipeline(
         supabase,
         client_id,
         current_step="pipeline",
-        pipeline_progress={"phase": "queued", "job_id": jid},
+        pipeline_progress={"phase": "running", "job_id": jid},
         job_ids_patch={"pipeline": jid},
     )
+    job_row = {"id": jid, "org_id": org_id, "client_id": client_id, "payload": {}}
+    background_tasks.add_task(_run_onboarding_pipeline_inline, settings, job_row)
+    logger.info("onboarding_pipeline dispatched inline job=%s client=%s", jid, client_id)
     return {"job_id": jid, "already_running": False}
 
 
@@ -310,7 +701,11 @@ def start_first_content(
         source_type="url_adapt",
         url=post_url,
         format_key=body.format_key,
-        extra_instruction="First onboarding content — adapt this approved outlier closely.",
+        # Onboarding drops the user straight into the editor with no angle-picker UI, so
+        # skip angle generation/selection entirely and package a script immediately —
+        # otherwise the session lands on "angles_ready" with an empty script and the
+        # editor has nothing to hand off to rendering/HeyGen.
+        recreate_mode="one_to_one",
     )
     session = generation_start(
         slug,

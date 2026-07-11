@@ -66,6 +66,7 @@ export type GenerationSession = {
   carousel_slide_count?: number | null;
   status: string;
   feedback?: string | null;
+  last_error?: string | null;
   prompt_version?: string | null;
   created_at?: string | null;
   updated_at?: string | null;

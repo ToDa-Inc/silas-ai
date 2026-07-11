@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set
 
 from core.config import Settings
+from core.errors import MissingCredentialsError
 from core.database import get_supabase_for_settings
 from core.id_generator import generate_job_id
 from jobs.keyword_reel_similarity import (
@@ -158,7 +159,7 @@ def enqueue_batch_rescore_job(
 
 def run_batch_rescore_scraped_reels_similarity(settings: Settings, job: Dict[str, Any]) -> None:
     if not settings.apify_api_token or not settings.openrouter_api_key:
-        raise RuntimeError("APIFY_API_TOKEN and OPENROUTER_API_KEY required")
+        raise MissingCredentialsError("APIFY_API_TOKEN and OPENROUTER_API_KEY required")
 
     root = logging.getLogger()
     if not root.handlers:

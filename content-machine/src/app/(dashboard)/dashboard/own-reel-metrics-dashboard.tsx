@@ -25,25 +25,25 @@ import { ChartSkeleton } from "@/components/ui/app-skeleton";
 import { useSideDrawerExpanded } from "@/components/home/side-drawer";
 
 const LINE_COLORS_LIGHT = [
-  "#b45309",
-  "#0f766e",
-  "#6d28d9",
-  "#be185d",
-  "#1d4ed8",
-  "#a16207",
-  "#047857",
-  "#c2410c",
+  "#12494a",
+  "#2fc9c0",
+  "#1e7a75",
+  "#00b8ad",
+  "#26a39c",
+  "#4dd4cc",
+  "#3e4644",
+  "#0a1a1c",
 ] as const;
 
 const LINE_COLORS_DARK = [
-  "#fbbf24",
-  "#2dd4bf",
-  "#a78bfa",
-  "#f472b6",
-  "#60a5fa",
-  "#facc15",
-  "#34d399",
-  "#fb923c",
+  "#2fc9c0",
+  "#00e5d8",
+  "#4dd4cc",
+  "#7dd9d3",
+  "#12494a",
+  "#26a39c",
+  "#a9ebe5",
+  "#33ebe0",
 ] as const;
 
 /** Backend page size for collecting every reel in the selected publication-date window. */
@@ -650,7 +650,7 @@ export function OwnReelMetricsDashboard({ clientSlug, orgSlug, focusReelId }: Pr
     borderRadius: 12,
     padding: "10px 12px",
     fontSize: 12,
-    color: isDark ? "#f4f4f5" : "#18181b",
+    color: isDark ? "#f2f2f0" : "#0a1a1c",
     boxShadow: isDark
       ? "0 12px 40px rgba(0,0,0,0.55)"
       : "0 4px 20px rgba(0,0,0,0.08)",
@@ -658,7 +658,7 @@ export function OwnReelMetricsDashboard({ clientSlug, orgSlug, focusReelId }: Pr
   };
 
   const tooltipLabelStyle: CSSProperties = {
-    color: isDark ? "#fafafa" : "#09090b",
+    color: isDark ? "#f2f2f0" : "#050708",
     fontWeight: 600,
     fontSize: 12,
     marginBottom: 6,
@@ -1085,7 +1085,7 @@ export function OwnReelMetricsDashboard({ clientSlug, orgSlug, focusReelId }: Pr
                         name={key}
                         stroke={c}
                         strokeWidth={2.25}
-                        dot={{ r: 2.5, fill: c, stroke: isDark ? "#18181b" : "#fff", strokeWidth: 1 }}
+                        dot={{ r: 2.5, fill: c, stroke: isDark ? "#0a1a1c" : "#f3f4f2", strokeWidth: 1 }}
                         activeDot={{ r: 5, fill: c, stroke: isDark ? "#fafafa" : "#fff", strokeWidth: 2 }}
                         connectNulls
                         hide={isHidden}

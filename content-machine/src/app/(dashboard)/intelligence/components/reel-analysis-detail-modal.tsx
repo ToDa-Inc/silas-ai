@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 import { ChevronDown, ChevronUp, Loader2, X } from "lucide-react";
 import { fetchReelAnalysisDetail } from "@/lib/api-client";
 import { ReelHistoryStrip } from "./reel-history-strip";
@@ -77,6 +78,7 @@ function suggestedBlock(raw: unknown): string | null {
 }
 
 export function ReelAnalysisDetailModal({ open, onClose, reelId, clientSlug, orgSlug }: Props) {
+  const t = useTranslations("common");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [data, setData] = useState<ReelAnalysisDetail | null>(null);
@@ -138,13 +140,16 @@ export function ReelAnalysisDetailModal({ open, onClose, reelId, clientSlug, org
   const wt = wtParsed != null && Number.isFinite(wtParsed) ? wtParsed : null;
   const disp =
     data != null
-      ? formatSilasScoreSummary({
-          total_score: data.total_score,
-          replicability_rating: data.replicability_rating,
-          weighted_total: wt,
-          silas_rating: typeof json?.rating === "string" ? json.rating : null,
-          prompt_version: data.prompt_version,
-        })
+      ? formatSilasScoreSummary(
+          {
+            total_score: data.total_score,
+            replicability_rating: data.replicability_rating,
+            weighted_total: wt,
+            silas_rating: typeof json?.rating === "string" ? json.rating : null,
+            prompt_version: data.prompt_version,
+          },
+          t,
+        )
       : null;
 
   const why =

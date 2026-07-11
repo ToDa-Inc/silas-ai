@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { getTranslations } from "next-intl/server";
 import {
   fetchBaseline,
   fetchClient,
@@ -104,6 +105,7 @@ function optionalInt(raw: string | undefined): number | null {
 }
 
 export default async function IntelligenceReelsPage({ searchParams }: PageProps) {
+  const t = await getTranslations("intelligence");
   const sp = await searchParams;
 
   const outliersOnly = sp.outliers === "1" || sp.outliers === "true";
@@ -141,11 +143,11 @@ export default async function IntelligenceReelsPage({ searchParams }: PageProps)
   const syncDisabled = !clientSlug.trim() || !orgSlug.trim();
   const syncDisabledHint =
     user && !tenancy
-      ? "No workspace membership visible for this login — see the alert on Intelligence."
+      ? t("noWorkspaceHint")
       : !orgSlug.trim()
-        ? "Missing organization slug — refresh or check Supabase session."
+        ? t("missingOrg")
         : !clientSlug.trim()
-          ? "Pick a creator in the header or finish onboarding."
+          ? t("pickCreator")
           : null;
 
   const [reelsRes, compRes, baselineRes, clientRes] = await Promise.all([
@@ -188,7 +190,7 @@ export default async function IntelligenceReelsPage({ searchParams }: PageProps)
     clientRes.ok && clientRes.data?.instagram_handle
       ? clientRes.data.instagram_handle.replace(/^@/, "").trim()
       : "";
-  const ownCatalogLabel = igHandleRaw ? `@${igHandleRaw}` : "Your reels";
+  const ownCatalogLabel = igHandleRaw ? `@${igHandleRaw}` : t("yourReels");
 
   const buildHref = (opts: {
     outliers?: boolean;
@@ -227,12 +229,12 @@ export default async function IntelligenceReelsPage({ searchParams }: PageProps)
                 href="/intelligence"
                 className="font-medium text-app-fg-muted transition-colors hover:text-zinc-800 dark:hover:text-app-fg-secondary"
               >
-                ← Intelligence
+                ← {t("title")}
               </Link>
               <span className="text-zinc-300 dark:text-zinc-600" aria-hidden>
                 /
               </span>
-              <span className="font-semibold tracking-tight text-app-fg">Reels catalog</span>
+              <span className="font-semibold tracking-tight text-app-fg">{t("reelsCatalog")}</span>
             </div>
             <p className="max-w-xl text-xs leading-relaxed text-app-fg-muted md:text-sm">
               Scope what you&apos;re optimizing for, then pick which slice of the library to
@@ -264,7 +266,7 @@ export default async function IntelligenceReelsPage({ searchParams }: PageProps)
                     own: ownOnly ? true : undefined,
                     source: ownOnly ? undefined : source ? source : undefined,
                   }),
-                  label: "All reels",
+                  label: t("allReels"),
                   active: !outliersOnly,
                   variant: "neutral",
                 },
@@ -275,7 +277,7 @@ export default async function IntelligenceReelsPage({ searchParams }: PageProps)
                     own: ownOnly ? true : undefined,
                     source: ownOnly ? undefined : source ? source : undefined,
                   }),
-                  label: "Breakouts only",
+                  label: t("breakoutsOnly"),
                   active: outliersOnly,
                   variant: "amber",
                 },
@@ -295,7 +297,7 @@ export default async function IntelligenceReelsPage({ searchParams }: PageProps)
                     competitor: competitorId || null,
                     dropFavourites: true,
                   }),
-                  label: "Everything",
+                  label: t("everything"),
                   active: !source && !ownOnly && !favouritesOnly,
                   variant: "neutral",
                 },
@@ -317,7 +319,7 @@ export default async function IntelligenceReelsPage({ searchParams }: PageProps)
                     source: "profile",
                     dropFavourites: true,
                   }),
-                  label: "Competitors",
+                  label: t("competitorsFilter"),
                   active: source === "profile",
                   variant: "neutral",
                 },
@@ -328,7 +330,7 @@ export default async function IntelligenceReelsPage({ searchParams }: PageProps)
                     source: "keyword_similarity",
                     dropFavourites: true,
                   }),
-                  label: "Niche finds",
+                  label: t("nicheFindsFilter"),
                   active: source === "keyword_similarity",
                   variant: "purple",
                 },
@@ -339,7 +341,7 @@ export default async function IntelligenceReelsPage({ searchParams }: PageProps)
                     source: "url_paste",
                     dropFavourites: true,
                   }),
-                  label: "Saved links",
+                  label: t("savedLinks"),
                   active: source === "url_paste" && !favouritesOnly,
                   variant: "neutral",
                 },
@@ -349,7 +351,7 @@ export default async function IntelligenceReelsPage({ searchParams }: PageProps)
                     competitor: competitorId || null,
                     forceFavourites: true,
                   }),
-                  label: "Favourites",
+                  label: t("favourites"),
                   active: favouritesOnly,
                   variant: "amber",
                 },
@@ -360,7 +362,7 @@ export default async function IntelligenceReelsPage({ searchParams }: PageProps)
                     source: "niche_search",
                     dropFavourites: true,
                   }),
-                  label: "Legacy",
+                  label: t("legacy"),
                   active: source === "niche_search",
                   variant: "neutral",
                 },

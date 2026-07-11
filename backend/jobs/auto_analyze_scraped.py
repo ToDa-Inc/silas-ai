@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Set, Tuple
 
 from core.config import Settings
+from core.errors import MissingCredentialsError
 from core.database import get_supabase_for_settings
 from services.instagram_post_url import canonical_instagram_post_url
 from services.format_digest_jobs import enqueue_auto_analyze_scraped
@@ -77,7 +78,7 @@ def _posted_at_sort_key(posted_raw: Any) -> Tuple[int, float]:
 
 def run_auto_analyze_scraped(settings: Settings, job: Dict[str, Any]) -> None:
     if not settings.openrouter_api_key:
-        raise RuntimeError("OPENROUTER_API_KEY required")
+        raise MissingCredentialsError("OPENROUTER_API_KEY required")
 
     supabase = get_supabase_for_settings(settings)
     job_id = job["id"]

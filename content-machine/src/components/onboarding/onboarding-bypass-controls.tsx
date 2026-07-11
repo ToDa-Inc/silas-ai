@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { useState } from "react";
 import { ArrowRight, Loader2, RotateCcw } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/cn";
 import {
   ONBOARDING_BYPASS_RESUME_HREF,
@@ -64,24 +65,26 @@ function BypassActionButton({
 
 /** Shown in onboarding header — skip gate and open the app. */
 export function OnboardingSkipToStudioButton({ bypassActive }: { bypassActive?: boolean }) {
+  const t = useTranslations("nav");
+
   if (bypassActive) {
     return (
       <div className="flex flex-wrap items-center justify-end gap-2">
         <Link href="/dashboard" className={ghostClass}>
-          Open studio
+          {t("openStudio")}
           <ArrowRight className="h-3.5 w-3.5" aria-hidden />
         </Link>
-        <BypassActionButton href={ONBOARDING_BYPASS_RESUME_HREF} className={amberClass} pendingLabel="Resuming…">
+        <BypassActionButton href={ONBOARDING_BYPASS_RESUME_HREF} className={amberClass} pendingLabel={t("resuming")}>
           <RotateCcw className="h-3.5 w-3.5" aria-hidden />
-          Resume setup
+          {t("resumeSetup")}
         </BypassActionButton>
       </div>
     );
   }
 
   return (
-    <BypassActionButton href={ONBOARDING_BYPASS_SKIP_HREF} className={skipLinkClass} pendingLabel="Opening studio…">
-      Skip setup
+    <BypassActionButton href={ONBOARDING_BYPASS_SKIP_HREF} className={skipLinkClass} pendingLabel={t("openingStudio")}>
+      {t("skipSetup")}
     </BypassActionButton>
   );
 }
@@ -92,27 +95,30 @@ type BannerProps = {
 
 /** Shown on dashboard when bypass cookie is set. */
 export function OnboardingBypassBanner({ active }: BannerProps) {
+  const t = useTranslations("nav");
+  const tOnboarding = useTranslations("onboarding");
+
   if (!active) return null;
 
   return (
     <div className="flex flex-wrap items-center justify-center gap-2 border-b border-amber-400/30 bg-amber-400/10 px-4 py-2.5 text-xs text-amber-950 dark:text-amber-100">
-      <span className="font-semibold">Setup skipped</span>
+      <span className="font-semibold">{t("setupSkipped")}</span>
       <span className="hidden text-amber-900/70 sm:inline dark:text-amber-200/70">
-        — you can return to onboarding anytime
+        {tOnboarding("returnToOnboardingAnytime")}
       </span>
       <BypassActionButton
         href={ONBOARDING_BYPASS_RESUME_HREF}
         className="inline-flex items-center gap-1 rounded-lg border border-amber-500/40 bg-amber-500/15 px-2.5 py-1 text-[11px] font-bold text-amber-950 hover:bg-amber-500/25 dark:text-amber-50"
-        pendingLabel="Resuming…"
+        pendingLabel={t("resuming")}
       >
         <RotateCcw className="h-3 w-3" aria-hidden />
-        Resume onboarding
+        {t("resumeOnboarding")}
       </BypassActionButton>
       <Link
         href="/onboarding"
         className="inline-flex items-center gap-1 rounded-lg border border-amber-500/25 bg-white/40 px-2.5 py-1 text-[11px] font-bold text-amber-950 hover:bg-white/60 dark:bg-white/10 dark:text-amber-50 dark:hover:bg-white/15"
       >
-        Open setup UI
+        {t("openSetupUi")}
       </Link>
     </div>
   );

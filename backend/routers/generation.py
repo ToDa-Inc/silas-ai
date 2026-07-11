@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Any, Dict, List, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from supabase import Client
 
 from core.config import Settings, get_settings
@@ -450,6 +450,7 @@ def auto_video_idea(
 def generation_start(
     slug: str,
     body: GenerationStartBody,
+    background_tasks: BackgroundTasks,
     client_id: Annotated[str, Depends(resolve_client_id)],
     supabase: Annotated[Client, Depends(get_supabase)],
     settings: Annotated[Settings, Depends(get_settings)],
@@ -533,6 +534,24 @@ def generation_start(
                 raise HTTPException(status_code=400, detail="Valid Instagram reel URL required")
             url_key = canonical_instagram_post_url(raw_u)
             source_url = url_key
+            if body.recreate_mode == "one_to_one":
+                from services.daily_post_draft import (
+                    _find_existing_session_for_url,
+                    run_session_packaging_job,
+                )
+
+                existing = _find_existing_session_for_url(supabase, client_id, url_key)
+                if existing:
+                    existing_status = str(existing.get("status") or "")
+                    if existing_status == "content_ready":
+                        return _row_to_out(existing)
+                    if existing_status == "angles_ready" and not existing.get("last_error"):
+                        background_tasks.add_task(
+                            run_session_packaging_job,
+                            client_id,
+                            str(existing["id"]),
+                        )
+                        return _row_to_out(existing)
             # Optional user override: which production format the user wants to recreate
             # the reel as. When set, the synthesis + angles are steered toward that target
             # format instead of mirroring the source reel's original format.
@@ -805,27 +824,13 @@ def generation_start(
         raise HTTPException(status_code=500, detail="Insert failed")
 
     if one_to_one_recreate:
-        # Skip the angle-selection step: package the strict 1:1 blueprint right away so the
-        # session lands on content_ready and the UI opens directly in the studio.
+        # Return angles_ready immediately; package hooks/script/caption in the background
+        # so Home "Make post" can open the studio without blocking on LLM packaging.
+        from services.daily_post_draft import run_session_packaging_job
+
         inserted = dict(ins.data[0])
-        try:
-            return _finalize_session_package(
-                supabase,
-                settings,
-                client_id=client_id,
-                session_id=sid,
-                row=inserted,
-                client_row=client_row,
-                angle_index=0,
-                chosen_angle=angles[0],
-                patterns=patterns,
-                feedback=None,
-            )
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.exception("one_to_one recreate packaging failed")
-            raise HTTPException(status_code=502, detail=str(e)) from e
+        background_tasks.add_task(run_session_packaging_job, client_id, sid)
+        return _row_to_out(inserted)
 
     return _row_to_out(ins.data[0])
 
@@ -845,6 +850,26 @@ def _synthetic_blueprint_angle() -> Dict[str, Any]:
         "draft_hook": "",
         "mechanism_note": "",
     }
+
+
+def _persist_packaging_failure(
+    supabase: Client,
+    client_id: str,
+    session_id: str,
+    *,
+    angle_index: int,
+    error: Exception,
+) -> dict:
+    """Keep session at angles_ready but surface error so the UI can retry choose-angle."""
+    now = _now_iso()
+    supabase.table("generation_sessions").update(
+        {
+            "chosen_angle_index": angle_index,
+            "last_error": str(error)[:2000],
+            "updated_at": now,
+        }
+    ).eq("id", session_id).execute()
+    return _row_to_out(_load_session(supabase, client_id, session_id))
 
 
 def _finalize_session_package(
@@ -884,7 +909,13 @@ def _finalize_session_package(
             )
         except Exception as e:
             logger.exception("session package failed (carousel copy)")
-            raise HTTPException(status_code=502, detail=str(e)) from e
+            return _persist_packaging_failure(
+                supabase,
+                client_id,
+                session_id,
+                angle_index=angle_index,
+                error=e,
+            )
 
         from models.generation import GenerateCarouselSlidesBody
         from routers.creation import build_carousel_slides_payload, carousel_slide_count_effective
@@ -904,7 +935,13 @@ def _finalize_session_package(
             )
         except Exception as e:
             logger.exception("session package failed (carousel slides)")
-            raise HTTPException(status_code=502, detail=str(e)) from e
+            return _persist_packaging_failure(
+                supabase,
+                client_id,
+                session_id,
+                angle_index=angle_index,
+                error=e,
+            )
 
         script_outline = "\n\n".join(
             f"## Slide {int(s.get('idx', i)) + 1}\n{str(s.get('text') or '').strip()}"
@@ -924,6 +961,7 @@ def _finalize_session_package(
             "carousel_slides": slides,
             "cover_text_options": None,
             "status": "content_ready",
+            "last_error": None,
             "updated_at": now,
         }
         supabase.table("generation_sessions").update(patch).eq("id", session_id).execute()
@@ -953,7 +991,13 @@ def _finalize_session_package(
         )
     except Exception as e:
         logger.exception("session package failed")
-        raise HTTPException(status_code=502, detail=str(e)) from e
+        return _persist_packaging_failure(
+            supabase,
+            client_id,
+            session_id,
+            angle_index=angle_index,
+            error=e,
+        )
 
     cover_options: List[str] = []
     try:
@@ -980,6 +1024,7 @@ def _finalize_session_package(
         "text_blocks": package.get("text_blocks"),
         "cover_text_options": cover_options or None,
         "status": "content_ready",
+        "last_error": None,
         "updated_at": now,
     }
     supabase.table("generation_sessions").update(patch).eq("id", session_id).execute()
@@ -1194,6 +1239,7 @@ def generation_regenerate(
         "story_variants": package["story_variants"],
         "text_blocks": package.get("text_blocks"),
         "status": "content_ready",
+        "last_error": None,
         "updated_at": now,
     }
     supabase.table("generation_sessions").update(patch).eq("id", session_id).execute()

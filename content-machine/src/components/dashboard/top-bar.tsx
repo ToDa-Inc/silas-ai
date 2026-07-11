@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { Sparkles } from "lucide-react";
 import { AvatarMenu } from "./avatar-menu";
 import { ClientSwitcher, type ClientOption } from "./client-switcher";
@@ -13,6 +14,7 @@ type TopBarProps = {
 };
 
 export function TopBar({ clients = [], activeSlug = "", orgSlug = "" }: TopBarProps) {
+  const t = useTranslations("nav");
   const pathname = usePathname();
   const onHome = pathname === "/dashboard" || pathname.startsWith("/dashboard/");
 
@@ -47,7 +49,7 @@ export function TopBar({ clients = [], activeSlug = "", orgSlug = "" }: TopBarPr
 
       {onHome ? (
         <div className="sr-only" aria-live="polite">
-          Home
+          {t("home")}
         </div>
       ) : null}
     </header>

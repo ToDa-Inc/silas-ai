@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
+from pydantic import BaseModel, ConfigDict, Field
 from supabase import Client
 
 from core.cache import cache_delete, cache_get, cache_set
@@ -61,11 +62,22 @@ from services.scrape_cycle import (
     enqueue_keyword_reel_similarity_for_client,
     find_stale_competitors,
 )
+from services.daily_opportunities import (
+    compute_and_store_daily_opportunities,
+    get_today_snapshot_meta,
+    hydrate_reels_by_ids,
+    reconcile_daily_post_fields,
+    _backfill_primary_reel_id,
+    _load_snapshot_row,
+    _today_utc,
+)
+from services.daily_post_draft import DRAFT_STATUS_PENDING, DRAFT_STATUS_READY, run_daily_post_draft_job
 from services.reel_metrics import (
     compute_niche_benchmarks,
     enrich_engagement_metrics,
     normalize_scraped_reel_row_for_api,
 )
+from services.reel_thumbnail_refresh import refresh_stale_reel_thumbnails
 from services.reels_media_type_filter import apply_reels_media_type_filter
 
 router = APIRouter(prefix="/api/v1", tags=["intelligence"])
@@ -1029,13 +1041,28 @@ def _normalize_silas_rating(val: Any) -> Optional[str]:
     return str(val)
 
 
+def _preview_summary_from_analysis_row(row: dict) -> Optional[str]:
+    """Best one-liner for hover previews — Silas content summary, then niche fit, then content_angle."""
+    for key in ("content_summary", "what_the_video_is_about", "content_angle"):
+        val = row.get(key)
+        if isinstance(val, str):
+            t = val.strip()
+            if t:
+                return t[:500]
+    return None
+
+
 def _attach_reel_analyses(supabase: Client, client_id: str, reels: list[dict]) -> None:
     """Merge latest reel_analyses summary onto each scraped_reels row (by reel_id, else post_url)."""
     if not reels:
         return
     select_v2 = (
         "id, reel_id, post_url, total_score, replicability_rating, analyzed_at, prompt_version, "
-        "weighted_total:full_analysis_json->weighted_total, silas_rating:full_analysis_json->>rating"
+        "content_angle, "
+        "weighted_total:full_analysis_json->weighted_total, "
+        "silas_rating:full_analysis_json->>rating, "
+        "content_summary:full_analysis_json->structured_summary->>content_summary, "
+        "what_the_video_is_about:full_analysis_json->keyword_similarity->>what_the_video_is_about"
     )
     select_legacy = (
         "id, reel_id, post_url, total_score, replicability_rating, analyzed_at, prompt_version"
@@ -1123,6 +1150,7 @@ def _attach_reel_analyses(supabase: Client, client_id: str, reels: list[dict]) -
                 "prompt_version": chosen.get("prompt_version"),
                 "weighted_total": _coerce_json_weighted_total(chosen.get("weighted_total")),
                 "silas_rating": _normalize_silas_rating(chosen.get("silas_rating")),
+                "preview_summary": _preview_summary_from_analysis_row(chosen),
             }
 
 
@@ -2373,6 +2401,7 @@ def list_reels(
     slug: str,
     client_id: Annotated[str, Depends(resolve_client_id)],
     supabase: Annotated[Client, Depends(get_supabase)],
+    settings: Annotated[Settings, Depends(get_settings)],
     outlier_only: bool = Query(False),
     own_reels_only: bool = Query(
         False,
@@ -2509,6 +2538,11 @@ def list_reels(
             # Table missing or RLS — return reels without analysis
             pass
 
+    if data:
+        refresh_stale_reel_thumbnails(
+            supabase, settings, data, max_refresh=min(limit, 30)
+        )
+
     # Total count (matching filters, ignoring limit/offset). Lightweight HEAD
     # query — no row payload returned, only the count metadata.
     total = len(data)
@@ -2564,6 +2598,7 @@ def adapt_preview_reels(
     slug: str,
     client_id: Annotated[str, Depends(resolve_client_id)],
     supabase: Annotated[Client, Depends(get_supabase)],
+    settings: Annotated[Settings, Depends(get_settings)],
     limit: int = Query(5, ge=1, le=20, description="How many reels to return after ranking."),
     pool: int = Query(
         250,
@@ -2614,7 +2649,10 @@ def adapt_preview_reels(
             return float("inf")
 
     rows.sort(key=_cvr_sort_key, reverse=False)
-    return rows[:limit]
+    top = rows[:limit]
+    if top:
+        refresh_stale_reel_thumbnails(supabase, settings, top, max_refresh=len(top))
+    return top
 
 
 @router.get("/clients/{slug}/reels/source-preview", response_model=ScrapedReelOut)
@@ -3317,6 +3355,170 @@ def dashboard_competitor_wins(
     return top
 
 
+class DashboardTodayPicksOut(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    fresh_niche: List[Dict[str, Any]] = Field(default_factory=list)
+    competitor_wins: List[Dict[str, Any]] = Field(default_factory=list)
+    computed_at: Optional[str] = None
+    is_fallback: bool = False
+    pick_date: Optional[str] = None
+    primary_reel_id: Optional[str] = None
+    daily_session_id: Optional[str] = None
+    draft_status: Optional[str] = None
+    draft_error: Optional[str] = None
+
+
+def _daily_post_from_snap(
+    supabase: Client,
+    client_id: str,
+    snap: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    return reconcile_daily_post_fields(supabase, client_id, snap)
+
+
+def _build_today_picks_payload(
+    supabase: Client,
+    client_id: str,
+    snap: Optional[Dict[str, Any]],
+    settings: Optional[Settings] = None,
+) -> dict:
+    daily = _daily_post_from_snap(supabase, client_id, snap)
+    if not snap:
+        return {
+            "fresh_niche": [],
+            "competitor_wins": [],
+            "computed_at": None,
+            "is_fallback": True,
+            "pick_date": None,
+            **daily,
+        }
+
+    fresh_ids = snap.get("fresh_niche_reel_ids") if isinstance(snap.get("fresh_niche_reel_ids"), list) else []
+    win_ids = (
+        snap.get("competitor_win_reel_ids")
+        if isinstance(snap.get("competitor_win_reel_ids"), list)
+        else []
+    )
+    fresh_ids = [str(x) for x in fresh_ids if str(x).strip()]
+    win_ids = [str(x) for x in win_ids if str(x).strip()]
+
+    fresh = hydrate_reels_by_ids(supabase, client_id, fresh_ids)
+    wins = hydrate_reels_by_ids(supabase, client_id, win_ids)
+    combined = fresh + wins
+    if combined and settings is not None:
+        refresh_stale_reel_thumbnails(
+            supabase, settings, combined, max_refresh=len(combined)
+        )
+    if combined:
+        try:
+            _attach_reel_analyses(supabase, client_id, combined)
+        except Exception:
+            pass
+
+    source = str(snap.get("source") or "cron")
+    return {
+        "fresh_niche": fresh,
+        "competitor_wins": wins,
+        "computed_at": snap.get("computed_at"),
+        "is_fallback": source not in ("cron",),
+        "pick_date": str(snap.get("pick_date") or ""),
+        **daily,
+    }
+
+
+@router.get(
+    "/clients/{slug}/dashboard/today-picks",
+    response_model=DashboardTodayPicksOut,
+)
+def dashboard_today_picks(
+    slug: str,
+    background_tasks: BackgroundTasks,
+    client_id: Annotated[str, Depends(resolve_client_id)],
+    supabase: Annotated[Client, Depends(get_supabase)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict:
+    """Today's fixed opportunity picks from snapshot; lazy-computes if cron has not run yet."""
+    _ = slug
+    day = _today_utc()
+    snap = _load_snapshot_row(supabase, client_id, day)
+    if not snap:
+        snap = get_today_snapshot_meta(supabase, client_id, settings=settings, ensure_draft=False)
+    elif snap:
+        snap = _backfill_primary_reel_id(supabase, client_id, snap)
+
+    if snap:
+        daily = reconcile_daily_post_fields(supabase, client_id, snap)
+        attempted_raw = snap.get("draft_attempted_at")
+        if daily.get("draft_status") == DRAFT_STATUS_PENDING and attempted_raw:
+            try:
+                attempted_at = datetime.fromisoformat(str(attempted_raw).replace("Z", "+00:00"))
+                if attempted_at.tzinfo is None:
+                    attempted_at = attempted_at.replace(tzinfo=timezone.utc)
+                age_s = (datetime.now(timezone.utc) - attempted_at).total_seconds()
+                if age_s >= 45:
+                    background_tasks.add_task(
+                        run_daily_post_draft_job,
+                        client_id,
+                        str(snap.get("pick_date") or day.isoformat()),
+                    )
+            except (ValueError, TypeError):
+                pass
+
+    return _build_today_picks_payload(supabase, client_id, snap, settings=settings)
+
+
+@router.post(
+    "/clients/{slug}/dashboard/today-post",
+    response_model=DashboardTodayPicksOut,
+)
+def dashboard_create_today_post(
+    slug: str,
+    background_tasks: BackgroundTasks,
+    client_id: Annotated[str, Depends(resolve_client_id)],
+    supabase: Annotated[Client, Depends(get_supabase)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict:
+    """Kick off today's script-ready post; returns immediately while packaging runs."""
+    _ = slug
+    if not settings.openrouter_api_key:
+        raise HTTPException(status_code=503, detail="OPENROUTER_API_KEY not configured")
+
+    day = _today_utc()
+    row = _load_snapshot_row(supabase, client_id, day)
+    if not row:
+        compute_and_store_daily_opportunities(
+            supabase, client_id, source="manual", pick_date=day
+        )
+        row = _load_snapshot_row(supabase, client_id, day)
+    if row:
+        row = _backfill_primary_reel_id(supabase, client_id, row)
+
+    daily = reconcile_daily_post_fields(supabase, client_id, row)
+    if (
+        daily.get("draft_status") == DRAFT_STATUS_READY
+        and str(daily.get("daily_session_id") or "").strip()
+    ):
+        cache_delete(f"home_summary:{client_id}")
+        return _build_today_picks_payload(supabase, client_id, row, settings=settings)
+
+    in_flight = (
+        daily.get("draft_status") == DRAFT_STATUS_PENDING
+        and str(daily.get("daily_session_id") or "").strip()
+        and row.get("draft_attempted_at")
+    )
+    if not in_flight and row:
+        background_tasks.add_task(
+            run_daily_post_draft_job,
+            client_id,
+            str(row.get("pick_date") or day.isoformat()),
+        )
+
+    cache_delete(f"home_summary:{client_id}")
+    row = _load_snapshot_row(supabase, client_id, day) or row
+    return _build_today_picks_payload(supabase, client_id, row, settings=settings)
+
+
 # ---------------------------------------------------------------------------
 # Home dashboard summary (agent team + hero hints)
 # ---------------------------------------------------------------------------
@@ -3451,6 +3653,7 @@ def home_summary(
     slug: str,
     client_id: Annotated[str, Depends(resolve_client_id)],
     supabase: Annotated[Client, Depends(get_supabase)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> Dict[str, Any]:
     """Aggregated Home cockpit stats for Scout / Writer / Analyst agents."""
     _ = slug
@@ -3458,6 +3661,12 @@ def home_summary(
     cached = cache_get(cache_key, ttl_seconds=90)
     if cached is not None:
         return cached
+
+    day = _today_utc()
+    snap = _load_snapshot_row(supabase, client_id, day)
+    if snap:
+        snap = _backfill_primary_reel_id(supabase, client_id, snap)
+    daily = _daily_post_from_snap(supabase, client_id, snap)
 
     week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
 
@@ -3519,7 +3728,11 @@ def home_summary(
         pass
 
     last_export = _latest_export_session(supabase, client_id)
-    top_reel_id = _top_opportunity_reel_id(supabase, client_id)
+    top_reel_id = daily.get("primary_reel_id") or _top_opportunity_reel_id(supabase, client_id)
+
+    daily_session_id = daily.get("daily_session_id")
+    if daily.get("draft_status") == "ready" and daily_session_id:
+        latest_draft_session_id = daily_session_id
 
     onboarding_row: Optional[Dict[str, Any]] = None
     try:
@@ -3592,6 +3805,7 @@ def home_summary(
             "posts_made": posts_made,
             "last_export": last_export,
         },
+        "daily_post": daily,
     }
     cache_set(cache_key, result)
     return result

@@ -4,9 +4,11 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { Loader2, Lock } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { createClient } from "@/lib/supabase/client";
 
 export function LoginClient() {
+  const t = useTranslations("auth");
   const router = useRouter();
   const searchParams = useSearchParams();
   const nextPath = searchParams.get("next") || "/dashboard";
@@ -14,9 +16,14 @@ export function LoginClient() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(
-    authError === "auth" ? "Sign-in link expired or invalid." : authError === "config" ? "App misconfigured (Supabase env)." : null,
-  );
+  const [error, setError] = useState<string | null>(null);
+  const urlError =
+    authError === "auth"
+      ? t("signInLinkExpired")
+      : authError === "config"
+        ? t("appMisconfigured")
+        : null;
+  const displayError = error ?? urlError;
   const [busy, setBusy] = useState(false);
 
   async function onSubmit(e: React.FormEvent) {
@@ -37,7 +44,7 @@ export function LoginClient() {
       router.replace(nextPath);
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not sign in.");
+      setError(err instanceof Error ? err.message : t("couldNotSignIn"));
       setBusy(false);
     }
   }
@@ -52,8 +59,8 @@ export function LoginClient() {
         >
           <div className="flex flex-col items-center gap-3 rounded-2xl border border-white/10 bg-zinc-950/90 px-6 py-5 text-center shadow-2xl">
             <Loader2 className="h-6 w-6 animate-spin text-amber-400" aria-hidden />
-            <p className="text-sm font-semibold text-zinc-100">Signing you in…</p>
-            <p className="text-xs text-zinc-400">Opening your workspace.</p>
+            <p className="text-sm font-semibold text-zinc-100">{t("signingYouIn")}</p>
+            <p className="text-xs text-zinc-400">{t("openingWorkspace")}</p>
           </div>
         </div>
       ) : null}
@@ -63,15 +70,12 @@ export function LoginClient() {
             <Lock className="h-7 w-7" aria-hidden />
           </div>
         </div>
-        <h1 className="text-center text-xl font-bold text-on-surface">Sign in</h1>
-        <p className="mt-2 text-center text-sm text-zinc-500">
-          New here? Sign up and complete onboarding to create your org and creator. Returning users:
-          pick the active creator from the bar at the top of the app — all requests use that client.
-        </p>
+        <h1 className="text-center text-xl font-bold text-on-surface">{t("signIn")}</h1>
+        <p className="mt-2 text-center text-sm text-zinc-500">{t("signInSubtitle")}</p>
         <form onSubmit={(e) => void onSubmit(e)} className="mt-8 space-y-4">
           <label className="block text-sm">
             <span className="mb-1 block text-[10px] font-bold uppercase tracking-widest text-zinc-500">
-              Email
+              {t("email")}
             </span>
             <input
               type="email"
@@ -84,7 +88,7 @@ export function LoginClient() {
           </label>
           <label className="block text-sm">
             <span className="mb-1 block text-[10px] font-bold uppercase tracking-widest text-zinc-500">
-              Password
+              {t("password")}
             </span>
             <input
               type="password"
@@ -95,20 +99,20 @@ export function LoginClient() {
               required
             />
           </label>
-          {error ? <p className="text-sm text-red-400">{error}</p> : null}
+          {displayError ? <p className="text-sm text-red-400">{displayError}</p> : null}
           <button
             type="submit"
             disabled={busy}
             className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary-container py-2.5 text-sm font-bold text-on-primary-container disabled:opacity-50"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
-            {busy ? "Signing in…" : "Continue"}
+            {busy ? t("signingIn") : t("continue")}
           </button>
         </form>
         <p className="mt-6 text-center text-sm text-zinc-500">
-          No account?{" "}
+          {t("noAccount")}{" "}
           <Link href="/signup" className="font-semibold text-primary hover:underline">
-            Sign up
+            {t("signUp")}
           </Link>
         </p>
       </div>

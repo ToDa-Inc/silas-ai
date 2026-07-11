@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Set
 import httpx
 
 from core.config import Settings
+from core.errors import MissingCredentialsError
 from core.database import get_supabase_for_settings
 from core.id_generator import generate_reel_id
 from services.apify import (
@@ -653,7 +654,7 @@ def score_reel_dict_for_keyword_similarity(
 
 def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None:
     if not settings.apify_api_token or not settings.openrouter_api_key:
-        raise RuntimeError("APIFY_API_TOKEN and OPENROUTER_API_KEY required")
+        raise MissingCredentialsError("APIFY_API_TOKEN and OPENROUTER_API_KEY required")
 
     supabase = get_supabase_for_settings(settings)
     job_id = job["id"]
@@ -737,6 +738,7 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
     )
     progress["keyword_provenance"] = kw_provenance
     progress["keyword_count"] = len(keywords)
+    progress["keywords_used"] = keywords
     progress["search_window"] = search_window
     if not keywords:
         raise RuntimeError(

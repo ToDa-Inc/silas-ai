@@ -4,7 +4,8 @@ import { createContext, useContext, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Maximize2, Minimize2, X } from "lucide-react";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
-import { HOME_COPY } from "@/lib/home-ui";
+import { useHomeCopy } from "@/lib/home-ui";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/cn";
 
 const SideDrawerExpandedContext = createContext(false);
@@ -34,6 +35,8 @@ export function SideDrawer({
   expandable = true,
   defaultExpanded = false,
 }: Props) {
+  const copy = useHomeCopy();
+  const t = useTranslations("dashboard");
   const reducedMotion = usePrefersReducedMotion();
   const [expanded, setExpanded] = useState(defaultExpanded);
 
@@ -63,7 +66,7 @@ export function SideDrawer({
         <>
           <motion.button
             type="button"
-            aria-label="Close panel"
+            aria-label={t("closePanel")}
             className={cn(
               "fixed inset-0 z-[85] backdrop-blur-sm transition-colors",
               expanded ? "bg-black/60" : "bg-black/45",
@@ -111,12 +114,12 @@ export function SideDrawer({
                     {expanded ? (
                       <>
                         <Minimize2 className="h-3.5 w-3.5" aria-hidden />
-                        {HOME_COPY.collapsePanel}
+                        {copy.collapsePanel}
                       </>
                     ) : (
                       <>
                         <Maximize2 className="h-3.5 w-3.5" aria-hidden />
-                        {HOME_COPY.expandForMore}
+                        {copy.expandForMore}
                       </>
                     )}
                   </button>
@@ -126,7 +129,7 @@ export function SideDrawer({
                     type="button"
                     onClick={() => setExpanded((e) => !e)}
                     className="inline-flex rounded-lg p-2 text-zinc-500 transition hover:bg-zinc-100 dark:hover:bg-white/10 sm:hidden"
-                    aria-label={expanded ? HOME_COPY.collapsePanel : HOME_COPY.expandForMore}
+                    aria-label={expanded ? copy.collapsePanel : copy.expandForMore}
                   >
                     {expanded ? (
                       <Minimize2 className="h-5 w-5" aria-hidden />

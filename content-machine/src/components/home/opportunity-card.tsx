@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import { Check, Loader2, Sparkles } from "lucide-react";
 import { ReelThumbnail } from "@/components/reel-thumbnail";
 import type { ScrapedReelRow } from "@/lib/api";
-import { HOME_COPY } from "@/lib/home-ui";
+import { useHomeCopy } from "@/lib/home-ui";
 import { opportunityTitle, opportunityWhy } from "@/lib/home-opportunities";
 import { cn } from "@/lib/cn";
 
@@ -37,6 +37,7 @@ export function OpportunityCard({
   onSelect,
   tone = "default",
 }: Props) {
+  const copy = useHomeCopy();
   const title = opportunityTitle(reel);
   const why = opportunityWhy(reel);
   const user = reel.account_username?.trim() || "creator";
@@ -58,6 +59,7 @@ export function OpportunityCard({
         <ReelThumbnail
           src={reel.thumbnail_url}
           alt={`@${user} reel`}
+          fallbackLabel={`@${user}`}
           href={reel.post_url}
           size="sm"
           className="h-28 w-[72px] object-cover sm:h-32 sm:w-20"
@@ -65,7 +67,7 @@ export function OpportunityCard({
         {isReady ? (
           <span className="absolute left-1 top-1 flex items-center gap-0.5 rounded-md bg-emerald-500 px-1.5 py-0.5 text-[9px] font-bold text-white">
             <Check className="h-2.5 w-2.5" aria-hidden />
-            {HOME_COPY.draftReady}
+            {copy.draftReady}
           </span>
         ) : null}
       </div>
@@ -88,7 +90,7 @@ export function OpportunityCard({
           {isPreparing ? (
             <span className="inline-flex items-center gap-2 text-zinc-500">
               <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-              {HOME_COPY.preparing}
+              {copy.preparing}
             </span>
           ) : (
             title
@@ -134,7 +136,7 @@ export function OpportunityCard({
               }}
               className="whitespace-nowrap rounded-lg bg-amber-500 px-3 py-2 text-xs font-bold text-zinc-950 transition hover:bg-amber-400 disabled:opacity-50"
             >
-              {HOME_COPY.reviewDraft}
+              {copy.reviewDraft}
             </button>
           ) : (
             <button
@@ -152,7 +154,7 @@ export function OpportunityCard({
                   …
                 </span>
               ) : (
-                HOME_COPY.makeThisPost
+                copy.makeThisPost
               )}
             </button>
           )}
@@ -242,13 +244,14 @@ export function OpportunityCardSkeleton() {
 }
 
 export function MakePostFab({ href = "/generate" }: { href?: string }) {
+  const copy = useHomeCopy();
   return (
     <a
       href={href}
-      className="fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] right-4 z-40 flex items-center gap-2 rounded-full bg-amber-500 px-4 py-3 text-sm font-bold text-zinc-950 shadow-lg shadow-amber-500/25 transition hover:bg-amber-400 md:bottom-6"
+      className="fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] right-4 z-40 flex items-center gap-2 rounded-full bg-app-accent px-4 py-3 text-sm font-bold text-zinc-950 shadow-lg shadow-[var(--shadow-accent)] transition hover:bg-app-accent-bright md:bottom-6"
     >
       <Sparkles className="h-4 w-4" aria-hidden />
-      {HOME_COPY.makePost}
+      {copy.makePost}
     </a>
   );
 }

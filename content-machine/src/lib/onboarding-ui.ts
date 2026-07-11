@@ -26,6 +26,37 @@ export const ONBOARDING_STEP_ORDER: OnboardingStepKey[] = [
   "tour",
 ];
 
+/** Steps that auto-forward when already completed — skip when navigating back. */
+const SKIP_WHEN_COMPLETED_ON_BACK: ReadonlySet<OnboardingStepKey> = new Set(["source"]);
+
+/** Previous step in the onboarding flow (skips auto-forward completed steps). */
+export function previousOnboardingStep(
+  current: OnboardingStepKey,
+  options?: { completedSteps?: string[]; minStep?: OnboardingStepKey },
+): OnboardingStepKey | null {
+  const completed = new Set(options?.completedSteps ?? []);
+  const minStep = options?.minStep ?? "workspace";
+  const minIdx = ONBOARDING_STEP_ORDER.indexOf(minStep);
+  let idx = ONBOARDING_STEP_ORDER.indexOf(current);
+  if (idx <= 0) return null;
+
+  while (idx > 0) {
+    idx -= 1;
+    const step = ONBOARDING_STEP_ORDER[idx];
+    if (minIdx >= 0 && idx < minIdx) return null;
+    if (SKIP_WHEN_COMPLETED_ON_BACK.has(step) && completed.has(step)) continue;
+    return step;
+  }
+  return null;
+}
+
+export function canGoBackInOnboarding(
+  current: OnboardingStepKey,
+  options?: { completedSteps?: string[]; minStep?: OnboardingStepKey },
+): boolean {
+  return previousOnboardingStep(current, options) !== null;
+}
+
 export type OnboardingChapterId = "identity" | "brain" | "first_win";
 
 export type OnboardingChapter = {
@@ -62,8 +93,9 @@ export const STEP_HEADINGS: Record<OnboardingStepKey, { title: string; descripti
     description: "Start with the creator profile Silas will use to find opportunities and generate your first post.",
   },
   quiz: {
-    title: "What should Silas understand?",
-    description: "A few sharp answers are enough. We use them to shape discovery, voice, and your first content angle.",
+    title: "Tell us about you — in your own words",
+    description:
+      "Record one voice memo or type your answers. We build your ICP, Brand Map, Storyboard, and Communication Guideline from it.",
   },
   source: {
     title: "Add the raw truth",
@@ -160,10 +192,10 @@ export function pipelinePhaseStatus(
 
 /** Same inputs as signup (`signup-client.tsx`). */
 export const onboardingInputClass =
-  "w-full rounded-xl border border-white/10 bg-white/[0.045] px-3 py-3 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 transition focus:border-amber-300/55 focus:bg-white/[0.07] focus:ring-4 focus:ring-amber-300/10";
+  "w-full rounded-xl border border-white/10 bg-white/[0.045] px-3 py-3 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 transition focus:border-app-accent/55 focus:bg-white/[0.07] focus:ring-4 focus:ring-app-accent/10";
 
 export const onboardingTextareaClass =
-  "min-h-[220px] w-full resize-y rounded-xl border border-white/10 bg-white/[0.045] px-3 py-3 text-sm leading-relaxed text-zinc-100 outline-none placeholder:text-zinc-600 transition focus:border-amber-300/55 focus:bg-white/[0.07] focus:ring-4 focus:ring-amber-300/10";
+  "min-h-[220px] w-full resize-y rounded-xl border border-white/10 bg-white/[0.045] px-3 py-3 text-sm leading-relaxed text-zinc-100 outline-none placeholder:text-zinc-600 transition focus:border-app-accent/55 focus:bg-white/[0.07] focus:ring-4 focus:ring-app-accent/10";
 
 export const onboardingLabelClass =
   "mb-2 block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500";

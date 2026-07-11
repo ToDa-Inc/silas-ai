@@ -2,11 +2,8 @@
 
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
-import {
-  STUDIO_ENTRY_HREFS,
-  STUDIO_ENTRY_LABELS,
-  type StudioEditorEntryPoint,
-} from "@/lib/studio-editor-context";
+import { useTranslations } from "next-intl";
+import { STUDIO_ENTRY_HREFS, type StudioEditorEntryPoint } from "@/lib/studio-editor-context";
 import { cn } from "@/lib/cn";
 
 type Props = {
@@ -16,7 +13,15 @@ type Props = {
 };
 
 export function StudioEditorHeader({ entryPoint, sessionLabel, className }: Props) {
-  const originLabel = STUDIO_ENTRY_LABELS[entryPoint];
+  const t = useTranslations("common");
+  const originLabel =
+    entryPoint === "home"
+      ? t("home")
+      : entryPoint === "create"
+        ? t("create")
+        : entryPoint === "media"
+          ? t("media")
+          : t("setup");
   const originHref = STUDIO_ENTRY_HREFS[entryPoint];
 
   return (
@@ -31,7 +36,7 @@ export function StudioEditorHeader({ entryPoint, sessionLabel, className }: Prop
         {originLabel}
       </Link>
       <ChevronRight className="h-3.5 w-3.5 text-app-fg-subtle" aria-hidden />
-      <span className="font-semibold text-app-fg">Editor</span>
+      <span className="font-semibold text-app-fg">{t("editor")}</span>
       {sessionLabel ? (
         <>
           <ChevronRight className="h-3.5 w-3.5 text-app-fg-subtle" aria-hidden />

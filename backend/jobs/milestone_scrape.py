@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict
 
 from core.config import Settings
+from core.errors import MissingCredentialsError
 from core.database import get_supabase_for_settings
 from services.apify import instagram_reel_scraper_input, run_actor
 from services.first_day_stats import compute_competitor_milestone_averages
@@ -39,7 +40,7 @@ def run_milestone_scrape(settings: Settings, job: Dict[str, Any]) -> None:
         "Retire external cron hits to routers/cron.py::milestone_scrapes."
     )
     if not settings.apify_api_token:
-        raise RuntimeError("APIFY_API_TOKEN not configured")
+        raise MissingCredentialsError("APIFY_API_TOKEN not configured")
 
     supabase = get_supabase_for_settings(settings)
     job_id = job["id"]

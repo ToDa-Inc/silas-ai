@@ -8,6 +8,7 @@ _BACKEND_DIR = Path(__file__).resolve().parent.parent
 _REPO_ROOT = _BACKEND_DIR.parent
 OPENROUTER_PRIMARY_MODEL = "google/gemini-3-flash-preview"
 OPENROUTER_FALLBACK_MODEL = "google/gemini-3.1-flash-lite-preview"
+OPENROUTER_FAST_MODEL = OPENROUTER_FALLBACK_MODEL
 _LEGACY_OPENROUTER_DEFAULTS = {
     "google/gemini-2.0-flash-001",
     "z-ai/glm-5-turbo",
@@ -109,6 +110,13 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("OPENROUTER_MODEL_FALLBACK"),
         description="Optional model id; after 429 backoff on primary, try this model (text paths; off for image gen / some video).",
     )
+    openrouter_fast_model: str = Field(
+        default=OPENROUTER_FAST_MODEL,
+        validation_alias=AliasChoices("OPENROUTER_FAST_MODEL"),
+        description=(
+            "Low-latency model for home make-post / 1:1 url_adapt draft packaging."
+        ),
+    )
 
     @field_validator("openrouter_model", mode="before")
     @classmethod
@@ -127,6 +135,16 @@ class Settings(BaseSettings):
             s = v.strip()
             if not s or s in _LEGACY_OPENROUTER_DEFAULTS:
                 return OPENROUTER_FALLBACK_MODEL
+            return s
+        return v
+
+    @field_validator("openrouter_fast_model", mode="before")
+    @classmethod
+    def strip_openrouter_fast_model(cls, v: object) -> object:
+        if isinstance(v, str):
+            s = v.strip()
+            if not s or s in _LEGACY_OPENROUTER_DEFAULTS:
+                return OPENROUTER_FAST_MODEL
             return s
         return v
 
@@ -188,6 +206,16 @@ class Settings(BaseSettings):
         default="google/gemini-3-flash-preview",
         description="OpenRouter model id for single-reel MP4 analysis.",
     )
+    openrouter_transcribe_model: str = Field(
+        default="google/chirp-3",
+        validation_alias=AliasChoices("OPENROUTER_TRANSCRIBE_MODEL"),
+        description="OpenRouter STT model id (e.g. google/chirp-3).",
+    )
+    openrouter_onboarding_model: str = Field(
+        default="google/gemini-3.5-flash",
+        validation_alias=AliasChoices("OPENROUTER_ONBOARDING_MODEL"),
+        description="OpenRouter model for onboarding brain documents (ICP, brand map, storyboard, communication).",
+    )
 
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
@@ -213,6 +241,25 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def resolve_openrouter_model(settings: Settings, *, fast: bool = False) -> str:
+    """Generation/draft text paths use the fast model; optional override via ``fast=False``."""
+    if fast:
+        for candidate in (
+            settings.openrouter_fast_model,
+            settings.openrouter_model_fallback,
+            settings.openrouter_model,
+        ):
+            m = str(candidate or "").strip()
+            if m:
+                return m
+    return settings.openrouter_model
+
+
+def generation_llm_model(settings: Settings) -> str:
+    """Default model for hooks/script/caption/angles/patterns — gemini-3.1-flash-lite."""
+    return resolve_openrouter_model(settings, fast=True)
 
 
 def get_cors_list(settings: Settings) -> list[str]:

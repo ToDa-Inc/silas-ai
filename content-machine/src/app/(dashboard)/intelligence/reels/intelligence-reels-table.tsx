@@ -11,6 +11,7 @@ import {
   type SyntheticEvent,
 } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useTranslations } from "next-intl";
 import {
   ArrowDown,
   ArrowUp,
@@ -54,6 +55,7 @@ import { AnalyzeReelModal } from "../components/analyze-reel-modal";
 import { RecreateButton } from "@/components/recreate-button";
 import { IntelligenceProgressBar } from "../components/intelligence-progress-bar";
 import { ReelAnalysisDetailModal } from "../components/reel-analysis-detail-modal";
+import { ReelPreviewTooltip } from "../components/reel-preview-tooltip";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -468,6 +470,7 @@ export function IntelligenceReelsTable({
   orgSlug,
   serverState,
 }: Props) {
+  const t = useTranslations("common");
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -1711,7 +1714,7 @@ export function IntelligenceReelsTable({
               const a = row.analysis;
               const nicheMatch = isNicheMatchOnly(row);
               const nicheFitLabel = formatNicheMatchPercent(row.similarity_score);
-              const silas = a && !nicheMatch ? formatSilasScoreSummary(a) : null;
+              const silas = a && !nicheMatch ? formatSilasScoreSummary(a, t) : null;
               const canAnalyze = isAnalyzable(row);
               const hasPost = rowHasPostUrl(row);
               const rowIndex = (safePage - 1) * serverState.pageSize + i;
@@ -1765,12 +1768,15 @@ export function IntelligenceReelsTable({
                     </Tooltip>
                   </td>
                   <td className="py-2.5 pr-2 align-middle">
-                    <ReelThumbnail
-                      src={row.thumbnail_url}
-                      alt={`@${row.account_username} reel`}
-                      href={row.post_url}
-                      size="sm"
-                    />
+                    <ReelPreviewTooltip reel={row} className="inline-flex">
+                      <ReelThumbnail
+                        src={row.thumbnail_url}
+                        alt={`@${row.account_username} reel`}
+                        fallbackLabel={`@${row.account_username}`}
+                        href={row.post_url}
+                        size="sm"
+                      />
+                    </ReelPreviewTooltip>
                   </td>
                   <td className="py-2.5 pr-2 align-middle font-medium text-zinc-900 dark:text-app-fg">
                     <div className="flex flex-col gap-0.5">

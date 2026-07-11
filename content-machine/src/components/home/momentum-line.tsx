@@ -1,7 +1,7 @@
 "use client";
 
 import type { HomeSummaryExport } from "@/lib/api";
-import { HOME_COPY } from "@/lib/home-ui";
+import { useHomeCopy } from "@/lib/home-ui";
 
 type Props = {
   postsMade: number;
@@ -9,6 +9,7 @@ type Props = {
 };
 
 export function MomentumLine({ postsMade, lastExport }: Props) {
+  const copy = useHomeCopy();
   const thumb = lastExport?.thumbnail_url?.trim();
 
   return (
@@ -24,7 +25,7 @@ export function MomentumLine({ postsMade, lastExport }: Props) {
         <div className="h-10 w-10 shrink-0 rounded-lg bg-zinc-200 dark:bg-white/10" />
       )}
       <p className="text-sm text-zinc-600 dark:text-zinc-400">
-        {postsMade > 0 ? HOME_COPY.momentumPosts(postsMade) : HOME_COPY.momentumNone}
+        {postsMade > 0 ? copy.momentumPosts(postsMade) : copy.momentumNone}
         {lastExport?.hook_text ? (
           <span className="mt-0.5 block text-xs text-zinc-500 line-clamp-1">
             Last: {lastExport.hook_text}

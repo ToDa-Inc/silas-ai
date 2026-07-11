@@ -1,20 +1,41 @@
-"""Orchestrate first-run discovery: DNA → niche creators → keyword reels → light analyze."""
+"""Orchestrate first-run discovery: DNA → niche creators → keyword reels → light analyze.
+
+Every sub-step runs **inline** — synchronously, in the same process/thread that is already
+running ``run_onboarding_pipeline`` — instead of being enqueued as a separate
+``background_jobs`` row with ``status="queued"``.
+
+Why: ``claim_next_job()`` is a shared, row-locked FIFO queue (``FOR UPDATE SKIP LOCKED``) —
+by design, *any* worker process pointed at the same Supabase project can claim a ``queued``
+row, including a teammate's local dev worker or the production Railway worker. If onboarding
+enqueued competitor_discovery/keyword_reel_similarity as "queued" rows, whichever worker
+polled fastest (often a different, differently-configured machine) would grab and immediately
+fail them — silently dropping real onboarding work. Writing rows straight into
+``status="running"`` (never "queued") means ``claim_next_job()``'s ``WHERE status = 'queued'``
+filter never sees them, guaranteeing this pipeline runs start-to-finish on the machine that
+started it. Same pattern already used by ``onboarding_voice_transcribe`` /
+``onboarding_brain_generate`` in ``routers/onboarding.py``.
+"""
 
 from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List
 
 from core.config import Settings
 from core.database import get_supabase_for_settings
 from core.id_generator import generate_job_id
+from jobs.auto_analyze_scraped import run_auto_analyze_scraped
+from jobs.competitor_discovery import run_competitor_discovery
+from jobs.format_digest_recompute import run_format_digest_recompute
+from jobs.keyword_reel_similarity import run_keyword_reel_similarity
 from services.client_dna_compile import force_recompile_client_dna_sync
-from services.format_digest_jobs import enqueue_auto_analyze_scraped, enqueue_format_digest_recompute
 from services.job_queue import fail_abandoned_queued_jobs, has_active_job
-from services.onboarding_job_wait import wait_for_jobs
 from services.onboarding_state import update_onboarding_state
-from services.scrape_cycle import enqueue_keyword_reel_similarity_for_client
+from services.similarity_discovery_keywords import (
+    similarity_keywords_auto_en,
+    similarity_scan_keywords,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,37 +63,134 @@ ONBOARDING_KEYWORD_PAYLOAD: Dict[str, Any] = {
     "min_views_per_day": 800,
     "min_onboarding_save": 8,
 }
+# Retry pass, used only when the first (precise, narrow-keyword) pass saves zero reels: casts
+# a much wider keyword net and drops the velocity bar hard. Trades precision for *some* taste
+# -training material — an empty reel-review screen is a worse onboarding outcome than a few
+# lower-confidence matches the user can reject.
+ONBOARDING_KEYWORD_PAYLOAD_RETRY: Dict[str, Any] = {
+    "onboarding_fast": True,
+    "max_keywords": 10,
+    "search_window": "last-1-month",
+    "days": 30,
+    "max_score_cap": 12,
+    "min_views_per_day": 250,
+    "min_onboarding_save": 4,
+}
 
 
-def _enqueue(
-    supabase,
-    *,
-    org_id: str,
-    client_id: str,
-    job_type: str,
-    payload: Optional[Dict[str, Any]] = None,
-    priority: int = 10,
-) -> str:
-    jid = generate_job_id()
-    row: Dict[str, Any] = {
-        "id": jid,
-        "org_id": org_id,
-        "client_id": client_id,
-        "job_type": job_type,
-        "payload": payload or {},
-        "status": "queued",
-        "priority": priority,
-    }
-    supabase.table("background_jobs").insert(row).execute()
-    return jid
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _retry_keywords_payload(supabase, client_id: str, first_pass_keywords: List[str]) -> Dict[str, Any]:
+    """Widen the keyword net for the zero-results retry: more of the native-language pool
+    (skipping what pass 1 already tried) plus the client_dna.similarity_keywords.auto_en
+    fallback set, so a thin native-language pool doesn't sink onboarding entirely.
+
+    Refetches the client row fresh — DNA compile earlier in this run may have just written
+    ``auto_en`` for the first time, and the in-memory ``client`` var in the caller is stale.
+    """
+    payload = dict(ONBOARDING_KEYWORD_PAYLOAD_RETRY)
+    try:
+        crow = (
+            supabase.table("clients")
+            .select("client_dna, niche_config, client_context")
+            .eq("id", client_id)
+            .limit(1)
+            .execute()
+        )
+        fresh_client = crow.data[0] if crow.data else {}
+    except Exception:
+        logger.exception("retry keyword build: failed to refetch client=%s", client_id)
+        return payload
+
+    native_pool, _ = similarity_scan_keywords(
+        client=fresh_client, max_keywords=int(payload.get("max_keywords") or 10)
+    )
+    tried = {k.strip().lower() for k in first_pass_keywords if k}
+    native_new = [k for k in native_pool if k.strip().lower() not in tried]
+    en_phrases = similarity_keywords_auto_en(fresh_client.get("client_dna") or {})
+
+    combined: List[str] = []
+    seen: set = set()
+    for k in native_new + en_phrases:
+        lk = k.lower()
+        if not k or lk in seen:
+            continue
+        seen.add(lk)
+        combined.append(k)
+
+    if combined:
+        payload["keywords"] = combined
+        payload["max_keywords"] = max(int(payload.get("max_keywords") or 10), len(combined))
+    return payload
 
 
 def _progress(supabase, client_id: str, phase: str, **extra: Any) -> None:
     update_onboarding_state(
         supabase,
         client_id,
-        pipeline_progress={"phase": phase, "at": datetime.now(timezone.utc).isoformat(), **extra},
+        pipeline_progress={"phase": phase, "at": _now(), **extra},
     )
+
+
+def _run_inline_subjob(
+    supabase,
+    settings: Settings,
+    *,
+    org_id: str,
+    client_id: str,
+    job_type: str,
+    payload: Dict[str, Any],
+    handler: Callable[[Settings, Dict[str, Any]], None],
+    priority: int = 10,
+) -> Dict[str, Any]:
+    """Insert a ``background_jobs`` row straight into ``status="running"`` and run ``handler``
+    inline (see module docstring for why "queued" is never used here).
+
+    Returns the row's final ``id``/``status``/``result``/``error_message`` after ``handler``
+    returns or raises. Handlers that raise (including :class:`MissingCredentialsError` — this
+    is *this* machine's credentials, there is no other worker to hand off to) are caught here
+    and recorded as ``status="failed"`` so the pipeline can decide whether to continue.
+    """
+    jid = generate_job_id()
+    now = _now()
+    supabase.table("background_jobs").insert(
+        {
+            "id": jid,
+            "org_id": org_id,
+            "client_id": client_id,
+            "job_type": job_type,
+            "payload": payload,
+            "status": "running",
+            "started_at": now,
+            "priority": priority,
+        }
+    ).execute()
+
+    job = {"id": jid, "org_id": org_id, "client_id": client_id, "payload": payload}
+    try:
+        handler(settings, job)
+    except Exception as e:
+        logger.exception(
+            "inline onboarding sub-job %s (%s) failed for client=%s", job_type, jid, client_id
+        )
+        supabase.table("background_jobs").update(
+            {
+                "status": "failed",
+                "completed_at": _now(),
+                "error_message": str(e)[:8000],
+            }
+        ).eq("id", jid).execute()
+
+    row = (
+        supabase.table("background_jobs")
+        .select("id, status, result, error_message")
+        .eq("id", jid)
+        .limit(1)
+        .execute()
+    )
+    return row.data[0] if row.data else {"id": jid, "status": "unknown", "result": {}}
 
 
 def run_onboarding_pipeline(settings: Settings, job: Dict[str, Any]) -> None:
@@ -90,6 +208,7 @@ def run_onboarding_pipeline(settings: Settings, job: Dict[str, Any]) -> None:
 
     job_ids: Dict[str, str] = {}
     errors: List[str] = []
+    kw_stats: Dict[str, Any] = {"attempts": []}
 
     try:
         _progress(supabase, client_id, "dna_compile")
@@ -98,59 +217,127 @@ def run_onboarding_pipeline(settings: Settings, job: Dict[str, Any]) -> None:
         _progress(supabase, client_id, "competitor_discovery")
         fail_abandoned_queued_jobs(supabase, client_id=client_id, job_type="competitor_discovery")
         if not has_active_job(supabase, client_id=client_id, job_type="competitor_discovery"):
-            job_ids["competitor_discovery"] = _enqueue(
+            comp_row = _run_inline_subjob(
                 supabase,
+                settings,
                 org_id=org_id,
                 client_id=client_id,
                 job_type="competitor_discovery",
                 payload=dict(ONBOARDING_COMPETITOR_PAYLOAD),
+                handler=run_competitor_discovery,
             )
-            wait = wait_for_jobs(supabase, [job_ids["competitor_discovery"]], timeout_seconds=600)
-            if not wait.get("ok"):
-                errors.append("competitor_discovery did not complete in time")
+            job_ids["competitor_discovery"] = comp_row["id"]
+            if comp_row.get("status") != "completed":
+                errors.append(
+                    f"competitor_discovery failed: "
+                    f"{(comp_row.get('error_message') or 'unknown error')[:300]}"
+                )
 
         _progress(supabase, client_id, "keyword_scan")
-        kw_stats = enqueue_keyword_reel_similarity_for_client(
-            supabase,
-            org_id=org_id,
-            client_id=client_id,
-            payload=dict(ONBOARDING_KEYWORD_PAYLOAD),
+        fail_abandoned_queued_jobs(
+            supabase, client_id=client_id, job_type="keyword_reel_similarity"
         )
-        kw_job = kw_stats.get("job_id") if isinstance(kw_stats, dict) else None
-        if isinstance(kw_job, str) and kw_job:
-            job_ids["keyword_similarity"] = kw_job
-            wait = wait_for_jobs(supabase, [kw_job], timeout_seconds=600)
-            if not wait.get("ok"):
-                errors.append("keyword_reel_similarity did not complete in time")
+        if not has_active_job(supabase, client_id=client_id, job_type="keyword_reel_similarity"):
+            kw_row = _run_inline_subjob(
+                supabase,
+                settings,
+                org_id=org_id,
+                client_id=client_id,
+                job_type="keyword_reel_similarity",
+                payload=dict(ONBOARDING_KEYWORD_PAYLOAD),
+                handler=run_keyword_reel_similarity,
+            )
+            job_ids["keyword_similarity"] = kw_row["id"]
+            first_result = kw_row.get("result") or {}
+            kw_stats["attempts"].append(
+                {"payload": ONBOARDING_KEYWORD_PAYLOAD, "result": first_result}
+            )
+
+            upserted = int(first_result.get("upserted") or 0)
+            # Retrying won't help if the first pass never got a real answer from Apify/OpenRouter
+            # (credentials missing on this machine, or Apify's account-wide usage cap tripped) —
+            # only retry on a *clean* run that legitimately found nothing worth saving.
+            hard_blocker = (
+                kw_row.get("status") == "failed"
+                or first_result.get("keyword_search_error_type") == "apify_usage_limit"
+            )
+
+            if upserted == 0 and hard_blocker:
+                errors.append(
+                    "keyword_reel_similarity blocked (not retried — retry wouldn't help): "
+                    f"{(kw_row.get('error_message') or first_result.get('keyword_search_error') or 'unknown error')[:300]}"
+                )
+            elif upserted == 0:
+                retry_payload = _retry_keywords_payload(
+                    supabase, client_id, first_result.get("keywords_used") or []
+                )
+                _progress(
+                    supabase,
+                    client_id,
+                    "keyword_scan_retry",
+                    reason="first pass saved 0 reels — retrying with broader keywords",
+                    retry_keyword_count=len(retry_payload.get("keywords") or []),
+                )
+                kw_row = _run_inline_subjob(
+                    supabase,
+                    settings,
+                    org_id=org_id,
+                    client_id=client_id,
+                    job_type="keyword_reel_similarity",
+                    payload=retry_payload,
+                    handler=run_keyword_reel_similarity,
+                )
+                job_ids["keyword_similarity_retry"] = kw_row["id"]
+                retry_result = kw_row.get("result") or {}
+                kw_stats["attempts"].append(
+                    {"payload": retry_payload, "result": retry_result}
+                )
+                if kw_row.get("status") != "completed":
+                    errors.append(
+                        f"keyword_reel_similarity retry failed: "
+                        f"{(kw_row.get('error_message') or 'unknown error')[:300]}"
+                    )
+                elif int(retry_result.get("upserted") or 0) == 0:
+                    errors.append(
+                        "keyword_reel_similarity found 0 reels on both the precise and the "
+                        "broadened retry pass — niche keywords may be too narrow, or there is "
+                        "little matching recent Instagram content right now."
+                    )
+            elif kw_row.get("status") != "completed":
+                errors.append(
+                    f"keyword_reel_similarity failed: "
+                    f"{(kw_row.get('error_message') or 'unknown error')[:300]}"
+                )
+            kw_stats["final"] = kw_row.get("result") or {}
 
         _progress(supabase, client_id, "auto_analyze")
-        enqueue_auto_analyze_scraped(
-            supabase, org_id=org_id, client_id=client_id, batch_limit=12
+        aa_row = _run_inline_subjob(
+            supabase,
+            settings,
+            org_id=org_id,
+            client_id=client_id,
+            job_type="auto_analyze_scraped",
+            payload={"batch_limit": 12},
+            handler=run_auto_analyze_scraped,
         )
-        if has_active_job(supabase, client_id=client_id, job_type="auto_analyze_scraped"):
-            res = (
-                supabase.table("background_jobs")
-                .select("id")
-                .eq("client_id", client_id)
-                .eq("job_type", "auto_analyze_scraped")
-                .in_("status", ["queued", "running"])
-                .order("created_at", desc=True)
-                .limit(1)
-                .execute()
-            )
-            if res.data:
-                aa_id = str(res.data[0]["id"])
-                job_ids["auto_analyze"] = aa_id
-                wait = wait_for_jobs(supabase, [aa_id], timeout_seconds=600)
+        job_ids["auto_analyze"] = aa_row["id"]
 
-        enqueue_format_digest_recompute(supabase, org_id=org_id, client_id=client_id)
+        _run_inline_subjob(
+            supabase,
+            settings,
+            org_id=org_id,
+            client_id=client_id,
+            job_type="format_digest_recompute",
+            payload={},
+            handler=run_format_digest_recompute,
+        )
 
         update_onboarding_state(
             supabase,
             client_id,
             pipeline_progress={
                 "phase": "complete",
-                "at": datetime.now(timezone.utc).isoformat(),
+                "at": _now(),
                 "kw_stats": kw_stats,
                 "errors": errors,
             },
@@ -163,11 +350,12 @@ def run_onboarding_pipeline(settings: Settings, job: Dict[str, Any]) -> None:
         supabase.table("background_jobs").update(
             {
                 "status": "completed",
-                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "completed_at": _now(),
                 "result": {
                     "pipeline": "onboarding_pipeline",
                     "job_ids": job_ids,
                     "errors": errors,
+                    "kw_stats": kw_stats,
                 },
             }
         ).eq("id", job_id).execute()
@@ -182,7 +370,7 @@ def run_onboarding_pipeline(settings: Settings, job: Dict[str, Any]) -> None:
         supabase.table("background_jobs").update(
             {
                 "status": "failed",
-                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "completed_at": _now(),
                 "error_message": str(e)[:8000],
             }
         ).eq("id", job_id).execute()

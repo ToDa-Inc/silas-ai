@@ -1,0 +1,134 @@
+/**
+ * Silas brand palette — single source of truth.
+ *
+ * Option 2 (SaaS): muted petrol/cyan for the product UI.
+ * Option 1 (Reel covers): full neon cyan reserved for templates (--brand-neon).
+ */
+
+:root {
+  /* ── Brand core (Option 2) ── */
+  --brand-primary: #0a1a1c;
+  --brand-deep-teal: #12494a;
+  --brand-accent: #2fc9c0;
+  --brand-accent-hover: #4dd4cc;
+  --brand-accent-dim: #26a39c;
+  --brand-accent-subtle: #1e7a75;
+  --brand-surface: #f3f4f2;
+  --brand-neutral: #3e4644;
+
+  /* ── Reel / cover neon (Option 1) — not for general SaaS chrome ── */
+  --brand-neon: #00e5d8;
+  --brand-neon-hover: #33ebe0;
+  --brand-neon-dim: #00b8ad;
+
+  /* ── Canvas & elevation ── */
+  --surface-base: #f3f4f2;
+  --surface-elevated: #ffffff;
+  --surface-inset: rgb(10 26 28 / 0.04);
+  --surface-overlay: rgb(255 255 255 / 0.92);
+
+  --fg-primary: #0a1a1c;
+  --fg-secondary: #3e4644;
+  --fg-muted: #5c6563;
+  --fg-subtle: #7a8481;
+  --fg-faint: #a3aba8;
+  --fg-on-accent: #0a1a1c;
+
+  /* ── Lines, borders, shadows (light) ── */
+  --line-subtle: rgb(10 26 28 / 0.08);
+  --line-default: rgb(10 26 28 / 0.12);
+  --line-strong: rgb(10 26 28 / 0.18);
+  --shadow-color: rgb(10 26 28 / 0.12);
+  --shadow-accent: rgb(47 201 192 / 0.22);
+  --glow-accent: rgb(47 201 192 / 0.14);
+
+  /* ── Zinc scale remap (neutral petrol family) ── */
+  --palette-zinc-50: #f3f4f2;
+  --palette-zinc-100: #e8eae7;
+  --palette-zinc-200: #d5d9d6;
+  --palette-zinc-300: #b8bfbc;
+  --palette-zinc-400: #8f9895;
+  --palette-zinc-500: #6b7572;
+  --palette-zinc-600: #525c59;
+  --palette-zinc-700: #3e4644;
+  --palette-zinc-800: #243032;
+  --palette-zinc-900: #151a1b;
+  --palette-zinc-950: #0a1a1c;
+
+  /* ── Accent scale remap (replaces amber in UI) ── */
+  --palette-accent-50: #ecfbf9;
+  --palette-accent-100: #d4f5f2;
+  --palette-accent-200: #a9ebe5;
+  --palette-accent-300: #7dd9d3;
+  --palette-accent-400: #4dd4cc;
+  --palette-accent-500: #2fc9c0;
+  --palette-accent-600: #26a39c;
+  --palette-accent-700: #1e7a75;
+  --palette-accent-800: #12494a;
+  --palette-accent-900: #0a1a1c;
+  --palette-accent-950: #050708;
+
+  /* ── Glass (light) ── */
+  --glass-fill: rgb(10 26 28 / 0.035);
+  --glass-fill-strong: rgb(10 26 28 / 0.055);
+  --glass-edge-top: rgb(10 26 28 / 0.14);
+  --glass-edge-mid: rgb(10 26 28 / 0.07);
+  --glass-inset-bg: rgb(10 26 28 / 0.04);
+  --glass-inset-border: rgb(10 26 28 / 0.09);
+  --glass-shadow: 0 8px 32px rgb(10 26 28 / 0.1);
+  --glass-shadow-strong: 0 10px 40px rgb(10 26 28 / 0.14);
+}
+
+html.dark {
+  --surface-base: #050708;
+  --surface-elevated: #151a1b;
+  --surface-inset: rgb(0 0 0 / 0.34);
+  --surface-overlay: rgb(21 26 27 / 0.88);
+
+  --fg-primary: #f2f2f0;
+  --fg-secondary: #c8cdc9;
+  --fg-muted: #a3aba8;
+  --fg-subtle: #7a8481;
+  --fg-faint: #5c6563;
+  --fg-on-accent: #050708;
+
+  --line-subtle: rgb(242 242 240 / 0.08);
+  --line-default: rgb(242 242 240 / 0.12);
+  --line-strong: rgb(242 242 240 / 0.2);
+  --shadow-color: rgb(0 0 0 / 0.45);
+  --shadow-accent: rgb(47 201 192 / 0.18);
+  --glow-accent: rgb(0 229 216 / 0.12);
+
+  --palette-zinc-50: #f2f2f0;
+  --palette-zinc-100: #d5d9d6;
+  --palette-zinc-200: #a3aba8;
+  --palette-zinc-300: #7a8481;
+  --palette-zinc-400: #6b7572;
+  --palette-zinc-500: #525c59;
+  --palette-zinc-600: #3e4644;
+  --palette-zinc-700: #243032;
+  --palette-zinc-800: #151a1b;
+  --palette-zinc-900: #0a1a1c;
+  --palette-zinc-950: #050708;
+
+  --palette-accent-50: rgb(47 201 192 / 0.08);
+  --palette-accent-100: rgb(47 201 192 / 0.14);
+  --palette-accent-200: rgb(47 201 192 / 0.22);
+  --palette-accent-300: rgb(47 201 192 / 0.38);
+  --palette-accent-400: #4dd4cc;
+  --palette-accent-500: #2fc9c0;
+  --palette-accent-600: #26a39c;
+  --palette-accent-700: #7dd9d3;
+  --palette-accent-800: #a9ebe5;
+  --palette-accent-900: #d4f5f2;
+  --palette-accent-950: #ecfbf9;
+
+  --glass-fill: rgb(242 242 240 / 0.07);
+  --glass-fill-strong: rgb(242 242 240 / 0.11);
+  --glass-edge-top: rgb(242 242 240 / 0.2);
+  --glass-edge-mid: rgb(242 242 240 / 0.09);
+  --glass-inset-bg: rgb(0 0 0 / 0.36);
+  --glass-inset-border: rgb(242 242 240 / 0.1);
+  --glass-shadow: 0 4px 28px rgb(0 0 0 / 0.48);
+  --glass-shadow-strong: 0 10px 40px rgb(0 0 0 / 0.55);
+}

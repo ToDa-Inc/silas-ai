@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { getTranslations } from "next-intl/server";
 import {
   fetchBaseline,
   fetchCompetitors,
@@ -23,6 +24,7 @@ function isWorkspaceSetupError(message: string): boolean {
 }
 
 export default async function IntelligencePage() {
+  const t = await getTranslations("intelligence");
   const { user, tenancy, clientSlug, orgSlug } = await getCachedServerApiContext();
   const workspaceReady = Boolean(clientSlug.trim() && orgSlug.trim());
 
@@ -42,11 +44,11 @@ export default async function IntelligencePage() {
   const syncDisabled = !clientSlug.trim() || !orgSlug.trim();
   const syncDisabledHint =
     user && !tenancy
-      ? "No workspace for this login — see the alert above."
+      ? t("noWorkspaceHint")
       : !orgSlug.trim()
-        ? "Missing organization — refresh the page or sign in again."
+        ? t("missingOrg")
         : !clientSlug.trim()
-          ? "Pick a creator in the top bar or finish onboarding."
+          ? t("pickCreator")
           : null;
   const loadError = workspaceReady && !compRes.ok;
   const loadErrorDetails = [
@@ -60,25 +62,20 @@ export default async function IntelligencePage() {
     <main className="mx-auto max-w-[1100px] px-4 py-8 md:px-8">
       {user && !tenancy ? (
         <div className="glass mb-8 rounded-xl px-5 py-4 text-sm text-app-fg-secondary">
-          <p className="font-medium text-app-fg">
-            We can&apos;t see a workspace for this login
-          </p>
-          <p className="mt-1 text-xs text-app-fg-subtle">
-            Your account isn&apos;t linked to a workspace yet. If you&apos;re new here, create one below. If you already
-            set one up, try signing out and back in, or contact support if it keeps happening.
-          </p>
+          <p className="font-medium text-app-fg">{t("noWorkspaceTitle")}</p>
+          <p className="mt-1 text-xs text-app-fg-subtle">{t("noWorkspaceBody")}</p>
           <Link
             href="/onboarding"
             className="mt-3 inline-flex rounded-lg bg-amber-500 px-4 py-2 text-xs font-bold text-zinc-950"
           >
-            Create workspace
+            {t("createWorkspace")}
           </Link>
         </div>
       ) : null}
 
       <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-lg font-semibold text-app-fg">Intelligence</h1>
+          <h1 className="text-lg font-semibold text-app-fg">{t("title")}</h1>
           {clientLabel ? (
             <p className="mt-1 text-xs text-app-fg-subtle">{clientLabel}</p>
           ) : null}
@@ -96,24 +93,20 @@ export default async function IntelligencePage() {
         <div className="mb-6 space-y-2">
           {workspaceSetupFailure ? (
             <>
-              <p className="text-sm text-app-fg-muted">
-                This page needs an active creator in your workspace. Finish setup or choose one in the header.
-              </p>
+              <p className="text-sm text-app-fg-muted">{t("needsCreator")}</p>
               <Link
                 href="/onboarding"
                 className="inline-flex rounded-lg bg-amber-500 px-4 py-2 text-xs font-bold text-zinc-950"
               >
-                Continue setup
+                {t("continueSetup")}
               </Link>
             </>
           ) : (
             <>
-              <p className="text-sm text-app-fg-muted">
-                Some data couldn&apos;t be loaded. Try refreshing in a moment.
-              </p>
+              <p className="text-sm text-app-fg-muted">{t("loadError")}</p>
               {process.env.NODE_ENV === "development" && loadErrorDetails ? (
                 <p className="text-xs leading-relaxed text-app-fg-subtle">
-                  <span className="font-medium text-app-fg-secondary">Details: </span>
+                  <span className="font-medium text-app-fg-secondary">{t("details")} </span>
                   <span className="break-words font-mono">{loadErrorDetails}</span>
                 </p>
               ) : null}
@@ -150,7 +143,7 @@ export default async function IntelligencePage() {
             <span className="rounded-full bg-zinc-200 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-zinc-700 dark:bg-white/12 dark:text-app-fg-muted">
               {outlierRes.ok ? nOutliers : "—"}
             </span>
-            <span>competitor breakouts</span>
+            <span>{t("breakoutsLink")}</span>
             <span aria-hidden className="text-app-fg-muted transition-transform group-hover:translate-x-0.5 group-hover:text-amber-600 dark:group-hover:text-amber-400">
               →
             </span>
@@ -163,7 +156,7 @@ export default async function IntelligencePage() {
             <span className="rounded-full bg-zinc-200 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-zinc-700 dark:bg-white/12 dark:text-app-fg-muted">
               {compRes.ok ? competitors.length : "—"}
             </span>
-            <span>competitors tracked</span>
+            <span>{t("competitorsTracked")}</span>
             <span aria-hidden className="text-app-fg-muted transition-transform group-hover:translate-x-0.5 group-hover:text-amber-600 dark:group-hover:text-amber-400">
               →
             </span>

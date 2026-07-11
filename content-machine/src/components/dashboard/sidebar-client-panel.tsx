@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Loader2, Plus } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { clientApiHeaders, contentApiFetch, getContentApiBase, invalidateApiContext } from "@/lib/api-client";
 import { slugify } from "@/lib/slug";
 import { AppSelect } from "@/components/ui/app-select";
@@ -18,6 +19,8 @@ type Props = {
 };
 
 export function SidebarClientPanel({ clients, activeSlug, orgSlug }: Props) {
+  const t = useTranslations("nav");
+  const tCommon = useTranslations("common");
   const router = useRouter();
   const { show } = useToast();
   const [busySwitch, setBusySwitch] = useState(false);
@@ -41,7 +44,7 @@ export function SidebarClientPanel({ clients, activeSlug, orgSlug }: Props) {
         body: JSON.stringify({ slug }),
       });
       if (!r.ok) {
-        show("Couldn’t switch creator — try again.", "error");
+        show(tCommon("switchCreatorFailed"), "error");
         return;
       }
       invalidateApiContext();
@@ -55,12 +58,12 @@ export function SidebarClientPanel({ clients, activeSlug, orgSlug }: Props) {
     e.preventDefault();
     const n = name.trim();
     if (!n) {
-      show("Enter a name for this creator.", "error");
+      show(tCommon("creatorNameRequired"), "error");
       return;
     }
     const s = slug.trim() || slugify(n);
     if (!s) {
-      show("Enter a valid URL slug.", "error");
+      show(tCommon("creatorSlugRequired"), "error");
       return;
     }
     setBusyCreate(true);
@@ -84,7 +87,7 @@ export function SidebarClientPanel({ clients, activeSlug, orgSlug }: Props) {
         }),
       });
       if (!r.ok) {
-        show("Couldn’t add creator — that name or slug may already exist.", "error");
+        show(tCommon("creatorAddFailed"), "error");
         return;
       }
       const created = (await r.json()) as { slug: string };
@@ -94,9 +97,9 @@ export function SidebarClientPanel({ clients, activeSlug, orgSlug }: Props) {
         body: JSON.stringify({ slug: created.slug }),
       });
       if (!setCookie.ok) {
-        show("Creator added — select them from the list.", "success");
+        show(tCommon("creatorAddedPick"), "success");
       } else {
-        show("Creator added and selected.", "success");
+        show(tCommon("creatorAddedSelected"), "success");
       }
       setName("");
       setSlug("");
@@ -113,10 +116,10 @@ export function SidebarClientPanel({ clients, activeSlug, orgSlug }: Props) {
     return (
       <div className="rounded-xl border border-zinc-200 bg-zinc-50/80 p-3 dark:border-white/10 dark:bg-white/[0.04]">
         <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">
-          Creator
+          {t("creator")}
         </p>
         <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-          No creators in this workspace yet.
+          {t("noCreators")}
         </p>
         <button
           type="button"
@@ -124,12 +127,12 @@ export function SidebarClientPanel({ clients, activeSlug, orgSlug }: Props) {
           className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 py-2 text-[11px] font-semibold text-amber-700 dark:text-amber-400"
         >
           <Plus className="h-3.5 w-3.5" aria-hidden />
-          Add creator
+          {t("addCreator")}
         </button>
         {addOpen ? (
           <form onSubmit={(e) => void onCreate(e)} className="mt-3 space-y-2 border-t border-zinc-200 pt-3 dark:border-white/10">
             <label className="block text-[10px] font-medium uppercase tracking-wide text-zinc-500">
-              Name
+              {t("name")}
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
@@ -137,26 +140,26 @@ export function SidebarClientPanel({ clients, activeSlug, orgSlug }: Props) {
                   if (!slug.trim() && name.trim()) setSlug(slugify(name));
                 }}
                 className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-900 dark:border-white/10 dark:bg-zinc-900 dark:text-zinc-100"
-                placeholder="Brand or creator name"
+                placeholder={t("brandNamePlaceholder")}
                 required
               />
             </label>
             <label className="block text-[10px] font-medium uppercase tracking-wide text-zinc-500">
-              URL slug
+              {t("urlSlug")}
               <input
                 value={slug}
                 onChange={(e) => setSlug(e.target.value)}
                 className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-900 dark:border-white/10 dark:bg-zinc-900 dark:text-zinc-100"
-                placeholder="auto from name"
+                placeholder={t("autoFromName")}
               />
             </label>
             <label className="block text-[10px] font-medium uppercase tracking-wide text-zinc-500">
-              Instagram (optional)
+              {t("instagramOptional")}
               <input
                 value={instagram}
                 onChange={(e) => setInstagram(e.target.value)}
                 className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-900 dark:border-white/10 dark:bg-zinc-900 dark:text-zinc-100"
-                placeholder="@handle"
+                placeholder={t("handlePlaceholder")}
               />
             </label>
             <button
@@ -165,7 +168,7 @@ export function SidebarClientPanel({ clients, activeSlug, orgSlug }: Props) {
               className="flex w-full items-center justify-center gap-2 rounded-lg bg-amber-500 py-2 text-xs font-bold text-zinc-950 disabled:opacity-50"
             >
               {busyCreate ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
-              Create
+              {tCommon("create")}
             </button>
           </form>
         ) : null}
@@ -176,7 +179,7 @@ export function SidebarClientPanel({ clients, activeSlug, orgSlug }: Props) {
   return (
     <div className="rounded-xl border border-zinc-200 bg-zinc-50/80 p-3 dark:border-white/10 dark:bg-white/[0.04]">
       <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">
-        Active creator
+        {t("activeCreator")}
       </p>
       {active ? (
         <>
@@ -195,7 +198,7 @@ export function SidebarClientPanel({ clients, activeSlug, orgSlug }: Props) {
           disabled={busySwitch}
           onChange={(slug) => void switchClient(slug)}
           options={clients.map((c) => ({ value: c.slug, label: c.name }))}
-          ariaLabel="Switch creator"
+          ariaLabel={t("switchCreator")}
           className="min-w-0 flex-1"
           triggerClassName={cn(
             "w-full min-w-0 py-2 text-xs font-medium",
@@ -215,7 +218,7 @@ export function SidebarClientPanel({ clients, activeSlug, orgSlug }: Props) {
         aria-controls="sidebar-add-creator-form"
       >
         <Plus className="h-3.5 w-3.5" aria-hidden />
-        Add creator
+        {t("addCreator")}
       </button>
 
       {addOpen ? (
@@ -225,7 +228,7 @@ export function SidebarClientPanel({ clients, activeSlug, orgSlug }: Props) {
           className="mt-3 space-y-2 border-t border-zinc-200 pt-3 dark:border-white/10"
         >
             <label className="block text-[10px] font-medium uppercase tracking-wide text-zinc-500">
-              Name
+              {t("name")}
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
@@ -233,26 +236,26 @@ export function SidebarClientPanel({ clients, activeSlug, orgSlug }: Props) {
                   if (!slug.trim() && name.trim()) setSlug(slugify(name));
                 }}
                 className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-900 dark:border-white/10 dark:bg-zinc-900 dark:text-zinc-100"
-                placeholder="New brand or creator"
+                placeholder={t("newBrandPlaceholder")}
                 required
               />
             </label>
             <label className="block text-[10px] font-medium uppercase tracking-wide text-zinc-500">
-              URL slug
+              {t("urlSlug")}
               <input
                 value={slug}
                 onChange={(e) => setSlug(e.target.value)}
                 className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-900 dark:border-white/10 dark:bg-zinc-900 dark:text-zinc-100"
-                placeholder="auto from name"
+                placeholder={t("autoFromName")}
               />
             </label>
           <label className="block text-[10px] font-medium uppercase tracking-wide text-zinc-500">
-            Instagram (optional)
+            {t("instagramOptional")}
             <input
               value={instagram}
               onChange={(e) => setInstagram(e.target.value)}
               className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-900 dark:border-white/10 dark:bg-zinc-900 dark:text-zinc-100"
-              placeholder="@handle"
+              placeholder={t("handlePlaceholder")}
             />
           </label>
           <div className="flex gap-2">
@@ -262,7 +265,7 @@ export function SidebarClientPanel({ clients, activeSlug, orgSlug }: Props) {
               className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-amber-500 py-2 text-xs font-bold text-zinc-950 disabled:opacity-50"
             >
               {busyCreate ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
-              Create
+              {tCommon("create")}
             </button>
             <button
               type="button"
@@ -274,7 +277,7 @@ export function SidebarClientPanel({ clients, activeSlug, orgSlug }: Props) {
               }}
               className="rounded-lg border border-zinc-200 px-3 py-2 text-xs font-medium text-zinc-600 dark:border-white/10 dark:text-zinc-400"
             >
-              Cancel
+              {tCommon("cancel")}
             </button>
           </div>
         </form>

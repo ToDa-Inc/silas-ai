@@ -3,10 +3,10 @@
 import { Check, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import {
-  PIPELINE_PHASES,
   pipelinePhaseStatus,
   type PipelinePhaseId,
 } from "@/lib/onboarding-ui";
+import { usePipelinePhases } from "@/lib/use-onboarding-ui";
 
 type Props = {
   phase?: string;
@@ -43,13 +43,14 @@ function PhaseIcon({ status }: { status: "done" | "active" | "pending" | "failed
 }
 
 export function OnboardingPipelineProgress({ phase, lastError }: Props) {
+  const pipelinePhases = usePipelinePhases();
   const current = phase === "complete" ? "complete" : phase;
   const failed = current === "failed";
 
   return (
     <div className="space-y-1">
       <ul className="space-y-2">
-        {PIPELINE_PHASES.map((p) => {
+        {pipelinePhases.map((p) => {
           const status = pipelinePhaseStatus(
             p.id,
             current as PipelinePhaseId | undefined,
@@ -60,7 +61,7 @@ export function OnboardingPipelineProgress({ phase, lastError }: Props) {
               className={cn(
                 "flex items-center gap-4 rounded-2xl border px-4 py-3.5 transition-all duration-500",
                 status === "active"
-                  ? "border-amber-400/40 bg-amber-400/[0.04] shadow-[0_0_20px_rgba(251,191,36,0.06)] scale-[1.01]"
+                  ? "border-app-accent/40 bg-app-accent/[0.04] shadow-[0_0_20px_var(--glow-accent)] scale-[1.01]"
                   : status === "done"
                     ? "border-emerald-500/20 bg-emerald-500/[0.02]"
                     : "border-white/5 bg-transparent opacity-50",

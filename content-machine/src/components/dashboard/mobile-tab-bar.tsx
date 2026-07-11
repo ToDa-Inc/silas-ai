@@ -4,10 +4,13 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { Loader2 } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/cn";
-import { primaryNav } from "./nav";
+import { usePrimaryNav } from "./nav";
 
 export function MobileTabBar() {
+  const t = useTranslations("nav");
+  const primaryNav = usePrimaryNav();
   const pathname = usePathname();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -25,7 +28,7 @@ export function MobileTabBar() {
   return (
     <nav
       className="fixed inset-x-0 bottom-0 z-50 border-t border-zinc-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-md dark:border-white/10 dark:bg-zinc-950/95 md:hidden"
-      aria-label="Primary navigation"
+      aria-label={t("primaryNav")}
     >
       <div className="mx-auto flex max-w-lg">
         {primaryNav.map(({ href, label, icon: Icon }) => {

@@ -1,3 +1,4 @@
+import type { GenerationSession } from "@/lib/api/generate";
 import type { ScrapedReelRow } from "@/lib/api";
 
 /** Merge fresh-niche and competitor-win lanes into one de-duped opportunity list. */
@@ -38,6 +39,20 @@ export function canonicalPostUrl(url: string | null | undefined): string {
   }
 }
 
+/** Reuse an existing url_adapt session for this reel instead of starting over. */
+export function findSessionForReel(
+  sessions: GenerationSession[],
+  reel: ScrapedReelRow,
+): GenerationSession | undefined {
+  const canon = canonicalPostUrl(reel.post_url);
+  if (!canon) return undefined;
+  return sessions.find(
+    (s) =>
+      s.source_type === "url_adapt" &&
+      canonicalPostUrl(s.source_url) === canon,
+  );
+}
+
 export function opportunityTitle(reel: ScrapedReelRow): string {
   const h = (reel.hook_text || reel.caption || "").trim().replace(/\s+/g, " ");
   if (h.length > 72) return `${h.slice(0, 70)}…`;
@@ -76,13 +91,20 @@ export function buildOpportunityPool(
   return merged;
 }
 
-export type HeroKind = "draft_ready" | "next_post" | "building" | "start";
+export type HeroKind = "draft_ready" | "draft_preparing" | "next_post" | "building" | "start";
 
 export type HeroResolved =
   | { kind: "draft_ready"; sessionId: string; hookText: string; thumbnailUrl: string | null }
+  | { kind: "draft_preparing"; reel: ScrapedReelRow }
   | { kind: "next_post"; reel: ScrapedReelRow }
   | { kind: "building"; phase: string }
   | { kind: "start" };
+
+export type DailyPostMeta = {
+  sessionId: string | null;
+  status: string | null;
+  primaryReelId: string | null;
+};
 
 export function resolveHeroState(
   pool: ScrapedReelRow[],
@@ -91,12 +113,29 @@ export function resolveHeroState(
     draftHook?: string | null;
     draftThumb?: string | null;
     topOpportunityReelId: string | null;
+    dailyPost?: DailyPostMeta | null;
     isBuilding: boolean;
     phase: string;
     setupComplete: boolean;
   },
 ): HeroResolved {
-  if (opts.latestDraftSessionId) {
+  const daily = opts.dailyPost;
+  if (daily?.sessionId && daily.status !== "failed") {
+    return {
+      kind: "draft_ready",
+      sessionId: daily.sessionId,
+      hookText: opts.draftHook?.trim() || "Your draft is ready to review",
+      thumbnailUrl: opts.draftThumb ?? null,
+    };
+  }
+  const hasDailyTrack =
+    Boolean(daily?.primaryReelId?.trim()) || Boolean(daily?.status?.trim());
+  if (daily?.status === "pending" || (hasDailyTrack && daily?.status !== "ready")) {
+    const primaryId = daily?.primaryReelId?.trim();
+    const reel = (primaryId ? pool.find((r) => r.id === primaryId) : undefined) ?? pool[0];
+    if (reel) return { kind: "next_post", reel };
+  }
+  if (!hasDailyTrack && opts.latestDraftSessionId) {
     return {
       kind: "draft_ready",
       sessionId: opts.latestDraftSessionId,
@@ -107,7 +146,7 @@ export function resolveHeroState(
   if (opts.isBuilding && !opts.setupComplete) {
     return { kind: "building", phase: opts.phase || "pipeline" };
   }
-  const topId = opts.topOpportunityReelId?.trim();
+  const topId = (daily?.primaryReelId || opts.topOpportunityReelId)?.trim();
   let reel: ScrapedReelRow | undefined;
   if (topId) reel = pool.find((r) => r.id === topId);
   if (!reel && pool.length > 0) reel = pool[0];

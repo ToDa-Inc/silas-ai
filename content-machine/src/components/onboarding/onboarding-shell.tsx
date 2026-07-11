@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import {
+  ArrowLeft,
   Check,
   Heart,
   Instagram,
@@ -14,13 +15,16 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { OnboardingSkipToStudioButton } from "@/components/onboarding/onboarding-bypass-controls";
+import { LanguageSwitcher } from "@/components/dashboard/language-switcher";
 import { cn } from "@/lib/cn";
 import {
-  ONBOARDING_CHAPTERS,
   ONBOARDING_STEP_ORDER,
+  canGoBackInOnboarding,
   chapterForStep,
   type OnboardingStepKey,
 } from "@/lib/onboarding-ui";
+import { useOnboardingChapters } from "@/lib/use-onboarding-ui";
+import { useTranslations } from "next-intl";
 
 /** "raw" skips the title/description card chrome — used for steps (like the
  * per-question Q&A flow) that render their own panel but still want the
@@ -35,6 +39,10 @@ type Props = {
   description?: string;
   children: ReactNode;
   onboardingBypassActive?: boolean;
+  onBack?: () => void;
+  backBusy?: boolean;
+  /** Earliest step the user can navigate back to (e.g. quiz when workspace is done). */
+  minBackStep?: OnboardingStepKey;
 };
 
 type FloatingCard = {
@@ -48,48 +56,51 @@ type FloatingCard = {
   accentClass: string;
 };
 
-const FLOATING_CARDS: FloatingCard[] = [
-  {
-    label: "Instagram scan",
-    metric: "48 reels",
-    detail: "Posts, captions, and audience reactions ready to analyze.",
-    badge: "@creator",
-    icon: Instagram,
-    className: "left-2 top-[19%] 2xl:left-5",
-    driftClass: "onboarding-float-card-slow",
-    accentClass: "border-pink-300/30 bg-pink-400/15 text-pink-200",
-  },
-  {
-    label: "Comments pulled",
-    metric: "+600",
-    detail: "Real follower phrases, objections, and content requests.",
-    badge: "Audience",
-    icon: MessageCircle,
-    className: "right-2 top-[17%] 2xl:right-5",
-    driftClass: "onboarding-float-card",
-    accentClass: "border-sky-300/30 bg-sky-400/15 text-sky-200",
-  },
-  {
-    label: "Reach spike",
-    metric: "3.8x",
-    detail: "A reel performing above baseline in the same niche.",
-    badge: "Outlier",
-    icon: TrendingUp,
-    className: "bottom-[18%] left-2 2xl:left-5",
-    driftClass: "onboarding-float-card-wide",
-    accentClass: "border-emerald-300/30 bg-emerald-400/15 text-emerald-200",
-  },
-  {
-    label: "Follower lift",
-    metric: "+1.2K",
-    detail: "Growth tied to formats worth adapting, not copying.",
-    badge: "Momentum",
-    icon: Users,
-    className: "bottom-[22%] right-2 2xl:right-5",
-    driftClass: "onboarding-float-card-slow",
-    accentClass: "border-amber-300/35 bg-amber-400/15 text-amber-200",
-  },
-];
+function useFloatingCards(): FloatingCard[] {
+  const t = useTranslations("onboarding");
+  return [
+    {
+      label: t("floatInstagramScan"),
+      metric: "48 reels",
+      detail: t("floatInstagramDetail"),
+      badge: t("floatBadgeCreator"),
+      icon: Instagram,
+      className: "left-2 top-[19%] 2xl:left-5",
+      driftClass: "onboarding-float-card-slow",
+      accentClass: "border-app-accent/30 bg-app-accent/15 text-app-accent-bright",
+    },
+    {
+      label: t("floatCommentsPulled"),
+      metric: "+600",
+      detail: t("floatCommentsDetail"),
+      badge: t("floatBadgeAudience"),
+      icon: MessageCircle,
+      className: "right-2 top-[17%] 2xl:right-5",
+      driftClass: "onboarding-float-card",
+      accentClass: "border-app-reel-neon/30 bg-app-reel-neon/10 text-app-reel-neon",
+    },
+    {
+      label: t("floatReachSpike"),
+      metric: "3.8x",
+      detail: t("floatReachDetail"),
+      badge: t("floatBadgeOutlier"),
+      icon: TrendingUp,
+      className: "bottom-[18%] left-2 2xl:left-5",
+      driftClass: "onboarding-float-card-wide",
+      accentClass: "border-[#12494A]/50 bg-[#12494A]/20 text-[#7dd9d3]",
+    },
+    {
+      label: t("floatFollowerLift"),
+      metric: "+1.2K",
+      detail: t("floatFollowerDetail"),
+      badge: t("floatBadgeMomentum"),
+      icon: Users,
+      className: "bottom-[22%] right-2 2xl:right-5",
+      driftClass: "onboarding-float-card-slow",
+      accentClass: "border-app-accent/35 bg-app-accent/15 text-app-accent-bright",
+    },
+  ];
+}
 
 const FLOATING_REACTIONS: { value: string; icon: LucideIcon; className: string }[] = [
   {
@@ -122,12 +133,14 @@ function OnboardingChapterProgress({
   currentStep: OnboardingStepKey;
   completedSteps: string[];
 }) {
+  const t = useTranslations("onboarding");
+  const chapters = useOnboardingChapters();
   const activeChapter = chapterForStep(currentStep).id;
 
   return (
-    <div className="w-full" aria-label="Setup progress">
+    <div className="w-full" aria-label={t("setupProgress")}>
       <div className="grid gap-2 sm:grid-cols-3">
-        {ONBOARDING_CHAPTERS.map((ch) => {
+        {chapters.map((ch) => {
           const done = ch.steps.every((s) => completedSteps.includes(s));
           const active = ch.id === activeChapter;
           const activeOrDone = active || done;
@@ -137,7 +150,7 @@ function OnboardingChapterProgress({
               className={cn(
                 "rounded-2xl border px-3 py-3 transition-all duration-500",
                 active
-                  ? "border-amber-400/50 bg-amber-400/10 shadow-[0_0_30px_rgba(251,191,36,0.12)]"
+                  ? "border-app-accent/50 bg-app-accent/10 shadow-[0_0_30px_var(--glow-accent)]"
                   : done
                     ? "border-emerald-400/30 bg-emerald-400/10"
                     : "border-white/10 bg-white/[0.035]",
@@ -175,7 +188,7 @@ function OnboardingChapterProgress({
               <div
                 className={cn(
                   "mt-3 h-1 rounded-full transition-colors duration-500",
-                  done ? "bg-emerald-400" : active ? "bg-amber-300" : "bg-white/10",
+                  done ? "bg-emerald-400" : active ? "bg-app-accent" : "bg-white/10",
                 )}
               />
             </div>
@@ -187,11 +200,12 @@ function OnboardingChapterProgress({
 }
 
 function OnboardingBackdrop() {
+  const floatingCards = useFloatingCards();
   return (
     <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(251,191,36,0.26),transparent_36%),radial-gradient(circle_at_80%_20%,rgba(236,72,153,0.16),transparent_30%),radial-gradient(circle_at_20%_85%,rgba(45,212,191,0.12),transparent_28%),linear-gradient(135deg,#050505_0%,#09090b_44%,#1c1205_100%)]" />
-      <div className="onboarding-orb absolute left-1/2 top-1/2 h-[34rem] w-[34rem] -translate-x-1/2 -translate-y-1/2 rounded-full bg-amber-400/10 blur-3xl" />
-      {FLOATING_CARDS.map((card, index) => (
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(47,201,192,0.22),transparent_36%),radial-gradient(circle_at_80%_20%,rgba(0,229,216,0.14),transparent_30%),radial-gradient(circle_at_20%_85%,rgba(18,73,74,0.18),transparent_28%),linear-gradient(135deg,#050708_0%,#0a1a1c_44%,#12494a_100%)]" />
+      <div className="onboarding-orb absolute left-1/2 top-1/2 h-[34rem] w-[34rem] -translate-x-1/2 -translate-y-1/2 rounded-full bg-app-accent/10 blur-3xl" />
+      {floatingCards.map((card, index) => (
         <FloatingMetricCard
           key={card.label}
           card={card}
@@ -262,32 +276,77 @@ function FloatingMetricCard({
   );
 }
 
+function OnboardingBackButton({
+  busy,
+  onClick,
+}: {
+  busy?: boolean;
+  onClick: () => void;
+}) {
+  const t = useTranslations("onboarding");
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={busy}
+      className="inline-flex items-center gap-1.5 rounded-xl border border-white/15 bg-white/[0.04] px-3 py-2 text-[11px] font-bold text-zinc-300 transition hover:border-white/25 hover:bg-white/[0.08] hover:text-white disabled:cursor-wait disabled:opacity-70"
+    >
+      {busy ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+      ) : (
+        <ArrowLeft className="h-3.5 w-3.5 shrink-0" aria-hidden />
+      )}
+      {t("back")}
+    </button>
+  );
+}
+
 function OnboardingFrame({
   children,
   currentStep,
   completedSteps,
   onboardingBypassActive = false,
+  onBack,
+  backBusy,
+  minBackStep,
 }: {
   children: ReactNode;
   currentStep: OnboardingStepKey;
   completedSteps: string[];
   onboardingBypassActive?: boolean;
+  onBack?: () => void;
+  backBusy?: boolean;
+  minBackStep?: OnboardingStepKey;
 }) {
+  const t = useTranslations("onboarding");
+  const showBack =
+    Boolean(onBack) &&
+    canGoBackInOnboarding(currentStep, {
+      completedSteps,
+      minStep: minBackStep,
+    });
+
   return (
     <main className="relative min-h-screen overflow-hidden bg-zinc-950 text-zinc-100">
       <OnboardingBackdrop />
       <div className="relative z-10 mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 py-6 sm:px-6 lg:px-8">
         <header className="mb-6 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-amber-300/30 bg-amber-300/15 shadow-[0_0_28px_rgba(251,191,36,0.18)]">
+            <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-app-accent/30 bg-app-accent/15 shadow-[0_0_28px_var(--glow-accent)]">
               <Sparkles className="h-5 w-5 text-amber-300" aria-hidden />
             </div>
             <div>
               <p className="text-sm font-black tracking-tight text-white">Silas</p>
-              <p className="text-[11px] font-medium text-zinc-500">Creator Brain setup</p>
+              <p className="text-[11px] font-medium text-zinc-500">{t("setupTitle")}</p>
             </div>
           </div>
-          <OnboardingSkipToStudioButton bypassActive={onboardingBypassActive} />
+          <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+            {showBack ? (
+              <OnboardingBackButton busy={backBusy} onClick={onBack!} />
+            ) : null}
+            <LanguageSwitcher variant="onboarding" />
+            <OnboardingSkipToStudioButton bypassActive={onboardingBypassActive} />
+          </div>
         </header>
         <div className="mb-6">
           <OnboardingChapterProgress currentStep={currentStep} completedSteps={completedSteps} />
@@ -306,7 +365,11 @@ function CardLayout({
   completedSteps,
   children,
   onboardingBypassActive,
+  onBack,
+  backBusy,
+  minBackStep,
 }: Props) {
+  const t = useTranslations("onboarding");
   const n = stepIndex(currentStep);
   const total = ONBOARDING_STEP_ORDER.length - 1;
 
@@ -315,11 +378,14 @@ function CardLayout({
       currentStep={currentStep}
       completedSteps={completedSteps}
       onboardingBypassActive={onboardingBypassActive}
+      onBack={onBack}
+      backBusy={backBusy}
+      minBackStep={minBackStep}
     >
       <section className="flex flex-1 items-center justify-center py-8">
         <article className="onboarding-panel w-full max-w-xl rounded-[2rem] border border-white/10 bg-zinc-950/70 p-6 shadow-2xl backdrop-blur-2xl sm:p-8">
           <p className="text-center text-[10px] font-bold uppercase tracking-[0.22em] text-amber-300">
-            Step {n} of {total}
+            {t("stepOf", { current: n, total })}
           </p>
           <h1 className="mt-3 text-center text-3xl font-black tracking-tight text-white sm:text-4xl">
             {title}
@@ -342,7 +408,11 @@ function PageLayout({
   completedSteps,
   children,
   onboardingBypassActive,
+  onBack,
+  backBusy,
+  minBackStep,
 }: Props) {
+  const t = useTranslations("onboarding");
   const n = stepIndex(currentStep);
   const total = ONBOARDING_STEP_ORDER.length - 1;
 
@@ -351,12 +421,15 @@ function PageLayout({
       currentStep={currentStep}
       completedSteps={completedSteps}
       onboardingBypassActive={onboardingBypassActive}
+      onBack={onBack}
+      backBusy={backBusy}
+      minBackStep={minBackStep}
     >
       <section className="flex-1 pb-8">
         <div className="onboarding-panel rounded-[2rem] border border-white/10 bg-zinc-950/72 shadow-2xl backdrop-blur-2xl">
           <header className="border-b border-white/10 px-5 py-5 sm:px-7">
             <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-amber-300">
-              Step {n} of {total}
+              {t("stepOf", { current: n, total })}
             </p>
             <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
               <div>
@@ -382,15 +455,21 @@ function RawLayout({
   completedSteps,
   children,
   onboardingBypassActive,
+  onBack,
+  backBusy,
+  minBackStep,
 }: Props) {
   return (
     <OnboardingFrame
       currentStep={currentStep}
       completedSteps={completedSteps}
       onboardingBypassActive={onboardingBypassActive}
+      onBack={onBack}
+      backBusy={backBusy}
+      minBackStep={minBackStep}
     >
-      <section className="flex flex-1 items-center justify-center py-4">
-        {children}
+      <section className="flex flex-1 items-start justify-center py-4 sm:py-6">
+        <div className="w-full max-w-6xl">{children}</div>
       </section>
     </OnboardingFrame>
   );
@@ -424,7 +503,7 @@ export function OnboardingPrimaryButton({
       type={type}
       disabled={disabled || busy}
       onClick={onClick}
-      className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-amber-300 to-amber-500 px-4 py-3 text-sm font-black text-zinc-950 shadow-[0_12px_34px_rgba(245,158,11,0.24)] transition hover:-translate-y-0.5 hover:shadow-[0_18px_44px_rgba(245,158,11,0.32)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
+      className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-app-accent-bright to-app-accent px-4 py-3 text-sm font-black text-zinc-950 shadow-[0_12px_34px_var(--shadow-accent)] transition hover:-translate-y-0.5 hover:shadow-[0_18px_44px_var(--shadow-accent)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
     >
       {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
       {children}
@@ -461,6 +540,7 @@ export function OnboardingQuestionScreen({
   submitLabel = "Continue",
   hideActions,
   hideProgress,
+  wide,
   onBack,
   onContinue,
   children,
@@ -480,10 +560,32 @@ export function OnboardingQuestionScreen({
   submitLabel?: string;
   hideActions?: boolean;
   hideProgress?: boolean;
+  /** Full-width single-column panel for voice onboarding etc. */
+  wide?: boolean;
   onBack?: () => void;
   onContinue: () => void;
   children: ReactNode;
 }) {
+  const t = useTranslations("onboarding");
+  if (wide) {
+    return (
+      <div className="onboarding-panel w-full max-w-6xl overflow-hidden rounded-[2rem] border border-white/10 bg-zinc-950/70 shadow-2xl backdrop-blur-2xl">
+        <div className="border-b border-white/10 px-6 py-6 sm:px-10 sm:py-8">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-amber-300">{stepTitle}</p>
+          {stepDescription ? (
+            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-zinc-400">{stepDescription}</p>
+          ) : null}
+          <h1 className="mt-4 text-2xl font-black tracking-tight text-white sm:text-3xl">{question}</h1>
+          <p className="mt-3 max-w-3xl text-base leading-relaxed text-zinc-400">{helper}</p>
+        </div>
+        <div className="px-6 py-6 sm:px-10 sm:py-8">
+          {children}
+          {error ? <p className="mt-4 text-sm text-red-400">{error}</p> : null}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="onboarding-panel grid w-full max-w-3xl overflow-hidden rounded-[2rem] border border-white/10 bg-zinc-950/70 shadow-2xl backdrop-blur-2xl md:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
       <aside className="hidden flex-col justify-between gap-8 border-r border-white/10 bg-white/[0.03] p-8 md:flex">
@@ -498,7 +600,7 @@ export function OnboardingQuestionScreen({
         {hideProgress ? null : (
           <div>
             <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">
-              Question {index + 1} of {total}
+              {t("questionOf", { current: index + 1, total })}
             </p>
             <div className="mt-3 flex gap-1.5">
               {Array.from({ length: total }).map((_, i) => (
@@ -524,13 +626,13 @@ export function OnboardingQuestionScreen({
       >
         <p className="mb-5 text-[10px] font-bold uppercase tracking-widest text-zinc-500 md:hidden">
           {stepTitle}
-          {hideProgress ? "" : ` · Question ${index + 1} of ${total}`}
+          {hideProgress ? "" : ` · ${t("questionOf", { current: index + 1, total })}`}
         </p>
         <h1 className="text-xl font-black tracking-tight text-white sm:text-2xl">
           {question}
           {optional ? (
             <span className="ml-2 align-middle text-xs font-medium text-zinc-500">
-              (optional)
+              {t("optional")}
             </span>
           ) : null}
         </h1>
@@ -549,16 +651,16 @@ export function OnboardingQuestionScreen({
                 disabled={busy}
                 className="rounded-xl border border-white/10 px-5 py-2.5 text-sm font-bold text-zinc-300 transition hover:bg-white/[0.06] disabled:opacity-50"
               >
-                Back
+                {t("back")}
               </button>
             ) : null}
             <button
               type="submit"
               disabled={busy}
-              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-amber-300 to-amber-500 py-2.5 text-sm font-black text-zinc-950 shadow-[0_12px_34px_rgba(245,158,11,0.24)] transition hover:-translate-y-0.5 hover:shadow-[0_18px_44px_rgba(245,158,11,0.32)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
+              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-app-accent-bright to-app-accent py-2.5 text-sm font-black text-zinc-950 shadow-[0_12px_34px_var(--shadow-accent)] transition hover:-translate-y-0.5 hover:shadow-[0_18px_44px_var(--shadow-accent)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
             >
               {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
-              {isLast ? submitLabel : "Continue"}
+              {isLast ? submitLabel : t("continue")}
             </button>
           </div>
         )}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 import { ChevronDown, ChevronUp, Link2, Loader2, X } from "lucide-react";
 import {
   clientApiHeaders,
@@ -83,6 +84,7 @@ export function AnalyzeReelModal({
   skipApify = false,
   onAnalysisJobEnqueued,
 }: Props) {
+  const t = useTranslations("common");
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [phase, setPhase] = useState<string | null>(null);
@@ -250,12 +252,15 @@ export function AnalyzeReelModal({
       : null;
   const scores = success?.analysis.scores;
   const jobSilas = success
-    ? formatSilasScoreSummary({
-        total_score: success.analysis.total_score,
-        weighted_total: success.analysis.weighted_total ?? null,
-        rating: success.analysis.rating,
-        prompt_version: success.analysis.prompt_version ?? null,
-      })
+    ? formatSilasScoreSummary(
+        {
+          total_score: success.analysis.total_score,
+          weighted_total: success.analysis.weighted_total ?? null,
+          rating: success.analysis.rating,
+          prompt_version: success.analysis.prompt_version ?? null,
+        },
+        t,
+      )
     : null;
 
   return (

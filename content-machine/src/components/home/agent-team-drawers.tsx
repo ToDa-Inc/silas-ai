@@ -8,7 +8,8 @@ import { OwnReelMetricsDashboard } from "@/app/(dashboard)/dashboard/own-reel-me
 import { SideDrawer, useSideDrawerExpanded } from "./side-drawer";
 import { ScoutReelsPanel } from "./scout-reels-panel";
 import type { AgentId } from "./agent-team-row";
-import { HOME_COPY } from "@/lib/home-ui";
+import { useHomeCopy } from "@/lib/home-ui";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/cn";
 
 type DrawersProps = {
@@ -36,6 +37,7 @@ export function AgentTeamDrawers({
   onUseReel,
   onOpenSession,
 }: DrawersProps) {
+  const copy = useHomeCopy();
   const readySessions = sessions.filter((s) => s.status === "content_ready");
   const inProgress = sessions.filter(
     (s) => s.status === "angles_ready" || s.render_status === "rendering",
@@ -45,7 +47,7 @@ export function AgentTeamDrawers({
     <>
       <SideDrawer
         open={activeAgent === "scout"}
-        title={HOME_COPY.scoutDrawerTitle}
+        title={copy.scoutDrawerTitle}
         onClose={onClose}
       >
         <ScoutDrawerBody
@@ -59,7 +61,7 @@ export function AgentTeamDrawers({
 
       <SideDrawer
         open={activeAgent === "writer"}
-        title={HOME_COPY.writerDrawerTitle}
+        title={copy.writerDrawerTitle}
         onClose={onClose}
       >
         <WriterDrawerBody
@@ -71,7 +73,7 @@ export function AgentTeamDrawers({
 
       <SideDrawer
         open={activeAgent === "analyst"}
-        title={HOME_COPY.analystDrawerTitle}
+        title={copy.analystDrawerTitle}
         onClose={onClose}
         defaultExpanded
       >
@@ -123,6 +125,8 @@ function WriterDrawerBody({
   inProgress: GenerationSession[];
   onOpenSession: (sessionId: string) => void;
 }) {
+  const copy = useHomeCopy();
+  const t = useTranslations("dashboard");
   const expanded = useSideDrawerExpanded();
 
   return (
@@ -131,10 +135,10 @@ function WriterDrawerBody({
         href="/generate"
         className="mb-4 flex w-full items-center justify-center rounded-xl bg-amber-500 py-2.5 text-sm font-bold text-zinc-950 transition hover:bg-amber-400"
       >
-        {HOME_COPY.startNewPost}
+        {copy.startNewPost}
       </Link>
       {readySessions.length === 0 && inProgress.length === 0 ? (
-        <p className="text-sm text-app-fg-muted">No drafts yet. Start a new post above.</p>
+        <p className="text-sm text-app-fg-muted">{t("noDraftsYet")}</p>
       ) : (
         <ul
           className={cn(
@@ -148,7 +152,7 @@ function WriterDrawerBody({
                 ? String((s.hooks[0] as { text?: string }).text ?? "")
                 : "") ||
               String(s.caption_body ?? "").slice(0, 80) ||
-              "Draft ready";
+              copy.draftReady;
             return (
               <li key={s.id}>
                 <button
@@ -157,7 +161,7 @@ function WriterDrawerBody({
                   className="w-full rounded-xl border border-zinc-200 px-4 py-3 text-left transition hover:border-amber-400/40 hover:bg-amber-500/[0.04] dark:border-white/10"
                 >
                   <p className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-                    {HOME_COPY.draftReady}
+                    {copy.draftReady}
                   </p>
                   <p className="mt-1 line-clamp-3 text-sm text-app-fg">{hook}</p>
                 </button>
@@ -169,7 +173,7 @@ function WriterDrawerBody({
               key={s.id}
               className="rounded-xl border border-dashed border-zinc-200 px-4 py-3 text-sm text-zinc-500 dark:border-white/10"
             >
-              In progress…
+              {t("inProgressShort")}
             </li>
           ))}
         </ul>
@@ -191,13 +195,14 @@ function AnalystDrawerBody({
   stats: IntelligenceStatsRow | null;
   focusReelId?: string;
 }) {
+  const t = useTranslations("dashboard");
+
   return (
     <div className="space-y-4">
       <DashboardKpiStrip stats={stats} className="mb-4" />
       {summary.analyst.outliers > 0 ? (
         <p className="text-xs text-app-fg-muted">
-          {summary.analyst.outliers} breakout
-          {summary.analyst.outliers === 1 ? "" : "s"} spotted in your niche this cycle.
+          {t("breakoutsSpotted", { count: summary.analyst.outliers })}
         </p>
       ) : null}
       <OwnReelMetricsDashboard

@@ -13,10 +13,8 @@ from supabase import Client
 from core.config import Settings, get_settings
 from core.database import get_supabase
 from core.deps import require_org_access, resolve_client_id
-from services.client_context_generate import (
-    generate_section_from_brief,
-    generate_sections_from_transcript,
-)
+from services.client_context_generate import generate_section_from_brief
+from services.client_context_real_prompts import generate_sections_from_real_prompts
 from services.context_extract import extract_text_from_upload
 
 router = APIRouter(prefix="/api/v1", tags=["context"])
@@ -127,6 +125,7 @@ def generate_client_context_drafts(
     body: ContextGenerateBody,
     org_id: Annotated[str, Depends(require_org_access)],
     client_id: Annotated[str, Depends(resolve_client_id)],
+    supabase: Annotated[Client, Depends(get_supabase)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> Dict[str, Any]:
     """Draft the five strategy sections from a transcript; does not persist."""
@@ -139,10 +138,16 @@ def generate_client_context_drafts(
             detail="OPENROUTER_API_KEY not configured",
         )
     try:
-        sections = generate_sections_from_transcript(
+        crow = supabase.table("clients").select("name,language").eq("id", client_id).limit(1).execute()
+        client_name = str((crow.data or [{}])[0].get("name") or "")
+        model = settings.openrouter_onboarding_model or settings.openrouter_model
+        client_lang = str((crow.data or [{}])[0].get("language") or "de")
+        sections = generate_sections_from_real_prompts(
             openrouter_key=settings.openrouter_api_key,
-            model=settings.openrouter_model,
+            model=model,
             transcript=body.transcript,
+            client_name=client_name,
+            lang=client_lang,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

@@ -4,7 +4,8 @@ import type { LucideIcon } from "lucide-react";
 import { BarChart3, PenLine, Search } from "lucide-react";
 import { motion } from "framer-motion";
 import type { HomeSummaryRow } from "@/lib/api";
-import { HOME_COPY, formatCompactViews } from "@/lib/home-ui";
+import { formatCompactViews, useHomeCopy } from "@/lib/home-ui";
+import { useTranslations } from "next-intl";
 import { useCountUp } from "@/lib/use-count-up";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { cn } from "@/lib/cn";
@@ -17,84 +18,82 @@ type Props = {
   onSelect: (id: AgentId) => void;
 };
 
-const AGENTS: {
+type AgentConfig = {
   id: AgentId;
   name: string;
   role: string;
   icon: LucideIcon;
   iconBg: string;
-}[] = [
-  {
-    id: "scout",
-    name: HOME_COPY.scoutName,
-    role: HOME_COPY.scoutRole,
-    icon: Search,
-    iconBg: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
-  },
-  {
-    id: "writer",
-    name: HOME_COPY.writerName,
-    role: HOME_COPY.writerRole,
-    icon: PenLine,
-    iconBg: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
-  },
-  {
-    id: "analyst",
-    name: HOME_COPY.analystName,
-    role: HOME_COPY.analystRole,
-    icon: BarChart3,
-    iconBg: "bg-violet-500/15 text-violet-600 dark:text-violet-400",
-  },
-];
-
-function agentStatLine(id: AgentId, summary: HomeSummaryRow): string {
-  const { scout, writer, analyst } = summary;
-  if (id === "scout") {
-    if (scout.working) return HOME_COPY.scoutWorking;
-    if (scout.watching_accounts === 0) return "Setting up your watch list";
-    return `Watching ${scout.watching_accounts} account${scout.watching_accounts === 1 ? "" : "s"} · ${scout.new_this_week} new this week`;
-  }
-  if (id === "writer") {
-    if (writer.working) return HOME_COPY.writerWorking;
-    if (writer.drafts_ready === 0 && writer.in_progress === 0) return "Ready when you are";
-    const parts: string[] = [];
-    if (writer.drafts_ready > 0) {
-      parts.push(`${writer.drafts_ready} draft${writer.drafts_ready === 1 ? "" : "s"} ready`);
-    }
-    if (writer.in_progress > 0) {
-      parts.push(`${writer.in_progress} in progress`);
-    }
-    return parts.join(" · ");
-  }
-  if (analyst.working) return HOME_COPY.analystWorking;
-  if (analyst.reels_studied === 0) return "Waiting for your reels";
-  const avg = formatCompactViews(analyst.avg_views);
-  return `Studied ${analyst.reels_studied} of your reels · avg ${avg} views`;
-}
-
-function agentNumericHighlight(id: AgentId, summary: HomeSummaryRow): number {
-  if (id === "scout") return summary.scout.new_this_week;
-  if (id === "writer") return summary.writer.drafts_ready;
-  return summary.analyst.reels_studied;
-}
+};
 
 export function AgentTeamRow({ summary, activeAgent, onSelect }: Props) {
+  const copy = useHomeCopy();
+  const t = useTranslations("dashboard");
   const reducedMotion = usePrefersReducedMotion();
 
+  const agents: AgentConfig[] = [
+    {
+      id: "scout",
+      name: copy.scoutName,
+      role: copy.scoutRole,
+      icon: Search,
+      iconBg: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
+    },
+    {
+      id: "writer",
+      name: copy.writerName,
+      role: copy.writerRole,
+      icon: PenLine,
+      iconBg: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
+    },
+    {
+      id: "analyst",
+      name: copy.analystName,
+      role: copy.analystRole,
+      icon: BarChart3,
+      iconBg: "bg-violet-500/15 text-violet-600 dark:text-violet-400",
+    },
+  ];
+
+  function agentStatLine(id: AgentId): string {
+    const { scout, writer, analyst } = summary;
+    if (id === "scout") {
+      if (scout.working) return copy.scoutWorking;
+      if (scout.watching_accounts === 0) return t("settingUpWatchlist");
+      return t("watchingAccounts", { count: scout.watching_accounts, new: scout.new_this_week });
+    }
+    if (id === "writer") {
+      if (writer.working) return copy.writerWorking;
+      if (writer.drafts_ready === 0 && writer.in_progress === 0) return t("readyWhenYouAre");
+      const parts: string[] = [];
+      if (writer.drafts_ready > 0) {
+        parts.push(t("draftsReady", { count: writer.drafts_ready }));
+      }
+      if (writer.in_progress > 0) {
+        parts.push(t("inProgress", { count: writer.in_progress }));
+      }
+      return parts.join(" · ");
+    }
+    if (analyst.working) return copy.analystWorking;
+    if (analyst.reels_studied === 0) return t("waitingForReels");
+    const avg = formatCompactViews(analyst.avg_views);
+    return t("studiedReels", { count: analyst.reels_studied, views: avg });
+  }
+
   return (
-    <section aria-label="Your agent team" className="mt-8">
+    <section aria-label={t("agentTeam")} className="mt-8">
       <div className="mb-3 flex items-center justify-between gap-2">
         <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
-          Your team
+          {t("yourTeam")}
         </p>
-        <p className="text-[11px] text-zinc-400">{HOME_COPY.teamLive}</p>
+        <p className="text-[11px] text-zinc-400">{copy.teamLive}</p>
       </div>
       <div className="-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-1 md:mx-0 md:grid md:grid-cols-3 md:overflow-visible md:px-0">
-        {AGENTS.map((agent, i) => (
+        {agents.map((agent, i) => (
           <AgentCard
             key={agent.id}
             agent={agent}
-            stat={agentStatLine(agent.id, summary)}
+            stat={agentStatLine(agent.id)}
             highlight={agentNumericHighlight(agent.id, summary)}
             working={
               agent.id === "scout"
@@ -106,12 +105,19 @@ export function AgentTeamRow({ summary, activeAgent, onSelect }: Props) {
             active={activeAgent === agent.id}
             floatDelay={i * 0.4}
             reducedMotion={reducedMotion}
+            tapToSee={copy.tapToSee}
             onSelect={() => onSelect(agent.id)}
           />
         ))}
       </div>
     </section>
   );
+}
+
+function agentNumericHighlight(id: AgentId, summary: HomeSummaryRow): number {
+  if (id === "scout") return summary.scout.new_this_week;
+  if (id === "writer") return summary.writer.drafts_ready;
+  return summary.analyst.reels_studied;
 }
 
 function AgentCard({
@@ -122,15 +128,17 @@ function AgentCard({
   active,
   floatDelay,
   reducedMotion,
+  tapToSee,
   onSelect,
 }: {
-  agent: (typeof AGENTS)[number];
+  agent: AgentConfig;
   stat: string;
   highlight: number;
   working: boolean;
   active: boolean;
   floatDelay: number;
   reducedMotion: boolean;
+  tapToSee: string;
   onSelect: () => void;
 }) {
   const Icon = agent.icon;
@@ -186,7 +194,7 @@ function AgentCard({
         {stat}
       </p>
       <p className="mt-2 text-[10px] font-medium uppercase tracking-wide text-zinc-400">
-        {HOME_COPY.tapToSee}
+        {tapToSee}
       </p>
     </motion.button>
   );

@@ -4,8 +4,10 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { Loader2, Menu, User } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/cn";
-import { studioNav } from "./nav";
+import { LanguageSwitcher } from "./language-switcher";
+import { useStudioNav } from "./nav";
 import { SignOutButton } from "./sign-out-button";
 import { SidebarClientPanel } from "./sidebar-client-panel";
 import { ThemeToggle } from "./theme-toggle";
@@ -24,6 +26,9 @@ export function AvatarMenu({
   orgSlug = "",
   onNavigate,
 }: AvatarMenuProps) {
+  const t = useTranslations("nav");
+  const tCommon = useTranslations("common");
+  const studioNav = useStudioNav();
   const [open, setOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const pathname = usePathname();
@@ -67,7 +72,7 @@ export function AvatarMenu({
     <div className="relative" ref={panelRef}>
       <button
         type="button"
-        aria-label="Open menu"
+        aria-label={t("openMenu")}
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
         className="flex h-9 w-9 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-700 shadow-sm transition hover:bg-zinc-50 dark:border-white/10 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
@@ -79,7 +84,7 @@ export function AvatarMenu({
         <>
           <button
             type="button"
-            aria-label="Close menu"
+            aria-label={t("closeMenu")}
             className="fixed inset-0 z-[70] bg-black/40 backdrop-blur-sm md:bg-transparent md:backdrop-blur-none"
             onClick={() => setOpen(false)}
           />
@@ -92,18 +97,21 @@ export function AvatarMenu({
             <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3 dark:border-white/10">
               <span className="flex items-center gap-2 text-sm font-semibold text-app-fg">
                 <User className="h-4 w-4 text-zinc-500" aria-hidden />
-                Studio
+                {t("studio")}
               </span>
-              <ThemeToggle />
+              <div className="flex items-center gap-2">
+                <LanguageSwitcher compact />
+                <ThemeToggle />
+              </div>
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
               <SidebarClientPanel clients={clients} activeSlug={activeSlug} orgSlug={orgSlug} />
 
               <p className="mb-2 mt-4 px-1 text-[10px] font-bold uppercase tracking-widest text-zinc-500">
-                Power features
+                {t("powerFeatures")}
               </p>
-              <nav className="space-y-0.5" aria-label="Studio navigation">
+              <nav className="space-y-0.5" aria-label={t("studioNav")}>
                 {studioNav.map(({ href, label, icon: Icon, comingSoon }) => {
                   const active = navActive(href);
                   const navigatingHere = isPending && pendingHref === href;
@@ -145,7 +153,7 @@ export function AvatarMenu({
                         {label}
                         {comingSoon ? (
                           <span className="rounded-sm bg-app-divider/60 px-1 py-px text-[8px] font-bold uppercase tracking-wider text-app-fg-subtle">
-                            Soon
+                            {tCommon("soon")}
                           </span>
                         ) : null}
                       </span>

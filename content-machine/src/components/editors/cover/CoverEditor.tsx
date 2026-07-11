@@ -1,3 +1,5 @@
+"use client";
+
 /**
  * CoverEditor — Reel cover canvas + Content / Style / Image control tabs.
  *
@@ -11,6 +13,7 @@
  */
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import {
   AlignCenter,
   AlignLeft,
@@ -127,12 +130,13 @@ export function CoverEditor({
   step,
   embedded = false,
 }: Props) {
+  const t = useTranslations("editors");
   const usingCoverOptions = coverOptions.length > 0;
   const chipItems: string[] = usingCoverOptions
     ? coverOptions
     : hooks.map((h) => h?.text ?? "").filter(Boolean);
   const selectedImage = images.find((img) => img.id === selectedImageId) ?? null;
-  const previewText = coverText.trim() || "Cover headline";
+  const previewText = coverText.trim() || t("coverHeadline");
   const coverFormat = layoutFormatFromTemplateId(coverEdit.templateId);
   const coverPin =
     coverEdit.templateId === "top-banner" ? "top" : coverEdit.layout.verticalAnchor ?? "center";
@@ -218,9 +222,9 @@ export function CoverEditor({
                 value={coverTab}
                 onChange={setCoverTab}
                 tabs={[
-                  { id: "content", label: "Content" },
-                  { id: "style", label: "Style" },
-                  { id: "image", label: "Image" },
+                  { id: "content", label: t("content") },
+                  { id: "style", label: t("style") },
+                  { id: "image", label: t("image") },
                 ]}
               />
             </div>
@@ -280,7 +284,7 @@ export function CoverEditor({
                       onChange={(e) => onCoverTextChange(e.target.value)}
                       rows={3}
                       className="glass-inset w-full resize-y rounded-lg px-2.5 py-1.5 text-sm leading-snug text-app-fg placeholder:text-app-fg-subtle focus:outline-none focus:ring-2 focus:ring-amber-500/35"
-                      placeholder="Cover headline"
+                      placeholder={t("coverHeadline")}
                     />
                   </label>
                   <p className="text-[9px] text-app-fg-subtle">
@@ -362,25 +366,25 @@ export function CoverEditor({
                       <div className="flex flex-wrap gap-1">
                         {(
                           [
-                            { id: "center" as const, label: "Center", templateId: "centered-pop" as const, title: "Headline in the middle" },
-                            { id: "card" as const, label: "Card", templateId: "bottom-card" as const, title: "Caption on a card" },
-                            { id: "stack" as const, label: "Stack", templateId: "stacked-cards" as const, title: "Stacked cards" },
+                            { id: "center" as const, label: t("layoutCenter"), templateId: "centered-pop" as const, title: t("headlineMiddle") },
+                            { id: "card" as const, label: t("layoutCard"), templateId: "bottom-card" as const, title: t("captionOnCard") },
+                            { id: "stack" as const, label: t("layoutStack"), templateId: "stacked-cards" as const, title: t("stackedCards") },
                           ] as const
-                        ).map((t) => {
-                          const active = coverFormat === t.id;
+                        ).map((tRow) => {
+                          const active = coverFormat === tRow.id;
                           return (
                             <button
-                              key={t.id}
+                              key={tRow.id}
                               type="button"
                               aria-pressed={active}
-                              title={t.title}
-                              onClick={() => onCoverEditChange({ ...coverEdit, templateId: t.templateId })}
+                              title={tRow.title}
+                              onClick={() => onCoverEditChange({ ...coverEdit, templateId: tRow.templateId })}
                               className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-semibold transition ${
                                 active ? STYLE_CHIP_ON : STYLE_CHIP_OFF
                               }`}
                             >
-                              <FormatGlyph format={t.id} />
-                              {t.label}
+                              <FormatGlyph format={tRow.id} />
+                              {tRow.label}
                             </button>
                           );
                         })}
@@ -390,9 +394,9 @@ export function CoverEditor({
                           <span className="text-[9px] font-bold uppercase text-app-fg-muted">Y</span>
                           {(
                             [
-                              { id: "top" as const, label: "Top" },
-                              { id: "center" as const, label: "Mid" },
-                              { id: "bottom" as const, label: "Bot" },
+                              { id: "top" as const, label: t("positionTop") },
+                              { id: "center" as const, label: t("positionMid") },
+                              { id: "bottom" as const, label: t("positionBottom") },
                             ] as const
                           ).map((p) => {
                             const active = coverPin === p.id;
@@ -541,9 +545,9 @@ export function CoverEditor({
                         <div className="inline-flex rounded-md border border-app-divider p-0.5">
                           {(
                             [
-                              { id: "left" as const, Icon: AlignLeft, label: "Align left" },
-                              { id: "center" as const, Icon: AlignCenter, label: "Align center" },
-                              { id: "right" as const, Icon: AlignRight, label: "Align right" },
+                              { id: "left" as const, Icon: AlignLeft, label: t("alignLeft") },
+                              { id: "center" as const, Icon: AlignCenter, label: t("alignCenter") },
+                              { id: "right" as const, Icon: AlignRight, label: t("alignRight") },
                             ] as const
                           ).map(({ id, Icon, label }) => {
                             const active = coverEdit.layout.textAlign === id;
@@ -567,9 +571,9 @@ export function CoverEditor({
                         <div className="inline-flex flex-wrap gap-0.5">
                           {(
                             [
-                              { id: "auto" as const, label: "Auto" },
-                              { id: "light" as const, label: "On dark" },
-                              { id: "dark" as const, label: "On light" },
+                              { id: "auto" as const, label: t("contrastAuto") },
+                              { id: "light" as const, label: t("contrastOnDark") },
+                              { id: "dark" as const, label: t("contrastOnLight") },
                             ] as const
                           ).map((row) => {
                             const active = coverContrast === row.id;

@@ -8,7 +8,7 @@ import { ReelThumbnail } from "@/components/reel-thumbnail";
 import type { ScrapedReelRow } from "@/lib/api";
 import type { HeroResolved } from "@/lib/home-opportunities";
 import { opportunityTitle, opportunityWhy } from "@/lib/home-opportunities";
-import { HOME_COPY } from "@/lib/home-ui";
+import { useHomeCopy } from "@/lib/home-ui";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { cn } from "@/lib/cn";
 
@@ -17,6 +17,7 @@ type Props = {
   pool: ScrapedReelRow[];
   disabled?: boolean;
   busy?: boolean;
+  primaryLabel?: string;
   onUseThis: () => void;
   onShowAnother: (reel: ScrapedReelRow) => void;
   layoutId?: string;
@@ -27,10 +28,12 @@ export function HeroCard({
   pool,
   disabled,
   busy,
+  primaryLabel,
   onUseThis,
   onShowAnother,
   layoutId = "hero-card",
 }: Props) {
+  const copy = useHomeCopy();
   const reducedMotion = usePrefersReducedMotion();
   const [heroIndex, setHeroIndex] = useState(0);
   const [buildingStep, setBuildingStep] = useState(0);
@@ -39,17 +42,19 @@ export function HeroCard({
   useEffect(() => {
     if (hero.kind !== "building") return;
     const id = window.setInterval(() => {
-      setBuildingStep((s) => (s + 1) % HOME_COPY.heroBuildingSteps.length);
+      setBuildingStep((s) => (s + 1) % copy.heroBuildingSteps.length);
     }, 2800);
     return () => window.clearInterval(id);
-  }, [hero.kind]);
+  }, [hero.kind, copy.heroBuildingSteps.length]);
 
   const displayReel =
-    hero.kind === "next_post"
-      ? pool.length > 0
-        ? pool[heroIndex % pool.length]!
-        : hero.reel
-      : null;
+    hero.kind === "draft_preparing"
+      ? hero.reel
+      : hero.kind === "next_post"
+        ? pool.length > 0
+          ? pool[heroIndex % pool.length]!
+          : hero.reel
+        : null;
 
   const handleShowAnother = useCallback(() => {
     if (pool.length < 2) return;
@@ -73,15 +78,31 @@ export function HeroCard({
       <div className="p-5 sm:p-6">
         {hero.kind === "draft_ready" && (
           <HeroBody
-            title={HOME_COPY.heroDraftReadyTitle}
-            sub={HOME_COPY.heroDraftReadySub}
+            title={copy.heroDraftReadyTitle}
+            sub={copy.heroDraftReadySub}
             hook={hero.hookText}
             thumb={hero.thumbnailUrl}
             username={null}
             disabled={disabled}
             busy={busy}
+            primaryLabel={primaryLabel ?? copy.openTodayPost}
             onPrimary={onUseThis}
             onSecondary={pool.length > 1 ? handleShowAnother : undefined}
+          />
+        )}
+
+        {hero.kind === "draft_preparing" && displayReel && (
+          <HeroBody
+            title={copy.heroDraftPreparingTitle}
+            sub={copy.heroDraftPreparingSub}
+            hook={opportunityTitle(displayReel)}
+            thumb={displayReel.thumbnail_url}
+            username={displayReel.account_username}
+            disabled
+            busy
+            primaryLabel={copy.createTodayPost}
+            onPrimary={onUseThis}
+            onSecondary={undefined}
           />
         )}
 
@@ -95,13 +116,14 @@ export function HeroCard({
               transition={{ duration: 0.16 }}
             >
               <HeroBody
-                title={HOME_COPY.heroNextPostTitle}
+                title={copy.heroNextPostTitle}
                 sub={opportunityWhy(displayReel)}
                 hook={opportunityTitle(displayReel)}
                 thumb={displayReel.thumbnail_url}
                 username={displayReel.account_username}
                 disabled={disabled}
                 busy={busy}
+                primaryLabel={primaryLabel ?? copy.createTodayPost}
                 onPrimary={onUseThis}
                 onSecondary={pool.length > 1 ? handleShowAnother : undefined}
               />
@@ -112,9 +134,9 @@ export function HeroCard({
         {hero.kind === "building" && (
           <div className="space-y-4">
             <div>
-              <h2 className="text-lg font-semibold text-app-fg">{HOME_COPY.heroBuildingTitle}</h2>
+              <h2 className="text-lg font-semibold text-app-fg">{copy.heroBuildingTitle}</h2>
               <p className="mt-1 text-sm text-app-fg-muted">
-                {HOME_COPY.heroBuildingSteps[buildingStep]}
+                {copy.heroBuildingSteps[buildingStep]}
               </p>
             </div>
             <div className="space-y-2">
@@ -127,21 +149,21 @@ export function HeroCard({
         {hero.kind === "start" && (
           <div className="space-y-4">
             <div>
-              <h2 className="text-lg font-semibold text-app-fg">{HOME_COPY.heroStartTitle}</h2>
-              <p className="mt-1 text-sm text-app-fg-muted">{HOME_COPY.heroStartSub}</p>
+              <h2 className="text-lg font-semibold text-app-fg">{copy.heroStartTitle}</h2>
+              <p className="mt-1 text-sm text-app-fg-muted">{copy.heroStartSub}</p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row">
               <Link
                 href="/generate"
                 className="flex flex-1 items-center justify-center rounded-xl bg-amber-500 px-4 py-3 text-sm font-bold text-zinc-950 transition hover:bg-amber-400"
               >
-                {HOME_COPY.pasteReel}
+                {copy.pasteReel}
               </Link>
               <Link
                 href="/onboarding"
                 className="flex flex-1 items-center justify-center rounded-xl border border-zinc-200 px-4 py-3 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50 dark:border-white/10 dark:text-zinc-300 dark:hover:bg-white/5"
               >
-                {HOME_COPY.finishSetup}
+                {copy.finishSetup}
               </Link>
             </div>
           </div>
@@ -159,6 +181,7 @@ function HeroBody({
   username,
   disabled,
   busy,
+  primaryLabel,
   onPrimary,
   onSecondary,
 }: {
@@ -169,9 +192,12 @@ function HeroBody({
   username: string | null;
   disabled?: boolean;
   busy?: boolean;
+  primaryLabel?: string;
   onPrimary: () => void;
   onSecondary?: () => void;
 }) {
+  const copy = useHomeCopy();
+  const label = primaryLabel ?? copy.useThis;
   return (
     <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
       {thumb ? (
@@ -179,6 +205,7 @@ function HeroBody({
           <ReelThumbnail
             src={thumb}
             alt=""
+            fallbackLabel={username ? `@${username}` : undefined}
             size="sm"
             className="h-32 w-20 object-cover sm:h-36 sm:w-[88px]"
           />
@@ -206,10 +233,10 @@ function HeroBody({
             {busy ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                {HOME_COPY.openingStudio}
+                {copy.preparing}
               </>
             ) : (
-              HOME_COPY.useThis
+              label
             )}
           </button>
           {onSecondary ? (
@@ -219,7 +246,7 @@ function HeroBody({
               onClick={onSecondary}
               className="rounded-xl border border-zinc-200 px-4 py-2.5 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50 disabled:opacity-50 dark:border-white/10 dark:text-zinc-300"
             >
-              {HOME_COPY.showAnother}
+              {copy.showAnother}
             </button>
           ) : null}
         </div>

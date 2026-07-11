@@ -7,7 +7,7 @@ import { SegmentedFilterPills } from "@/app/(dashboard)/intelligence/reels/sourc
 import { ReelThumbnail } from "@/components/reel-thumbnail";
 import type { HomeSummaryRow, ScrapedReelRow } from "@/lib/api";
 import { opportunityTitle } from "@/lib/home-opportunities";
-import { HOME_COPY, formatCompactViews } from "@/lib/home-ui";
+import { formatCompactViews, useHomeCopy } from "@/lib/home-ui";
 import {
   scoutCatalogHref,
   useScoutReelsCatalog,
@@ -37,6 +37,7 @@ export function ScoutReelsPanel({
   enabled,
   onUseReel,
 }: Props) {
+  const copy = useHomeCopy();
   const pageSize = expanded ? 24 : 8;
   const catalog = useScoutReelsCatalog(clientSlug, orgSlug, { pageSize, enabled });
   const [viewMode, setViewMode] = useState<ViewMode>("cards");
@@ -46,26 +47,26 @@ export function ScoutReelsPanel({
   }, [expanded]);
 
   const slicePills = [
-    { id: "fresh", label: HOME_COPY.scoutSliceFresh, active: catalog.slice === "fresh", variant: "purple" as const },
+    { id: "fresh", label: copy.scoutSliceFresh, active: catalog.slice === "fresh", variant: "purple" as const },
     {
       id: "competitors",
-      label: HOME_COPY.scoutSliceCompetitors,
+      label: copy.scoutSliceCompetitors,
       active: catalog.slice === "competitors",
       variant: "neutral" as const,
     },
     {
       id: "breakouts",
-      label: HOME_COPY.scoutSliceBreakouts,
+      label: copy.scoutSliceBreakouts,
       active: catalog.slice === "breakouts",
       variant: "amber" as const,
     },
-    { id: "saved", label: HOME_COPY.scoutSliceSaved, active: catalog.slice === "saved", variant: "neutral" as const },
+    { id: "saved", label: copy.scoutSliceSaved, active: catalog.slice === "saved", variant: "neutral" as const },
   ];
 
   const sortPills = [
-    { id: "posted_at", label: HOME_COPY.scoutSortPosted, active: catalog.sort === "posted_at" },
-    { id: "views", label: HOME_COPY.scoutSortViews, active: catalog.sort === "views" },
-    { id: "outlier_ratio", label: HOME_COPY.scoutSortOutlier, active: catalog.sort === "outlier_ratio" },
+    { id: "posted_at", label: copy.scoutSortPosted, active: catalog.sort === "posted_at" },
+    { id: "views", label: copy.scoutSortViews, active: catalog.sort === "views" },
+    { id: "outlier_ratio", label: copy.scoutSortOutlier, active: catalog.sort === "outlier_ratio" },
   ];
 
   return (
@@ -121,7 +122,7 @@ export function ScoutReelsPanel({
                 )}
               >
                 <LayoutGrid className="h-3.5 w-3.5" aria-hidden />
-                {HOME_COPY.scoutViewCards}
+                {copy.scoutViewCards}
               </button>
               <button
                 type="button"
@@ -135,7 +136,7 @@ export function ScoutReelsPanel({
                 )}
               >
                 <List className="h-3.5 w-3.5" aria-hidden />
-                {HOME_COPY.scoutViewRows}
+                {copy.scoutViewRows}
               </button>
             </div>
             <label className="relative min-w-[12rem] flex-1 sm:max-w-xs">
@@ -147,7 +148,7 @@ export function ScoutReelsPanel({
                 type="search"
                 value={catalog.search}
                 onChange={(e) => catalog.setSearch(e.target.value)}
-                placeholder={HOME_COPY.scoutSearchPlaceholder}
+                placeholder={copy.scoutSearchPlaceholder}
                 className="w-full rounded-lg border border-zinc-200/90 bg-white py-2 pl-8 pr-3 text-xs text-app-fg placeholder:text-app-fg-muted focus:outline-none focus:ring-2 focus:ring-amber-500/35 dark:border-white/10 dark:bg-zinc-900"
               />
             </label>
@@ -165,7 +166,7 @@ export function ScoutReelsPanel({
           ) : catalog.search.trim() ? (
             `${catalog.rows.length} match${catalog.rows.length === 1 ? "" : "es"} on this page`
           ) : (
-            HOME_COPY.scoutShowing(catalog.rows.length, catalog.total)
+            copy.scoutShowing(catalog.rows.length, catalog.total)
           )}
         </span>
         {expanded && catalog.totalPages > 1 ? (
@@ -203,7 +204,7 @@ export function ScoutReelsPanel({
 
       {!catalog.loading && catalog.rows.length === 0 ? (
         <p className="rounded-xl border border-dashed border-zinc-200 px-4 py-6 text-center text-sm text-app-fg-muted dark:border-white/10">
-          {HOME_COPY.scoutEmpty}
+          {copy.scoutEmpty}
         </p>
       ) : viewMode === "rows" ? (
         <div className="overflow-x-auto rounded-xl border border-zinc-200/90 dark:border-white/10">
@@ -243,13 +244,14 @@ export function ScoutReelsPanel({
         className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-zinc-200/90 px-3 py-2.5 text-xs font-semibold text-app-fg-secondary transition hover:border-amber-400/40 hover:bg-amber-500/[0.04] dark:border-white/10"
       >
         <ExternalLink className="h-3.5 w-3.5" aria-hidden />
-        {HOME_COPY.scoutOpenCatalog}
+        {copy.scoutOpenCatalog}
       </Link>
     </div>
   );
 }
 
 function ScoutReelRow({ reel, onUse }: { reel: ScrapedReelRow; onUse: () => void }) {
+  const copy = useHomeCopy();
   const title = opportunityTitle(reel);
   const user = reel.account_username?.trim() || "creator";
   const provenance = getReelProvenance(reel);
@@ -296,7 +298,7 @@ function ScoutReelRow({ reel, onUse }: { reel: ScrapedReelRow; onUse: () => void
           onClick={onUse}
           className="rounded-lg bg-amber-500 px-3 py-1.5 text-[11px] font-bold text-zinc-950 transition hover:bg-amber-400"
         >
-          {HOME_COPY.useThis}
+          {copy.useThis}
         </button>
       </td>
     </tr>

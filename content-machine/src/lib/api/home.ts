@@ -92,7 +92,71 @@ export type HomeSummaryRow = {
     posts_made: number;
     last_export: HomeSummaryExport | null;
   };
+  daily_post?: {
+    primary_reel_id: string | null;
+    daily_session_id: string | null;
+    draft_status: string | null;
+    draft_error: string | null;
+  };
 };
+
+export async function createTodayPostClient(
+  clientSlug: string,
+  orgSlug: string,
+): Promise<{
+  ok: boolean;
+  data: import("@/lib/api").DashboardTodayPicks | null;
+  error?: string;
+}> {
+  const base = getContentApiBase();
+  const headers = await clientApiHeaders({ orgSlug });
+  try {
+    const res = await contentApiFetch(
+      `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/dashboard/today-post`,
+      { method: "POST", headers },
+    );
+    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) {
+      return {
+        ok: false,
+        data: null,
+        error: formatFastApiError(json, `Failed (${res.status})`),
+      };
+    }
+    return { ok: true, data: json as import("@/lib/api").DashboardTodayPicks };
+  } catch (e) {
+    return { ok: false, data: null, error: e instanceof Error ? e.message : "fetch failed" };
+  }
+}
+
+export async function fetchDashboardTodayPicksClient(
+  clientSlug: string,
+  orgSlug: string,
+): Promise<{
+  ok: boolean;
+  data: import("@/lib/api").DashboardTodayPicks | null;
+  error?: string;
+}> {
+  const base = getContentApiBase();
+  const headers = await clientApiHeaders({ orgSlug });
+  try {
+    const res = await contentApiFetch(
+      `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/dashboard/today-picks`,
+      { headers },
+    );
+    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) {
+      return {
+        ok: false,
+        data: null,
+        error: formatFastApiError(json, `Failed (${res.status})`),
+      };
+    }
+    return { ok: true, data: json as import("@/lib/api").DashboardTodayPicks };
+  } catch (e) {
+    return { ok: false, data: null, error: e instanceof Error ? e.message : "fetch failed" };
+  }
+}
 
 export async function fetchHomeSummaryClient(
   clientSlug: string,

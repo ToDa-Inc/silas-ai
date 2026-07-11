@@ -24,7 +24,9 @@ import {
   Trash2,
   Video,
 } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { InstagramPostChecklist } from "@/components/instagram-post-checklist";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { StudioEditorHeader } from "@/components/studio-editor-header";
 import {
   AlignmentPad,
@@ -106,6 +108,7 @@ import {
   fetchBackgroundJob,
   fetchClientGenerationLibraries,
   generationComposeThumbnail,
+  generationChooseAngle,
   generationGenerateThumbnail,
   generationGetSession,
   generationPatchSession,
@@ -363,6 +366,7 @@ export function VideoCreateWorkspace({
   embedded = false,
   entryPoint = "create",
 }: VideoCreateWorkspaceProps) {
+  const t = useTranslations("generate");
   const { show } = useToast();
   const studioShell = useStudioShell();
   const studioExpanded = embedded && studioShell.expanded;
@@ -402,6 +406,8 @@ export function VideoCreateWorkspace({
   const [carouselInFlight, setCarouselInFlight] = useState(0);
   const [coverRegenBusy, setCoverRegenBusy] = useState(false);
   const [regenBusyScope, setRegenBusyScope] = useState<RegenScope | null>(null);
+  const [regenAllOpen, setRegenAllOpen] = useState(false);
+  const [packagingRetryBusy, setPackagingRetryBusy] = useState(false);
   /**
    * Active source tab for the Visual card. Defaults to whatever's already set on the
    * session; once the user manually clicks a tab we stop following the session so
@@ -676,6 +682,33 @@ export function VideoCreateWorkspace({
     // `applySession` and `show` are stable; depend only on inputs that should refetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientSlug, orgSlug, sessionId]);
+
+  useEffect(() => {
+    if (!bootstrapDone || !session?.id) return;
+    if (session.status !== "angles_ready" || session.last_error) return;
+    const hooks = Array.isArray(session.hooks) ? session.hooks : [];
+    if (hooks.length > 0) return;
+
+    const cs = clientSlug.trim();
+    const os = orgSlug.trim();
+    if (!cs || !os) return;
+
+    const pollId = window.setInterval(() => {
+      void generationGetSession(cs, os, session.id).then((res) => {
+        if (res.ok) applySession(res.data);
+      });
+    }, 2000);
+    return () => window.clearInterval(pollId);
+  }, [
+    bootstrapDone,
+    session?.id,
+    session?.status,
+    session?.last_error,
+    session?.hooks,
+    clientSlug,
+    orgSlug,
+    applySession,
+  ]);
 
   const fk = useMemo(() => {
     const raw = session?.source_format_key ?? null;
@@ -1162,6 +1195,29 @@ export function VideoCreateWorkspace({
     },
     [applySession, clientSlug, orgSlug, session, show],
   );
+
+  const onRetryPackaging = useCallback(async () => {
+    const cs = clientSlug.trim();
+    const os = orgSlug.trim();
+    if (!session || !cs || !os) return;
+    setPackagingRetryBusy(true);
+    try {
+      const angleIdx = session.chosen_angle_index ?? 0;
+      const res = await generationChooseAngle(cs, os, session.id, angleIdx);
+      if (!res.ok) {
+        show(res.error, "error");
+        return;
+      }
+      applySession(res.data);
+      if (res.data.last_error) {
+        show(res.data.last_error, "error");
+      } else {
+        show("Script and captions generated.", "success");
+      }
+    } finally {
+      setPackagingRetryBusy(false);
+    }
+  }, [applySession, clientSlug, orgSlug, session, show]);
 
   const onGenerateBg = useCallback(async () => {
     const cs = clientSlug.trim();
@@ -2620,6 +2676,76 @@ export function VideoCreateWorkspace({
     Array.isArray(session.hashtags) && session.hashtags.length ? `\n\n${session.hashtags.join(" ")}` : ""
   }`.trim();
 
+  if (session.status === "angles_ready" && !session.last_error) {
+    const hooks = Array.isArray(session.hooks) ? session.hooks : [];
+    if (hooks.length === 0) {
+      return (
+        <div className="flex min-h-[24vh] flex-col items-center justify-center gap-3 px-6 text-center">
+          <Loader2 className="h-7 w-7 animate-spin text-amber-500" aria-hidden />
+          <p className="text-sm font-medium text-app-fg">{t("generating")}</p>
+        </div>
+      );
+    }
+  }
+
+  if (session.status === "angles_ready" && session.last_error) {
+    return (
+      <div className="space-y-4">
+        {!embedded ? (
+          <StudioEditorHeader
+            entryPoint={entryPoint}
+            sessionLabel={hooks[0]?.text?.slice(0, 60) || session.caption_body?.slice(0, 60) || null}
+          />
+        ) : null}
+        <div className="rounded-xl border border-red-500/35 bg-red-500/10 px-4 py-4">
+          <p className="text-sm font-semibold text-red-200">{t("generationFailed")}</p>
+          <p className="mt-1 text-xs leading-relaxed text-red-200/85">{session.last_error}</p>
+          <button
+            type="button"
+            disabled={packagingRetryBusy}
+            onClick={() => void onRetryPackaging()}
+            className="mt-3 inline-flex items-center gap-2 rounded-lg bg-red-500/20 px-3 py-2 text-xs font-bold text-red-100 hover:bg-red-500/30 disabled:opacity-60"
+          >
+            {packagingRetryBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
+            {t("generationFailedRetry")}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const regenEverythingBar =
+    session.status === "content_ready" ? (
+      <div className="flex justify-end">
+        <button
+          type="button"
+          disabled={regenBusyScope !== null}
+          onClick={() => setRegenAllOpen(true)}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-app-divider px-3 py-1.5 text-[11px] font-semibold text-app-fg-muted hover:text-app-fg disabled:opacity-40"
+        >
+          <RefreshCw className="h-3 w-3" />
+          {t("regenerateEverything")}
+        </button>
+      </div>
+    ) : null;
+
+  const regenAllDialog = (
+    <ConfirmDialog
+      open={regenAllOpen}
+      onClose={() => {
+        if (regenBusyScope !== "all") setRegenAllOpen(false);
+      }}
+      title={t("regenerateEverythingTitle")}
+      description={t("regenerateEverythingBody")}
+      confirmLabel={t("regenerateEverything")}
+      busy={regenBusyScope === "all"}
+      onConfirm={async () => {
+        const ok = await onRegenSection("all", "");
+        if (ok) setRegenAllOpen(false);
+      }}
+    />
+  );
+
   // ────────────────────────────────────────────────────────────────────────────────────────────
   // FORMAT DISPATCH
   //
@@ -2640,7 +2766,10 @@ export function VideoCreateWorkspace({
   // ─────────────────────────────── talking_head minimal flow ───────────────────────────────
   if (isTalkingHead) {
     return (
-      <TalkingHeadEditor
+      <>
+        {regenEverythingBar}
+        {regenAllDialog}
+        <TalkingHeadEditor
         scriptDraft={scriptDraft}
         setScriptDraft={setScriptDraft}
         contentInFlight={contentInFlight}
@@ -2671,6 +2800,7 @@ export function VideoCreateWorkspace({
         hashtags={session.hashtags ?? []}
         captionFull={captionFull}
       />
+      </>
     );
   }
 
@@ -2692,6 +2822,8 @@ export function VideoCreateWorkspace({
 
     return (
       <div className="space-y-4">
+        {regenEverythingBar}
+        {regenAllDialog}
         <div className="glass rounded-2xl border border-app-divider/80 p-4 md:p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
@@ -2946,7 +3078,7 @@ export function VideoCreateWorkspace({
               scope="caption"
               busy={regenBusyScope === "caption"}
               onRegen={async (s, fb) => onRegenSection(s, fb)}
-              placeholder="Different angle, shorter, …"
+              placeholder={t("refinePlaceholder")}
             />
           }
         />
@@ -2992,6 +3124,8 @@ export function VideoCreateWorkspace({
 
   return (
     <div className="space-y-4">
+      {regenEverythingBar}
+      {regenAllDialog}
       {!embedded ? (
         <StudioEditorHeader
           entryPoint={entryPoint}
@@ -3021,14 +3155,14 @@ export function VideoCreateWorkspace({
             value={videoSurface}
             onChange={setVideoSurface}
             tabs={[
-              { id: "reel", label: "Reel" },
-              { id: "cover", label: "Cover" },
-              { id: "output", label: "Output" },
+              { id: "reel", label: t("tabReel") },
+              { id: "cover", label: t("tabCover") },
+              { id: "output", label: t("tabOutput") },
             ]}
           />
           <div className="ml-auto flex items-center gap-2 text-[10px] text-app-fg-muted">
             <SaveStatusPill inFlight={contentInFlight + specInFlight + coverSpecInFlight} />
-            <span className="hidden sm:inline">Autosaved studio</span>
+            <span className="hidden sm:inline">{t("autosavedStudio")}</span>
           </div>
         </div>
       </div>
@@ -3037,9 +3171,9 @@ export function VideoCreateWorkspace({
       <div className="glass rounded-2xl border border-app-divider/80 p-3.5 md:p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3 border-b border-app-divider/50 pb-3">
           <div>
-            <p className="text-sm font-semibold text-app-fg">Reel studio</p>
+            <p className="text-sm font-semibold text-app-fg">{t("reelStudio")}</p>
             <p className="mt-0.5 text-[11px] leading-relaxed text-app-fg-muted">
-              Edit the on-screen text, background, look, and timing while the preview stays visible.
+              {t("reelStudioHint")}
             </p>
           </div>
           <button
@@ -3049,7 +3183,7 @@ export function VideoCreateWorkspace({
             className="inline-flex items-center gap-2 rounded-xl bg-violet-500/20 px-4 py-2 text-xs font-bold text-violet-200 hover:bg-violet-500/30 disabled:opacity-50"
           >
             {renderBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Video className="h-4 w-4" />}
-            {session.rendered_video_url ? "Re-render" : renderBusy ? "Starting…" : "Render video"}
+            {session.rendered_video_url ? t("reRender") : renderBusy ? t("starting") : t("renderVideo")}
           </button>
         </div>
 
@@ -3126,10 +3260,10 @@ export function VideoCreateWorkspace({
                 value={videoEditorTab}
                 onChange={setVideoEditorTab}
                 tabs={[
-                  { id: "text", label: "Text" },
-                  { id: "background", label: "Background" },
-                  { id: "look", label: "Look" },
-                  { id: "timing", label: "Timing" },
+                  { id: "text", label: t("sectionText") },
+                  { id: "background", label: t("sectionBackground") },
+                  { id: "look", label: t("sectionLook") },
+                  { id: "timing", label: t("sectionTiming") },
                 ]}
               />
             </div>
@@ -3138,9 +3272,9 @@ export function VideoCreateWorkspace({
               <div className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">On-screen text</p>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">{t("onScreenText")}</p>
                   <p className="mt-0.5 text-[10px] text-app-fg-subtle">
-                    Hook and beat text. Keep each line short enough to read in under 2 seconds.
+                    {t("onScreenTextHint")}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -3151,7 +3285,7 @@ export function VideoCreateWorkspace({
                     disabled={textDraft.length >= 6}
                     className="inline-flex items-center gap-1 rounded-lg border border-app-divider px-2 py-1 text-[11px] font-semibold text-app-fg-muted hover:text-app-fg disabled:opacity-40"
                   >
-                    <Plus className="h-3 w-3" /> Add beat
+                    <Plus className="h-3 w-3" /> {t("addBeat")}
                   </button>
                 </div>
               </div>
@@ -3164,7 +3298,7 @@ export function VideoCreateWorkspace({
                       title="Hook · burned into the first segment of the reel"
                     >
                       <span className="inline-flex shrink-0 rounded-md bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
-                        Hook
+                        {t("hook")}
                       </span>
                       <input
                         value={hookDraft}
@@ -3176,7 +3310,7 @@ export function VideoCreateWorkspace({
                             e.currentTarget.blur();
                           }
                         }}
-                        placeholder="Stop-the-scroll opening line…"
+                        placeholder={t("openingLinePlaceholder")}
                         className="min-w-0 flex-1 bg-transparent text-sm font-semibold text-app-fg placeholder:text-app-fg-subtle focus:outline-none"
                       />
                     </div>
@@ -3184,7 +3318,7 @@ export function VideoCreateWorkspace({
                       scope="hooks"
                       busy={regenBusyScope === "hooks"}
                       onRegen={async (s, fb) => onRegenSection(s, fb)}
-                      placeholder="More direct, shorter, …"
+                      placeholder={t("hookRefinePlaceholder")}
                     />
                   </div>
                 ) : null}
@@ -3988,16 +4122,14 @@ export function VideoCreateWorkspace({
             that unblocks it, instead of a separate "Render" card that's empty 90% of the time. */}
         <div className="mt-5 border-t border-app-divider/50 pt-4">
           {!step2Done && !step3Done ? (
-            <p className="text-xs text-app-fg-muted">Pick a background (clip, photo, or AI) to enable render.</p>
+            <p className="text-xs text-app-fg-muted">{t("pickBackgroundToRender")}</p>
           ) : isRendering ? (
             <div className="flex flex-col gap-3 rounded-xl border border-amber-500/25 bg-amber-500/[0.07] px-4 py-3 sm:flex-row sm:items-center">
               <div className="flex min-w-0 flex-1 items-start gap-3">
                 <Loader2 className="h-5 w-5 shrink-0 animate-spin text-amber-500" />
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-app-fg">Rendering…</p>
-                  <p className="text-xs text-app-fg-muted">
-                    Usually 1–3 minutes (this page polls for up to ~10 min). You can leave and come back.
-                  </p>
+                  <p className="text-sm font-semibold text-app-fg">{t("rendering")}</p>
+                  <p className="text-xs text-app-fg-muted">{t("renderingHint")}</p>
                   {typeof session.render_progress_pct === "number" ? (
                     <div className="mt-2 h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-black/20 dark:bg-white/10">
                       <div
@@ -4021,7 +4153,7 @@ export function VideoCreateWorkspace({
                     if (rs === "done" || rs === "cleaned") {
                       show("Video ready — download below.", "success");
                     } else if (rs === "failed") {
-                      show(r.data.render_error || "Render failed.", "error");
+                      show(r.data.render_error || t("renderFailed"), "error");
                     } else {
                       show("Still rendering — check again in a bit.", "success");
                     }
@@ -4030,13 +4162,13 @@ export function VideoCreateWorkspace({
                 className="inline-flex shrink-0 items-center justify-center gap-1.5 self-start rounded-lg border border-app-divider bg-black/10 px-3 py-2 text-xs font-semibold text-app-fg hover:bg-black/20 dark:bg-white/5 dark:hover:bg-white/10 sm:self-center"
               >
                 <RefreshCw className="h-3.5 w-3.5" />
-                Check status
+                {t("checkStatus")}
               </button>
             </div>
           ) : session.render_status === "failed" ? (
             <div className="space-y-3">
               <div className="rounded-xl border border-red-500/25 bg-red-500/[0.07] px-4 py-3">
-                <p className="text-sm font-semibold text-red-400">Render failed</p>
+                <p className="text-sm font-semibold text-red-400">{t("renderFailed")}</p>
                 {session.render_error && (
                   <p className="mt-1 text-xs text-app-fg-muted">{session.render_error}</p>
                 )}
@@ -4047,20 +4179,20 @@ export function VideoCreateWorkspace({
                 onClick={() => void onRender()}
                 className="inline-flex items-center gap-2 rounded-xl border border-app-divider px-4 py-2 text-xs font-bold text-app-fg hover:bg-white/5 disabled:opacity-50"
               >
-                <RefreshCw className="h-3.5 w-3.5" /> Retry render
+                <RefreshCw className="h-3.5 w-3.5" /> {t("retryRender")}
               </button>
             </div>
           ) : step3Done ? (
             <div className="flex flex-wrap items-center gap-3">
               <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-400" />
-              <p className="text-sm text-app-fg">Render complete — see output below.</p>
+              <p className="text-sm text-app-fg">{t("renderComplete")}</p>
               <button
                 type="button"
                 disabled={renderBusy}
                 onClick={() => void onRender()}
                 className="ml-auto rounded-lg border border-app-divider px-3 py-1.5 text-xs font-semibold text-app-fg-muted hover:text-app-fg disabled:opacity-50"
               >
-                Re-render
+                {t("reRender")}
               </button>
             </div>
           ) : (
@@ -4072,7 +4204,7 @@ export function VideoCreateWorkspace({
                 className="inline-flex items-center gap-2 rounded-xl bg-violet-500/20 px-5 py-2.5 text-sm font-bold text-violet-200 hover:bg-violet-500/30 disabled:opacity-50"
               >
                 {renderBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Video className="h-4 w-4" />}
-                {renderBusy ? "Starting…" : "Render video"}
+                {renderBusy ? t("starting") : t("renderVideo")}
               </button>
               <p className="text-xs text-app-fg-muted">1080×1920 · ~1–3 min</p>
             </div>
@@ -4111,8 +4243,8 @@ export function VideoCreateWorkspace({
         <div className="glass rounded-2xl border border-app-divider/80 p-5 md:p-6">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-app-divider/50 pb-3">
             <div>
-              <p className="text-sm font-semibold text-app-fg">Output</p>
-              <p className="mt-1 text-xs text-app-fg-muted">Final MP4, cover, caption, and post preview.</p>
+              <p className="text-sm font-semibold text-app-fg">{t("outputTitle")}</p>
+              <p className="mt-1 text-xs text-app-fg-muted">{t("outputSubtitle")}</p>
             </div>
             {session.rendered_video_url ? <CheckCircle2 className="h-5 w-5 text-emerald-400" /> : null}
           </div>
@@ -4148,24 +4280,23 @@ export function VideoCreateWorkspace({
               </div>
             </div>
           ) : (
-            <p className="text-xs text-app-fg-muted">Video was rendered and cleaned up after 30 days.</p>
+            <p className="text-xs text-app-fg-muted">{t("outputExpired")}</p>
           )}
         </div>
       )}
 
       {videoSurface === "output" && !step3Done && !session.rendered_video_url ? (
         <div className="glass rounded-2xl border border-app-divider/80 p-5 md:p-6">
-          <p className="text-sm font-semibold text-app-fg">Output not ready yet.</p>
+          <p className="text-sm font-semibold text-app-fg">{t("outputNotReady")}</p>
           <p className="mt-1 text-xs leading-relaxed text-app-fg-muted">
-            Go back to the Reel tab, choose a background, then render the video. The final MP4,
-            cover, caption, and post preview will appear here.
+            {t("outputNotReadyHint")}
           </p>
           <button
             type="button"
             onClick={() => setVideoSurface("reel")}
             className="mt-4 rounded-xl bg-violet-500/20 px-4 py-2 text-xs font-bold text-violet-200 hover:bg-violet-500/30"
           >
-            Back to Reel
+            {t("backToReel")}
           </button>
         </div>
       ) : null}
@@ -4182,7 +4313,7 @@ export function VideoCreateWorkspace({
             scope="caption"
             busy={regenBusyScope === "caption"}
             onRegen={async (s, fb) => onRegenSection(s, fb)}
-            placeholder="Different angle, shorter, …"
+            placeholder={t("refinePlaceholder")}
           />
         }
       />

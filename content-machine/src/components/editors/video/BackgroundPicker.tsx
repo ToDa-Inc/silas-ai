@@ -13,6 +13,7 @@
 
 import Link from "next/link";
 import { Film, Image as ImageIcon, Loader2, Sparkles, Trash2 } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import type { BrollClipRow, ClientImageRow } from "@/lib/api-client";
 
@@ -48,10 +49,10 @@ type Props = {
   disabled?: boolean;
 };
 
-const SOURCES = [
-  { key: "ai", label: "AI image", icon: Sparkles },
-  { key: "image", label: "Client photo", icon: ImageIcon },
-  { key: "clip", label: "Stock clip", icon: Film },
+const SOURCE_KEYS = [
+  { key: "ai" as const, labelKey: "aiImage" as const, icon: Sparkles },
+  { key: "image" as const, labelKey: "clientPhoto" as const, icon: ImageIcon },
+  { key: "clip" as const, labelKey: "stockClip" as const, icon: Film },
 ] as const;
 
 export function BackgroundPicker({
@@ -73,17 +74,17 @@ export function BackgroundPicker({
   backgroundUrl,
   disabled,
 }: Props) {
+  const t = useTranslations("editors");
+
   return (
     <div className="space-y-3 rounded-xl border border-app-divider/50 bg-app-chip-bg/15 p-3.5">
       <div>
-        <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">Background</p>
-        <p className="mt-0.5 text-[9px] leading-snug text-app-fg-subtle">
-          Pick how the reel’s backdrop is sourced. You can change this any time before render.
-        </p>
+        <p className="text-[10px] font-bold uppercase tracking-wide text-app-fg-muted">{t("background")}</p>
+        <p className="mt-0.5 text-[9px] leading-snug text-app-fg-subtle">{t("backgroundSourceHint")}</p>
       </div>
 
       <div className="inline-flex rounded-xl border border-app-divider bg-app-chip-bg/40 p-1">
-        {SOURCES.map(({ key, label, icon: Icon }) => {
+        {SOURCE_KEYS.map(({ key, labelKey, icon: Icon }) => {
           const active = source === key;
           return (
             <button
@@ -98,7 +99,7 @@ export function BackgroundPicker({
               }`}
               aria-pressed={active}
             >
-              <Icon className="h-3 w-3" /> {label}
+              <Icon className="h-3 w-3" /> {t(labelKey)}
             </button>
           );
         })}
@@ -140,7 +141,7 @@ export function BackgroundPicker({
           rel="noreferrer"
           className="inline-flex text-[10px] font-semibold text-app-fg-muted underline decoration-app-divider underline-offset-2 hover:text-amber-200/90"
         >
-          Open background asset ↗
+          {t("openBackgroundAsset")}
         </a>
       ) : null}
     </div>
@@ -156,6 +157,8 @@ function AiPanel({
   hasGeneratedImage: boolean;
   onGenerate: () => void | Promise<void>;
 }) {
+  const t = useTranslations("editors");
+
   return (
     <div className="space-y-2">
       <button
@@ -165,7 +168,7 @@ function AiPanel({
         className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-amber-500/15 px-4 py-2.5 text-xs font-bold text-app-on-amber-title hover:bg-amber-500/25 disabled:opacity-50 sm:w-auto sm:justify-start"
       >
         {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-        {busy ? "Generating…" : hasGeneratedImage ? "Regenerate image" : "Generate image"}
+        {busy ? t("generating") : hasGeneratedImage ? t("regenerateImage") : t("generateImage")}
       </button>
       <p className="text-[10px] text-app-fg-muted">~30–60s per run.</p>
     </div>

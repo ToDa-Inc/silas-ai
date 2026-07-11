@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Loader2, Sparkles } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { clientApiHeaders, contentApiFetch, getContentApiBase } from "@/lib/api-client";
 import type { ClientRow } from "@/lib/api";
 
@@ -14,13 +15,9 @@ type Props = {
 };
 
 function NicheKeywordLists({ nicheConfig }: { nicheConfig: unknown[] }) {
+  const t = useTranslations("settings");
   if (!nicheConfig.length) {
-    return (
-      <p className="text-sm text-zinc-400">
-        No niche profile yet. Run <strong>Re-generate</strong> after you have reels in Intelligence (use{" "}
-        <strong>Update my reels</strong> on the Dashboard first).
-      </p>
-    );
+    return <p className="text-sm text-zinc-400">{t("noNicheProfile")}</p>;
   }
 
   return (

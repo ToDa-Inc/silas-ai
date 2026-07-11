@@ -48,6 +48,8 @@ class OnboardingStatusOut(BaseModel):
     quiz_answers: Dict[str, Any] = Field(default_factory=dict)
     pipeline_progress: Dict[str, Any] = Field(default_factory=dict)
     ig_prefill: Dict[str, Any] = Field(default_factory=dict)
+    voice_transcript: Dict[str, Any] = Field(default_factory=dict)
+    context_preview_locked: bool = False
     job_ids: Dict[str, Any] = Field(default_factory=dict)
     selected_reel_id: Optional[str] = None
     selected_analysis_id: Optional[str] = None

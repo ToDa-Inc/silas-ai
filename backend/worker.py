@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional
 
 from core.config import Settings, get_settings
 from core.database import get_supabase_for_settings
+from core.errors import MissingCredentialsError
 from core.id_generator import generate_job_id
 from jobs.baseline_scrape import run_baseline_scrape
 from jobs.client_auto_profile import run_client_auto_profile
@@ -42,6 +43,46 @@ def _fail_job(settings: Settings, job_id: str, message: str) -> None:
             "status": "failed",
             "completed_at": datetime.now(timezone.utc).isoformat(),
             "error_message": message[:8000],
+        }
+    ).eq("id", job_id).execute()
+
+
+_MAX_MISSING_CREDENTIALS_REQUEUES = 5
+
+
+def _requeue_or_fail_job(settings: Settings, job: Dict[str, Any], message: str) -> None:
+    """Release a job this worker can't run (missing credentials) back to the queue.
+
+    Multiple worker processes (e.g. teammates' local dev workers) can share one
+    background_jobs queue via claim_next_job(). If *this* process claimed a job it
+    lacks credentials for, failing it permanently would silently drop real work
+    (Apify/OpenRouter results already produced elsewhere get discarded) just because
+    this particular worker isn't configured. Put it back as 'queued' so a properly
+    configured worker picks it up on its next poll instead.
+
+    Capped at `_MAX_MISSING_CREDENTIALS_REQUEUES` (tracked in payload) so that if *no*
+    worker in the pool has the required credentials, the job still fails loudly instead
+    of bouncing between misconfigured workers forever.
+    """
+    job_id = job["id"]
+    payload = dict(job.get("payload") or {})
+    attempts = int(payload.get("_missing_cred_requeues") or 0) + 1
+    supabase = get_supabase_for_settings(settings)
+    if attempts > _MAX_MISSING_CREDENTIALS_REQUEUES:
+        _fail_job(
+            settings,
+            job_id,
+            f"No worker in the pool has the required credentials after "
+            f"{_MAX_MISSING_CREDENTIALS_REQUEUES} attempts: {message}",
+        )
+        return
+    payload["_missing_cred_requeues"] = attempts
+    supabase.table("background_jobs").update(
+        {
+            "status": "queued",
+            "started_at": None,
+            "payload": payload,
+            "error_message": f"requeued (this worker missing credentials, attempt {attempts}): {message[:1500]}",
         }
     ).eq("id", job_id).execute()
 
@@ -157,6 +198,18 @@ def _process_job_sync(settings: Settings, job: Dict[str, Any]) -> None:
         run_onboarding_pipeline(settings, job)
     elif jt == "onboarding_ig_prefill":
         run_onboarding_ig_prefill(settings, job)
+    elif jt == "onboarding_voice_transcribe":
+        if (job.get("payload") or {}).get("inline_api"):
+            return
+        from jobs.onboarding_voice_transcribe import run_onboarding_voice_transcribe
+
+        run_onboarding_voice_transcribe(settings, job)
+    elif jt == "onboarding_brain_generate":
+        if (job.get("payload") or {}).get("inline_api"):
+            return
+        from jobs.onboarding_brain_generate import run_onboarding_brain_generate
+
+        run_onboarding_brain_generate(settings, job)
     elif jt == "video_render":
         jid = str(job.get("id") or "").strip()
         if jid:
@@ -171,6 +224,9 @@ async def _run_claimed_job(settings: Settings, job: Dict[str, Any]) -> None:
     try:
         await asyncio.to_thread(_process_job_sync, settings, job)
         print(f"Completed job {jid}")
+    except MissingCredentialsError as e:
+        print(f"Job {jid} missing credentials on this worker — requeuing: {e!s}")
+        _requeue_or_fail_job(settings, job, str(e))
     except Exception as e:
         tb = traceback.format_exc()
         print(tb)

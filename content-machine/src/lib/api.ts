@@ -380,6 +380,8 @@ export type OnboardingStatusRow = {
   quiz_answers: Record<string, unknown>;
   pipeline_progress: Record<string, unknown>;
   ig_prefill: Record<string, unknown>;
+  voice_transcript: Record<string, unknown>;
+  context_preview_locked: boolean;
   job_ids: Record<string, unknown>;
   selected_reel_id: string | null;
   selected_analysis_id: string | null;
@@ -767,6 +769,39 @@ export function fetchDashboardCompetitorWins(days = 3, limit = DASHBOARD_LANE_LI
   return fetchDashboardLane("competitor-wins", days, limit);
 }
 
+export type DashboardTodayPicks = {
+  fresh_niche: ScrapedReelRow[];
+  competitor_wins: ScrapedReelRow[];
+  computed_at: string | null;
+  is_fallback: boolean;
+  pick_date: string | null;
+  primary_reel_id: string | null;
+  daily_session_id: string | null;
+  draft_status: string | null;
+  draft_error: string | null;
+};
+
+/** GET /dashboard/today-picks — once-per-day snapshot with safe inline fallback. */
+export async function fetchDashboardTodayPicks(): Promise<{
+  ok: boolean;
+  data: DashboardTodayPicks | null;
+  error?: string;
+}> {
+  const base = getContentApiBase();
+  try {
+    const { headers, clientSlug } = await getCachedServerApiContext();
+    if (!clientSlug) return { ok: false, data: null, error: "No active creator" };
+    const res = await fetch(
+      `${base}/api/v1/clients/${clientSlug}/dashboard/today-picks`,
+      { headers: { ...headers }, cache: "no-store" },
+    );
+    if (!res.ok) return { ok: false, data: null, error: await apiErrorFromResponse(res) };
+    return { ok: true, data: await res.json() };
+  } catch (e) {
+    return { ok: false, data: null, error: e instanceof Error ? e.message : "fetch failed" };
+  }
+}
+
 export type HomeSummaryExport = {
   session_id: string;
   thumbnail_url: string | null;
@@ -803,6 +838,12 @@ export type HomeSummaryRow = {
   momentum: {
     posts_made: number;
     last_export: HomeSummaryExport | null;
+  };
+  daily_post?: {
+    primary_reel_id: string | null;
+    daily_session_id: string | null;
+    draft_status: string | null;
+    draft_error: string | null;
   };
 };
 
