@@ -32,7 +32,8 @@ function parseInline(text: string, keyPrefix: string): ReactNode[] {
         );
       }
     }
-    last = match.lastIndex;
+    // `lastIndex` is a property of the RegExp (global exec cursor), not the match array.
+    last = match.index + match[0].length;
   }
 
   if (last < text.length) parts.push(text.slice(last));
