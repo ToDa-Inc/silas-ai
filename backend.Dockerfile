@@ -23,9 +23,17 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/* \
   && test -x /usr/bin/chromium
 
-COPY video-production/broll-caption-editor/ /opt/broll-caption-editor/
+# Install Remotion editor deps in a cache-friendly way.
+# Copy only manifests first so `npm ci` layer is reused when app code changes.
+COPY video-production/broll-caption-editor/package.json \
+     video-production/broll-caption-editor/package-lock.json \
+     /opt/broll-caption-editor/
 WORKDIR /opt/broll-caption-editor
-RUN npm ci
+ENV npm_config_fund=false \
+    npm_config_audit=false \
+    npm_config_update_notifier=false
+RUN npm ci --no-audit --fund=false
+COPY video-production/broll-caption-editor/ /opt/broll-caption-editor/
 WORKDIR /app
 
 COPY backend/requirements.txt .
