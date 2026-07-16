@@ -63,7 +63,8 @@ function dailyMetaFrom(
     primaryReelId:
       overrides?.primaryReelId ??
       dp?.primary_reel_id ??
-      summary.scout.top_opportunity_reel_id,
+      summary.scout?.top_opportunity_reel_id ??
+      null,
   };
 }
 
@@ -131,14 +132,14 @@ export function HomeFeed({
     const latestId =
       effectiveDailyPost.sessionId && effectiveDailyPost.status === "ready"
         ? effectiveDailyPost.sessionId
-        : summary.writer.latest_draft_session_id ||
+        : summary.writer?.latest_draft_session_id ||
           sessions.find((s) => s.status === "content_ready")?.id ||
           null;
     const latestSession = latestId ? sessions.find((s) => s.id === latestId) : null;
     const dailySession = effectiveDailyPost.sessionId
       ? sessions.find((s) => s.id === effectiveDailyPost.sessionId)
       : null;
-    const exportInfo = summary.writer.last_export;
+    const exportInfo = summary.writer?.last_export;
     return resolveHeroState(displayPool, {
       latestDraftSessionId: latestId,
       draftHook:
@@ -156,11 +157,11 @@ export function HomeFeed({
         latestSession?.thumbnail_url ||
         latestSession?.rendered_video_url ||
         null,
-      topOpportunityReelId: summary.scout.top_opportunity_reel_id,
+      topOpportunityReelId: summary.scout?.top_opportunity_reel_id ?? null,
       dailyPost: effectiveDailyPost,
-      isBuilding: summary.state.is_building,
-      phase: summary.state.phase,
-      setupComplete: summary.state.setup_complete,
+      isBuilding: summary.state?.is_building ?? false,
+      phase: summary.state?.phase ?? "",
+      setupComplete: summary.state?.setup_complete ?? false,
     });
   }, [displayPool, summary, sessions, effectiveDailyPost]);
 
@@ -253,10 +254,10 @@ export function HomeFeed({
   }, [sessions, studioSessionId]);
 
   useEffect(() => {
-    if (!summary.state.is_building) return;
+    if (!summary.state?.is_building) return;
     const id = window.setInterval(() => void refreshSummary(), 8000);
     return () => window.clearInterval(id);
-  }, [summary.state.is_building, refreshSummary]);
+  }, [summary.state?.is_building, refreshSummary]);
 
   useEffect(() => {
     if (dailyPost.status !== "pending" || !clientSlug || !orgSlug) return;

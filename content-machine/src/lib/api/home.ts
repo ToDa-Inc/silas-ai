@@ -1,12 +1,24 @@
 "use client";
 
 import type { ScrapedReelRow } from "@/lib/api";
-import { isHomeSummaryRow } from "@/lib/api";
 import { getContentApiBase } from "@/lib/env";
 import { clientApiHeaders, contentApiFetch } from "./client-context";
 import { formatFastApiError } from "./format-error";
 
 const DASHBOARD_LANE_LIMIT = 12;
+
+function hasHomeSummaryShape(value: unknown): value is import("@/lib/api").HomeSummaryRow {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Record<string, unknown>;
+  return (
+    !!row.scout &&
+    typeof row.scout === "object" &&
+    !!row.writer &&
+    typeof row.writer === "object" &&
+    !!row.state &&
+    typeof row.state === "object"
+  );
+}
 
 async function fetchDashboardLaneClient(
   path: "fresh-niche" | "competitor-wins",
@@ -177,7 +189,7 @@ export async function fetchHomeSummaryClient(
         error: formatFastApiError(json as Record<string, unknown>, `Failed (${res.status})`),
       };
     }
-    if (!isHomeSummaryRow(json)) {
+    if (!hasHomeSummaryShape(json)) {
       return { ok: false, error: "Invalid home summary payload" };
     }
     return { ok: true, data: json };

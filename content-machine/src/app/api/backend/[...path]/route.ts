@@ -8,6 +8,11 @@ import { Agent, fetch as undiciFetch } from "undici";
  *
  * Node's fetch (Undici) defaults to ~5m headers timeout — POST /sync can run much longer
  * (baseline + many competitor scrapes). Use a long-lived agent for this proxy only.
+ *
+ * Compression: never forward Accept-Encoding upstream, always buffer + rebuild the body,
+ * and never re-emit Content-Encoding. Undici decompresses transparently; forwarding the
+ * encoding header with a plain body causes net::ERR_CONTENT_DECODING_FAILED in browsers
+ * (especially behind Vercel → Railway).
  */
 export const runtime = "nodejs";
 
@@ -37,13 +42,9 @@ const HOP_BY_HOP = new Set([
   "upgrade",
   "host",
   "content-length",
-  // Browser Accept-Encoding must not reach FastAPI: undici auto-decompresses
-  // the upstream body, and re-forwarding Content-Encoding causes
-  // net::ERR_CONTENT_DECODING_FAILED in the browser.
   "accept-encoding",
 ]);
 
-/** Response headers that must not be re-forwarded after undici decompressed the body. */
 const STRIP_RESPONSE = new Set([
   "transfer-encoding",
   "connection",
@@ -65,6 +66,8 @@ async function proxyRequest(req: NextRequest, pathSegments: string[]) {
     if (HOP_BY_HOP.has(key.toLowerCase())) continue;
     headers.set(key, value);
   }
+  // Force identity encoding from Railway/FastAPI even if a hop re-adds Accept-Encoding.
+  headers.set("Accept-Encoding", "identity");
 
   const method = req.method;
   let body: ArrayBuffer | undefined;
@@ -98,19 +101,23 @@ async function proxyRequest(req: NextRequest, pathSegments: string[]) {
     );
   }
 
-  const res = new NextResponse(upstream.body as unknown as BodyInit, {
-    status: upstream.status,
-    statusText: upstream.statusText,
-  });
+  // Buffer so undici fully decompresses before we hand bytes to the browser.
+  const payload = Buffer.from(await upstream.arrayBuffer());
 
+  const outHeaders = new Headers();
   upstream.headers.forEach((value, key) => {
     if (STRIP_RESPONSE.has(key.toLowerCase())) return;
-    res.headers.set(key, value);
+    outHeaders.set(key, value);
   });
+  outHeaders.set("X-Proxied-By", "content-machine-next");
+  outHeaders.delete("content-encoding");
+  outHeaders.delete("content-length");
 
-  res.headers.set("X-Proxied-By", "content-machine-next");
-
-  return res;
+  return new NextResponse(payload, {
+    status: upstream.status,
+    statusText: upstream.statusText,
+    headers: outHeaders,
+  });
 }
 
 type RouteCtx = { params: Promise<{ path?: string[] }> };

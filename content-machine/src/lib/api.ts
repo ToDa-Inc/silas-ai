@@ -856,12 +856,8 @@ export function isHomeSummaryRow(value: unknown): value is HomeSummaryRow {
     typeof row.scout === "object" &&
     !!row.writer &&
     typeof row.writer === "object" &&
-    !!row.analyst &&
-    typeof row.analyst === "object" &&
     !!row.state &&
-    typeof row.state === "object" &&
-    !!row.momentum &&
-    typeof row.momentum === "object"
+    typeof row.state === "object"
   );
 }
 
