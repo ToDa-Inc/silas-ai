@@ -44,7 +44,10 @@ export default async function DashboardPage({
     fetchAdaptPreviewReels(12),
   ]);
 
-  const summary = summaryRes.ok && summaryRes.data ? summaryRes.data : EMPTY_SUMMARY;
+  const summary =
+    summaryRes.ok && summaryRes.data?.writer && summaryRes.data?.scout
+      ? summaryRes.data
+      : EMPTY_SUMMARY;
   const stats = statsRes.ok ? statsRes.data : null;
   const picks = picksRes.ok && picksRes.data ? picksRes.data : null;
   const freshReels = picks?.fresh_niche ?? [];

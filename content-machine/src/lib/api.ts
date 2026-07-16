@@ -847,6 +847,24 @@ export type HomeSummaryRow = {
   };
 };
 
+/** True when payload has the nested agent blocks HomeFeed reads without guards. */
+export function isHomeSummaryRow(value: unknown): value is HomeSummaryRow {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Record<string, unknown>;
+  return (
+    !!row.scout &&
+    typeof row.scout === "object" &&
+    !!row.writer &&
+    typeof row.writer === "object" &&
+    !!row.analyst &&
+    typeof row.analyst === "object" &&
+    !!row.state &&
+    typeof row.state === "object" &&
+    !!row.momentum &&
+    typeof row.momentum === "object"
+  );
+}
+
 /** GET /home/summary — agent team stats + setup state for Home cockpit. */
 export async function fetchHomeSummary(): Promise<{
   ok: boolean;
@@ -866,7 +884,11 @@ export async function fetchHomeSummary(): Promise<{
     if (!res.ok) {
       return { ok: false, data: null, error: await apiErrorFromResponse(res) };
     }
-    return { ok: true, data: (await res.json()) as HomeSummaryRow };
+    const json: unknown = await res.json();
+    if (!isHomeSummaryRow(json)) {
+      return { ok: false, data: null, error: "Invalid home summary payload" };
+    }
+    return { ok: true, data: json };
   } catch (e) {
     return {
       ok: false,

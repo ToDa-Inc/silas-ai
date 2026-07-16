@@ -37,6 +37,18 @@ const HOP_BY_HOP = new Set([
   "upgrade",
   "host",
   "content-length",
+  // Browser Accept-Encoding must not reach FastAPI: undici auto-decompresses
+  // the upstream body, and re-forwarding Content-Encoding causes
+  // net::ERR_CONTENT_DECODING_FAILED in the browser.
+  "accept-encoding",
+]);
+
+/** Response headers that must not be re-forwarded after undici decompressed the body. */
+const STRIP_RESPONSE = new Set([
+  "transfer-encoding",
+  "connection",
+  "content-encoding",
+  "content-length",
 ]);
 
 async function proxyRequest(req: NextRequest, pathSegments: string[]) {
@@ -92,8 +104,7 @@ async function proxyRequest(req: NextRequest, pathSegments: string[]) {
   });
 
   upstream.headers.forEach((value, key) => {
-    const k = key.toLowerCase();
-    if (k === "transfer-encoding" || k === "connection") return;
+    if (STRIP_RESPONSE.has(key.toLowerCase())) return;
     res.headers.set(key, value);
   });
 

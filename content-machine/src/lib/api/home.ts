@@ -1,6 +1,7 @@
 "use client";
 
 import type { ScrapedReelRow } from "@/lib/api";
+import { isHomeSummaryRow } from "@/lib/api";
 import { getContentApiBase } from "@/lib/env";
 import { clientApiHeaders, contentApiFetch } from "./client-context";
 import { formatFastApiError } from "./format-error";
@@ -176,7 +177,10 @@ export async function fetchHomeSummaryClient(
         error: formatFastApiError(json as Record<string, unknown>, `Failed (${res.status})`),
       };
     }
-    return { ok: true, data: json as HomeSummaryRow };
+    if (!isHomeSummaryRow(json)) {
+      return { ok: false, error: "Invalid home summary payload" };
+    }
+    return { ok: true, data: json };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "fetch failed" };
   }
