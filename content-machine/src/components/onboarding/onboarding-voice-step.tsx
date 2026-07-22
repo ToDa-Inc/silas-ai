@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { OnboardingVoiceRecorder } from "@/components/onboarding/onboarding-voice-recorder";
@@ -55,6 +55,12 @@ function hasReviewableAnswers(answers: Record<string, string>): boolean {
   return ONBOARDING_VOICE_QUESTIONS.some((q) => (answers[q.id] ?? "").trim().length > 0);
 }
 
+/** Stable fingerprint so status polls with identical answer payloads don't wipe local typing. */
+function answersFingerprint(answers: Record<string, string> | undefined): string {
+  if (!answers || Object.keys(answers).length === 0) return "";
+  return ONBOARDING_VOICE_QUESTIONS.map((q) => `${q.id}:${answers[q.id] ?? ""}`).join("\n");
+}
+
 export function OnboardingVoiceStep({
   clientSlug,
   orgSlug,
@@ -75,6 +81,7 @@ export function OnboardingVoiceStep({
   const [answers, setAnswers] = useState<Record<string, string>>(emptyAnswers());
   const [busy, setBusy] = useState(false);
   const [forceRecorder, setForceRecorder] = useState(false);
+  const hydratedAnswersFpRef = useRef<string>("");
 
   const voice = (status?.voice_transcript ?? {}) as VoiceTranscriptState;
   const voiceStatus = String(voice.status || "");
@@ -82,14 +89,23 @@ export function OnboardingVoiceStep({
     voice.language === "en" || voice.language === "de" ? voice.language : language;
   const canReview = hasReviewableAnswers(answers);
 
+  // Hydrate from server only when the *content* of answers changes (new transcription /
+  // generate). Status polling returns new object identities every few seconds — comparing
+  // by reference was resetting local edits mid-keystroke ("typing goes backwards").
   useEffect(() => {
     const structured = voice.structured_answers;
     const edited = voice.edited_answers;
-    if (edited && Object.keys(edited).length > 0) {
-      setAnswers({ ...emptyAnswers(), ...edited });
-    } else if (structured && Object.keys(structured).length > 0) {
-      setAnswers({ ...emptyAnswers(), ...structured });
-    }
+    const source =
+      edited && Object.keys(edited).length > 0
+        ? edited
+        : structured && Object.keys(structured).length > 0
+          ? structured
+          : null;
+    if (!source) return;
+    const fp = answersFingerprint(source);
+    if (!fp || fp === hydratedAnswersFpRef.current) return;
+    hydratedAnswersFpRef.current = fp;
+    setAnswers({ ...emptyAnswers(), ...source });
   }, [voice.structured_answers, voice.edited_answers]);
 
   const refresh = useCallback(async () => {
@@ -208,6 +224,7 @@ export function OnboardingVoiceStep({
           type="button"
           onClick={() => {
             onError(null);
+            hydratedAnswersFpRef.current = "";
             setForceRecorder(true);
             setMode("voice");
           }}

@@ -208,14 +208,17 @@ export function OnboardingWizard({
   }, [status?.quiz_answers?.language]);
 
   // Silas reads the creator's Instagram in the background right after workspace setup.
+  // Only poll while on source (quiz is voice/type and doesn't use the IG-prefilled quiz fields).
+  const igPrefillStatus = String(status?.ig_prefill?.status || "");
   useEffect(() => {
-    if (currentStep !== "quiz" && currentStep !== "source") return;
+    if (currentStep !== "source") return;
     if (!clientSlug || igPrefillAppliedRef.current) return;
-    const igStatus = String(status?.ig_prefill?.status || "");
-    if (igStatus === "ready" || igStatus === "skipped" || igStatus === "failed") return;
+    if (igPrefillStatus === "ready" || igPrefillStatus === "skipped" || igPrefillStatus === "failed") {
+      return;
+    }
     const t = setInterval(() => void refreshStatus(), 4000);
     return () => clearInterval(t);
-  }, [currentStep, clientSlug, status?.ig_prefill, refreshStatus]);
+  }, [currentStep, clientSlug, igPrefillStatus, refreshStatus]);
 
   useEffect(() => {
     if (igPrefillAppliedRef.current) return;
@@ -636,7 +639,6 @@ export function OnboardingWizard({
     node: ReactNode;
   };
 
-  const igPrefillStatus = String(status?.ig_prefill?.status || "");
   const igPrefillLoading =
     (currentStep === "quiz" || currentStep === "source") &&
     Boolean(instagram.trim()) &&

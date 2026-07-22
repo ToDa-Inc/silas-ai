@@ -14,7 +14,11 @@ import { cn } from "@/lib/cn";
 
 type Props = {
   answers: Record<string, string>;
-  onChange: (answers: Record<string, string>) => void;
+  onChange: (
+    answers:
+      | Record<string, string>
+      | ((prev: Record<string, string>) => Record<string, string>),
+  ) => void;
   rawTranscript?: string;
   disabled?: boolean;
   language?: OnboardingLang;
@@ -53,14 +57,14 @@ function AnswerCard({
       <p className="mb-3 text-sm font-medium leading-snug text-zinc-200 sm:text-[15px]">
         {questionLabel(question, language)}
       </p>
-      {empty ? (
-        <p className="mb-2 text-xs text-zinc-600">{notDetectedLabel}</p>
-      ) : null}
+      <p className={cn("mb-2 text-xs text-zinc-600", !empty && "invisible")} aria-hidden={!empty}>
+        {notDetectedLabel}
+      </p>
       <textarea
         value={value}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
-        rows={Math.min(8, Math.max(3, Math.ceil(value.length / 80)))}
+        rows={4}
         className={cn(onboardingTextareaClass, "min-h-[88px] text-[15px] leading-relaxed")}
         placeholder={answerPlaceholder}
       />
@@ -95,7 +99,7 @@ export function OnboardingVoiceReview({
             language={language}
             notDetectedLabel={t("voiceNotDetected")}
             answerPlaceholder={t("voiceAnswerPlaceholder")}
-            onChange={(v) => onChange({ ...answers, [q.id]: v })}
+            onChange={(v) => onChange((prev) => ({ ...prev, [q.id]: v }))}
           />
         ))}
       </div>

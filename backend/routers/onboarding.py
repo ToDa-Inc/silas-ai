@@ -640,19 +640,45 @@ def post_reel_feedback(
 ) -> Dict[str, Any]:
     _ = slug
     saved = 0
+    now = datetime.now(timezone.utc).isoformat()
     for item in body.items:
-        row = {
-            "id": generate_onboarding_feedback_id(),
+        existing = (
+            supabase.table("onboarding_reel_feedback")
+            .select("id")
+            .eq("client_id", client_id)
+            .eq("scraped_reel_id", item.scraped_reel_id)
+            .limit(1)
+            .execute()
+        )
+        row: Dict[str, Any] = {
+            "id": (
+                str(existing.data[0]["id"])
+                if existing.data
+                else generate_onboarding_feedback_id()
+            ),
             "client_id": client_id,
             "scraped_reel_id": item.scraped_reel_id,
             "verdict": item.verdict,
             "reason": item.reason,
-            "reel_analysis_id": item.reel_analysis_id,
+            "updated_at": now,
         }
-        supabase.table("onboarding_reel_feedback").upsert(
-            row,
-            on_conflict="client_id,scraped_reel_id",
-        ).execute()
+        if item.reel_analysis_id:
+            row["reel_analysis_id"] = item.reel_analysis_id
+        try:
+            supabase.table("onboarding_reel_feedback").upsert(
+                row,
+                on_conflict="client_id,scraped_reel_id",
+            ).execute()
+        except Exception as e:
+            logger.exception(
+                "onboarding reel-feedback upsert failed client=%s reel=%s",
+                client_id,
+                item.scraped_reel_id,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Could not save reel vote: {str(e)[:300]}",
+            ) from e
         saved += 1
     return {"saved": saved}
 
@@ -661,6 +687,7 @@ def post_reel_feedback(
 def start_first_content(
     slug: str,
     body: FirstContentStartBody,
+    background_tasks: BackgroundTasks,
     client_id: Annotated[str, Depends(resolve_client_id)],
     supabase: Annotated[Client, Depends(get_supabase)],
     settings: Annotated[Settings, Depends(get_settings)],
@@ -707,13 +734,27 @@ def start_first_content(
         # editor has nothing to hand off to rendering/HeyGen.
         recreate_mode="one_to_one",
     )
-    session = generation_start(
-        slug,
-        gen_body,
-        client_id=client_id,
-        supabase=supabase,
-        settings=settings,
-    )
+    try:
+        session = generation_start(
+            slug,
+            gen_body,
+            background_tasks,
+            client_id=client_id,
+            supabase=supabase,
+            settings=settings,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(
+            "onboarding first-content generation_start failed client=%s reel=%s",
+            client_id,
+            body.scraped_reel_id,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not start first content: {str(e)[:400]}",
+        ) from e
 
     update_onboarding_state(
         supabase,
