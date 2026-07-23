@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional, Set
 
 from core.config import Settings
 from core.database import get_supabase_for_settings
@@ -31,7 +31,7 @@ from jobs.format_digest_recompute import run_format_digest_recompute
 from jobs.keyword_reel_similarity import run_keyword_reel_similarity
 from services.client_dna_compile import force_recompile_client_dna_sync
 from services.job_queue import fail_abandoned_queued_jobs, has_active_job
-from services.onboarding_state import update_onboarding_state
+from services.onboarding_state import get_onboarding_state, update_onboarding_state
 from services.similarity_discovery_keywords import (
     similarity_keywords_auto_en,
     similarity_scan_keywords,
@@ -76,21 +76,59 @@ ONBOARDING_KEYWORD_PAYLOAD_RETRY: Dict[str, Any] = {
     "min_views_per_day": 250,
     "min_onboarding_save": 4,
 }
+# User rejected the first taste batch ("Find more") — skip the narrow pass, use a different
+# keyword mix (skip already-tried terms), drop the bar further so we surface *new* candidates.
+ONBOARDING_KEYWORD_PAYLOAD_BROADEN: Dict[str, Any] = {
+    "onboarding_fast": True,
+    "max_keywords": 12,
+    "search_window": "last-1-month",
+    "days": 30,
+    "max_score_cap": 12,
+    "min_views_per_day": 150,
+    "min_onboarding_save": 3,
+}
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _retry_keywords_payload(supabase, client_id: str, first_pass_keywords: List[str]) -> Dict[str, Any]:
-    """Widen the keyword net for the zero-results retry: more of the native-language pool
-    (skipping what pass 1 already tried) plus the client_dna.similarity_keywords.auto_en
-    fallback set, so a thin native-language pool doesn't sink onboarding entirely.
+def _tried_keywords_from_state(pipeline_progress: Any) -> List[str]:
+    """Collect keywords already used in prior onboarding scans for this client."""
+    tried: List[str] = []
+    if not isinstance(pipeline_progress, dict):
+        return tried
+    kw_stats = pipeline_progress.get("kw_stats")
+    if not isinstance(kw_stats, dict):
+        return tried
+    for attempt in kw_stats.get("attempts") or []:
+        if not isinstance(attempt, dict):
+            continue
+        result = attempt.get("result") if isinstance(attempt.get("result"), dict) else {}
+        payload = attempt.get("payload") if isinstance(attempt.get("payload"), dict) else {}
+        for k in list(result.get("keywords_used") or []) + list(payload.get("keywords") or []):
+            if isinstance(k, str) and k.strip():
+                tried.append(k.strip())
+    final = kw_stats.get("final") if isinstance(kw_stats.get("final"), dict) else {}
+    for k in final.get("keywords_used") or []:
+        if isinstance(k, str) and k.strip():
+            tried.append(k.strip())
+    return tried
+
+
+def _retry_keywords_payload(
+    supabase,
+    client_id: str,
+    first_pass_keywords: List[str],
+    *,
+    base_payload: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Widen the keyword net: native pool (skipping already-tried) + auto_en fallback.
 
     Refetches the client row fresh — DNA compile earlier in this run may have just written
     ``auto_en`` for the first time, and the in-memory ``client`` var in the caller is stale.
     """
-    payload = dict(ONBOARDING_KEYWORD_PAYLOAD_RETRY)
+    payload = dict(base_payload or ONBOARDING_KEYWORD_PAYLOAD_RETRY)
     try:
         crow = (
             supabase.table("clients")
@@ -105,24 +143,38 @@ def _retry_keywords_payload(supabase, client_id: str, first_pass_keywords: List[
         return payload
 
     native_pool, _ = similarity_scan_keywords(
-        client=fresh_client, max_keywords=int(payload.get("max_keywords") or 10)
+        client=fresh_client, max_keywords=max(int(payload.get("max_keywords") or 10), 16)
     )
     tried = {k.strip().lower() for k in first_pass_keywords if k}
     native_new = [k for k in native_pool if k.strip().lower() not in tried]
-    en_phrases = similarity_keywords_auto_en(fresh_client.get("client_dna") or {})
+    en_phrases = [
+        k
+        for k in similarity_keywords_auto_en(fresh_client.get("client_dna") or {})
+        if k.strip().lower() not in tried
+    ]
 
     combined: List[str] = []
-    seen: set = set()
+    seen: Set[str] = set()
     for k in native_new + en_phrases:
         lk = k.lower()
-        if not k or lk in seen:
+        if not k or lk in seen or lk in tried:
             continue
         seen.add(lk)
         combined.append(k)
 
+    # If the unused pool is empty, still send terms so Apify runs (may surface different posts).
+    if not combined:
+        for k in en_phrases + native_pool:
+            lk = k.strip().lower()
+            if not k or lk in seen:
+                continue
+            seen.add(lk)
+            combined.append(k.strip())
+
     if combined:
-        payload["keywords"] = combined
-        payload["max_keywords"] = max(int(payload.get("max_keywords") or 10), len(combined))
+        cap = int(payload.get("max_keywords") or 12)
+        payload["keywords"] = combined[:cap]
+        payload["max_keywords"] = max(cap, len(payload["keywords"]))
     return payload
 
 
@@ -208,7 +260,21 @@ def run_onboarding_pipeline(settings: Settings, job: Dict[str, Any]) -> None:
 
     job_ids: Dict[str, str] = {}
     errors: List[str] = []
-    kw_stats: Dict[str, Any] = {"attempts": []}
+    payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
+    broaden = bool(payload.get("broaden"))
+    prior_state = get_onboarding_state(supabase, client_id) or {}
+    prior_progress = prior_state.get("pipeline_progress") or {}
+    prior_kw = prior_progress.get("kw_stats") if isinstance(prior_progress, dict) else None
+    prior_attempts = (
+        list(prior_kw.get("attempts") or [])
+        if isinstance(prior_kw, dict)
+        else []
+    )
+    kw_stats: Dict[str, Any] = {
+        "attempts": list(prior_attempts),
+        "broaden": broaden,
+    }
+    previously_tried = _tried_keywords_from_state(prior_progress)
 
     try:
         _progress(supabase, client_id, "dna_compile")
@@ -217,13 +283,19 @@ def run_onboarding_pipeline(settings: Settings, job: Dict[str, Any]) -> None:
         _progress(supabase, client_id, "competitor_discovery")
         fail_abandoned_queued_jobs(supabase, client_id=client_id, job_type="competitor_discovery")
         if not has_active_job(supabase, client_id=client_id, job_type="competitor_discovery"):
+            comp_payload = dict(ONBOARDING_COMPETITOR_PAYLOAD)
+            if broaden:
+                comp_payload["limit"] = max(int(comp_payload.get("limit") or 5), 8)
+                comp_payload["posts_per_account"] = max(
+                    int(comp_payload.get("posts_per_account") or 5), 8
+                )
             comp_row = _run_inline_subjob(
                 supabase,
                 settings,
                 org_id=org_id,
                 client_id=client_id,
                 job_type="competitor_discovery",
-                payload=dict(ONBOARDING_COMPETITOR_PAYLOAD),
+                payload=comp_payload,
                 handler=run_competitor_discovery,
             )
             job_ids["competitor_discovery"] = comp_row["id"]
@@ -238,45 +310,22 @@ def run_onboarding_pipeline(settings: Settings, job: Dict[str, Any]) -> None:
             supabase, client_id=client_id, job_type="keyword_reel_similarity"
         )
         if not has_active_job(supabase, client_id=client_id, job_type="keyword_reel_similarity"):
-            kw_row = _run_inline_subjob(
-                supabase,
-                settings,
-                org_id=org_id,
-                client_id=client_id,
-                job_type="keyword_reel_similarity",
-                payload=dict(ONBOARDING_KEYWORD_PAYLOAD),
-                handler=run_keyword_reel_similarity,
-            )
-            job_ids["keyword_similarity"] = kw_row["id"]
-            first_result = kw_row.get("result") or {}
-            kw_stats["attempts"].append(
-                {"payload": ONBOARDING_KEYWORD_PAYLOAD, "result": first_result}
-            )
-
-            upserted = int(first_result.get("upserted") or 0)
-            # Retrying won't help if the first pass never got a real answer from Apify/OpenRouter
-            # (credentials missing on this machine, or Apify's account-wide usage cap tripped) —
-            # only retry on a *clean* run that legitimately found nothing worth saving.
-            hard_blocker = (
-                kw_row.get("status") == "failed"
-                or first_result.get("keyword_search_error_type") == "apify_usage_limit"
-            )
-
-            if upserted == 0 and hard_blocker:
-                errors.append(
-                    "keyword_reel_similarity blocked (not retried — retry wouldn't help): "
-                    f"{(kw_row.get('error_message') or first_result.get('keyword_search_error') or 'unknown error')[:300]}"
-                )
-            elif upserted == 0:
-                retry_payload = _retry_keywords_payload(
-                    supabase, client_id, first_result.get("keywords_used") or []
+            if broaden:
+                # Taste rescan: skip narrow 3-keyword pass — go straight to a different,
+                # wider keyword mix so we don't re-fetch the same disliked posts.
+                broaden_payload = _retry_keywords_payload(
+                    supabase,
+                    client_id,
+                    previously_tried,
+                    base_payload=ONBOARDING_KEYWORD_PAYLOAD_BROADEN,
                 )
                 _progress(
                     supabase,
                     client_id,
-                    "keyword_scan_retry",
-                    reason="first pass saved 0 reels — retrying with broader keywords",
-                    retry_keyword_count=len(retry_payload.get("keywords") or []),
+                    "keyword_scan_broaden",
+                    reason="taste rescan — broader keywords, skipping prior terms",
+                    retry_keyword_count=len(broaden_payload.get("keywords") or []),
+                    skipped_prior_keywords=len(previously_tried),
                 )
                 kw_row = _run_inline_subjob(
                     supabase,
@@ -284,31 +333,97 @@ def run_onboarding_pipeline(settings: Settings, job: Dict[str, Any]) -> None:
                     org_id=org_id,
                     client_id=client_id,
                     job_type="keyword_reel_similarity",
-                    payload=retry_payload,
+                    payload=broaden_payload,
                     handler=run_keyword_reel_similarity,
                 )
-                job_ids["keyword_similarity_retry"] = kw_row["id"]
-                retry_result = kw_row.get("result") or {}
+                job_ids["keyword_similarity_broaden"] = kw_row["id"]
+                broaden_result = kw_row.get("result") or {}
                 kw_stats["attempts"].append(
-                    {"payload": retry_payload, "result": retry_result}
+                    {"payload": broaden_payload, "result": broaden_result}
                 )
                 if kw_row.get("status") != "completed":
                     errors.append(
-                        f"keyword_reel_similarity retry failed: "
+                        f"keyword_reel_similarity broaden failed: "
                         f"{(kw_row.get('error_message') or 'unknown error')[:300]}"
                     )
-                elif int(retry_result.get("upserted") or 0) == 0:
+                elif int(broaden_result.get("upserted") or 0) == 0:
                     errors.append(
-                        "keyword_reel_similarity found 0 reels on both the precise and the "
-                        "broadened retry pass — niche keywords may be too narrow, or there is "
-                        "little matching recent Instagram content right now."
+                        "broader keyword rescan saved 0 new reels — niche may be thin, "
+                        "or Instagram returned the same posts already rejected."
                     )
-            elif kw_row.get("status") != "completed":
-                errors.append(
-                    f"keyword_reel_similarity failed: "
-                    f"{(kw_row.get('error_message') or 'unknown error')[:300]}"
+                kw_stats["final"] = broaden_result
+            else:
+                kw_row = _run_inline_subjob(
+                    supabase,
+                    settings,
+                    org_id=org_id,
+                    client_id=client_id,
+                    job_type="keyword_reel_similarity",
+                    payload=dict(ONBOARDING_KEYWORD_PAYLOAD),
+                    handler=run_keyword_reel_similarity,
                 )
-            kw_stats["final"] = kw_row.get("result") or {}
+                job_ids["keyword_similarity"] = kw_row["id"]
+                first_result = kw_row.get("result") or {}
+                kw_stats["attempts"].append(
+                    {"payload": ONBOARDING_KEYWORD_PAYLOAD, "result": first_result}
+                )
+
+                upserted = int(first_result.get("upserted") or 0)
+                # Retrying won't help if the first pass never got a real answer from Apify/OpenRouter
+                # (credentials missing on this machine, or Apify's account-wide usage cap tripped) —
+                # only retry on a *clean* run that legitimately found nothing worth saving.
+                hard_blocker = (
+                    kw_row.get("status") == "failed"
+                    or first_result.get("keyword_search_error_type") == "apify_usage_limit"
+                )
+
+                if upserted == 0 and hard_blocker:
+                    errors.append(
+                        "keyword_reel_similarity blocked (not retried — retry wouldn't help): "
+                        f"{(kw_row.get('error_message') or first_result.get('keyword_search_error') or 'unknown error')[:300]}"
+                    )
+                elif upserted == 0:
+                    retry_payload = _retry_keywords_payload(
+                        supabase, client_id, first_result.get("keywords_used") or []
+                    )
+                    _progress(
+                        supabase,
+                        client_id,
+                        "keyword_scan_retry",
+                        reason="first pass saved 0 reels — retrying with broader keywords",
+                        retry_keyword_count=len(retry_payload.get("keywords") or []),
+                    )
+                    kw_row = _run_inline_subjob(
+                        supabase,
+                        settings,
+                        org_id=org_id,
+                        client_id=client_id,
+                        job_type="keyword_reel_similarity",
+                        payload=retry_payload,
+                        handler=run_keyword_reel_similarity,
+                    )
+                    job_ids["keyword_similarity_retry"] = kw_row["id"]
+                    retry_result = kw_row.get("result") or {}
+                    kw_stats["attempts"].append(
+                        {"payload": retry_payload, "result": retry_result}
+                    )
+                    if kw_row.get("status") != "completed":
+                        errors.append(
+                            f"keyword_reel_similarity retry failed: "
+                            f"{(kw_row.get('error_message') or 'unknown error')[:300]}"
+                        )
+                    elif int(retry_result.get("upserted") or 0) == 0:
+                        errors.append(
+                            "keyword_reel_similarity found 0 reels on both the precise and the "
+                            "broadened retry pass — niche keywords may be too narrow, or there is "
+                            "little matching recent Instagram content right now."
+                        )
+                elif kw_row.get("status") != "completed":
+                    errors.append(
+                        f"keyword_reel_similarity failed: "
+                        f"{(kw_row.get('error_message') or 'unknown error')[:300]}"
+                    )
+                kw_stats["final"] = kw_row.get("result") or {}
 
         _progress(supabase, client_id, "auto_analyze")
         aa_row = _run_inline_subjob(

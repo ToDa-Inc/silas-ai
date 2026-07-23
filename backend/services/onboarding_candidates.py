@@ -73,8 +73,13 @@ def list_onboarding_reel_candidates(
     *,
     limit: int = 10,
     min_with_analysis: int = 5,
+    include_rejected: bool = False,
 ) -> List[Dict[str, Any]]:
-    """Rank scraped reels; prefer analyzed outliers with similarity scores."""
+    """Rank scraped reels; prefer analyzed outliers with similarity scores.
+
+    By default hides reels the user already voted No on. Pass include_rejected=True
+    to surface them again (so onboarding can recover when the pool is exhausted).
+    """
     limit = max(5, min(limit, 10))
     feedback = _load_feedback_map(supabase, client_id)
 
@@ -92,11 +97,11 @@ def list_onboarding_reel_candidates(
     )
     rows = [dict(r) for r in (res.data or [])]
 
-    no_ids = [rid for rid, v in feedback.items() if v == "no"]
+    no_ids = {rid for rid, v in feedback.items() if v == "no"}
     filtered: List[Dict[str, Any]] = []
     for row in rows:
         rid = str(row.get("id") or "")
-        if rid in no_ids:
+        if not include_rejected and rid in no_ids:
             continue
         src = str(row.get("source") or "")
         if src and src not in CANDIDATE_SOURCES and row.get("competitor_id"):

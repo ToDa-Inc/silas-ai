@@ -81,6 +81,12 @@ class PipelineStartOut(BaseModel):
     already_running: bool = False
 
 
+class PipelineStartBody(BaseModel):
+    """Optional flags for onboarding discovery re-runs."""
+
+    broaden: bool = False
+
+
 class VoiceGenerateBody(BaseModel):
     answers: Dict[str, str] = Field(..., min_length=1)
 
@@ -527,6 +533,7 @@ def start_onboarding_pipeline(
     client_id: Annotated[str, Depends(resolve_client_id)],
     supabase: Annotated[Client, Depends(get_supabase)],
     settings: Annotated[Settings, Depends(get_settings)],
+    body: Optional[PipelineStartBody] = None,
 ) -> Dict[str, Any]:
     """Runs the whole onboarding pipeline inline in this API process — see
     jobs/onboarding_pipeline.py docstring for why it never goes through the shared
@@ -549,6 +556,8 @@ def start_onboarding_pipeline(
             return {"job_id": str(res.data[0]["id"]), "already_running": True}
         raise HTTPException(status_code=409, detail="Pipeline already running")
 
+    broaden = bool(body.broaden) if body else False
+    job_payload: Dict[str, Any] = {"broaden": True} if broaden else {}
     jid = generate_job_id()
     now = datetime.now(timezone.utc).isoformat()
     supabase.table("background_jobs").insert(
@@ -557,7 +566,7 @@ def start_onboarding_pipeline(
             "org_id": org_id,
             "client_id": client_id,
             "job_type": "onboarding_pipeline",
-            "payload": {},
+            "payload": job_payload,
             "status": "running",
             "started_at": now,
             "priority": 30,
@@ -567,12 +576,26 @@ def start_onboarding_pipeline(
         supabase,
         client_id,
         current_step="pipeline",
-        pipeline_progress={"phase": "running", "job_id": jid},
+        pipeline_progress={
+            "phase": "running",
+            "job_id": jid,
+            "broaden": broaden,
+        },
         job_ids_patch={"pipeline": jid},
     )
-    job_row = {"id": jid, "org_id": org_id, "client_id": client_id, "payload": {}}
+    job_row = {
+        "id": jid,
+        "org_id": org_id,
+        "client_id": client_id,
+        "payload": job_payload,
+    }
     background_tasks.add_task(_run_onboarding_pipeline_inline, settings, job_row)
-    logger.info("onboarding_pipeline dispatched inline job=%s client=%s", jid, client_id)
+    logger.info(
+        "onboarding_pipeline dispatched inline job=%s client=%s broaden=%s",
+        jid,
+        client_id,
+        broaden,
+    )
     return {"job_id": jid, "already_running": False}
 
 
@@ -626,9 +649,12 @@ def reel_candidates(
     slug: str,
     client_id: Annotated[str, Depends(resolve_client_id)],
     supabase: Annotated[Client, Depends(get_supabase)],
+    include_rejected: bool = False,
 ) -> List[Dict[str, Any]]:
     _ = slug
-    return list_onboarding_reel_candidates(supabase, client_id)
+    return list_onboarding_reel_candidates(
+        supabase, client_id, include_rejected=include_rejected
+    )
 
 
 @router.post("/{slug}/onboarding/reel-feedback")

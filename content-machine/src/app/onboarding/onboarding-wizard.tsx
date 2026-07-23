@@ -134,6 +134,8 @@ export function OnboardingWizard({
   const igPrefillAppliedRef = useRef(false);
   const [candidates, setCandidates] = useState<OnboardingReelCandidate[]>([]);
   const [votes, setVotes] = useState<Record<string, "yes" | "no">>({});
+  const [tasteNotice, setTasteNotice] = useState<string | null>(null);
+  const [poolExhausted, setPoolExhausted] = useState(false);
   const [selectedReelId, setSelectedReelId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [actionPlan, setActionPlan] = useState<Record<string, unknown> | null>(
@@ -272,23 +274,44 @@ export function OnboardingWizard({
     })();
   }, [currentStep, clientSlug, orgSlug, status?.voice_transcript]);
 
+  const applyCandidates = useCallback((data: OnboardingReelCandidate[]) => {
+    setCandidates(data);
+    const v: Record<string, "yes" | "no"> = {};
+    for (const c of data) {
+      const id = c.reel?.id;
+      if (id && c.already_voted) v[id] = c.already_voted as "yes" | "no";
+    }
+    setVotes(v);
+  }, []);
+
+  const reloadCandidates = useCallback(async () => {
+    setCandidatesLoading(true);
+    try {
+      const fresh = await fetchOnboardingReelCandidates(clientSlug, orgSlug);
+      if (fresh.ok && fresh.data.length > 0) {
+        setPoolExhausted(false);
+        applyCandidates(fresh.data);
+        return fresh;
+      }
+      // Pool empty (typical after all-No) — resurface rejected so the user can flip one to Yes.
+      const rejected = await fetchOnboardingReelCandidates(clientSlug, orgSlug, {
+        includeRejected: true,
+      });
+      if (rejected.ok) {
+        applyCandidates(rejected.data);
+        if (rejected.data.length > 0) setPoolExhausted(true);
+      }
+      return rejected.ok ? rejected : fresh;
+    } finally {
+      setCandidatesLoading(false);
+    }
+  }, [clientSlug, orgSlug, applyCandidates]);
+
   useEffect(() => {
     if (currentStep !== "reel_review" && currentStep !== "first_content") return;
-    setCandidatesLoading(true);
-    void (async () => {
-      const r = await fetchOnboardingReelCandidates(clientSlug, orgSlug);
-      if (r.ok) {
-        setCandidates(r.data);
-        const v: Record<string, "yes" | "no"> = {};
-        for (const c of r.data) {
-          const id = c.reel?.id;
-          if (id && c.already_voted) v[id] = c.already_voted as "yes" | "no";
-        }
-        setVotes(v);
-      }
-      setCandidatesLoading(false);
-    })();
-  }, [currentStep, clientSlug, orgSlug]);
+    setTasteNotice(null);
+    void reloadCandidates();
+  }, [currentStep, reloadCandidates]);
 
   useEffect(() => {
     if (currentStep !== "action_plan" || actionPlan) return;
@@ -482,12 +505,18 @@ export function OnboardingWizard({
     }
   }
 
-  async function runPipeline() {
+  async function runPipeline(opts?: { broaden?: boolean }) {
     if (busy) return;
     setBusy(true);
     setError(null);
+    setTasteNotice(null);
     try {
-      const r = await startOnboardingPipeline(clientSlug, orgSlug);
+      // Allow a deliberate re-scan after the user rejected the first batch.
+      pipelineAutoStartedRef.current = false;
+      setPoolExhausted(false);
+      const r = await startOnboardingPipeline(clientSlug, orgSlug, {
+        broaden: Boolean(opts?.broaden),
+      });
       if (!r.ok) {
         setError(r.error);
         return;
@@ -513,18 +542,47 @@ export function OnboardingWizard({
       );
       return;
     }
+    const yesCount = items.filter((i) => i.verdict === "yes").length;
+    // Snapshot before any reload — if the pool is empty we must keep these visible
+    // so the user can flip a No → Yes (backend hides Nos on refetch).
+    const rejectedBatch = candidates;
+    const rejectedVotes = { ...votes };
     setBusy(true);
     setError(null);
+    setTasteNotice(null);
     try {
       const r = await postOnboardingReelFeedback(clientSlug, orgSlug, items);
       if (!r.ok) {
         setError(r.error);
         return;
       }
+
+      // All-No is valid taste signal, but first_content needs ≥1 Yes seed.
+      // Persist Nos, try next batch — never advance into an empty Yes dead-end.
+      if (yesCount === 0) {
+        const next = await fetchOnboardingReelCandidates(clientSlug, orgSlug);
+        if (next.ok && next.data.length > 0) {
+          setPoolExhausted(false);
+          applyCandidates(next.data);
+          setTasteNotice(
+            "None of those felt right — here are more options. Mark at least one Yes when you see a fit.",
+          );
+          return;
+        }
+        // No replacements: keep / restore rejected cards so a vote can be flipped.
+        setCandidates(rejectedBatch);
+        setVotes(rejectedVotes);
+        setPoolExhausted(true);
+        setTasteNotice(
+          "No more reels in the pool. Flip at least one to Yes, or find more opportunities.",
+        );
+        return;
+      }
+
+      await advance({ complete_step: "reel_review", current_step: "first_content" });
     } finally {
       setBusy(false);
     }
-    await advance({ complete_step: "reel_review", current_step: "first_content" });
   }
 
   async function startFirstContent() {
@@ -1225,47 +1283,69 @@ export function OnboardingWizard({
           <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
             <p className="text-sm font-bold text-white">Your job: teach taste, not strategy.</p>
             <p className="mt-2 text-sm leading-relaxed text-zinc-400">
-              Mark what feels useful and on-brand.{" "}
-              {requiredVotes === 1
-                ? "One vote is enough for Silas to adapt the first piece with better judgment."
-                : `${requiredVotes} votes are enough for Silas to adapt the first piece with better judgment.`}
+              Mark what feels useful and on-brand. You need at least one Yes to create your first
+              post.{" "}
+              {candidates.length > 0
+                ? requiredVotes === 1
+                  ? "Vote on this reel to continue."
+                  : `Vote on at least ${requiredVotes} reels, including one Yes.`
+                : null}
             </p>
           </div>
+          {tasteNotice ? (
+            <p className="rounded-xl border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-center text-sm text-amber-100">
+              {tasteNotice}
+            </p>
+          ) : null}
           {candidatesLoading ? (
             <ReelCandidatesSkeleton />
           ) : candidates.length === 0 ? (
-            <div className="glass-inset rounded-xl px-4 py-8 text-center text-sm text-app-fg-muted">
-              <p>No candidates yet. Discovery may still be gathering reels.</p>
-              <button
-                type="button"
-                onClick={() => void refreshStatus()}
-                className="mt-3 text-xs font-semibold text-amber-600 hover:underline dark:text-amber-400"
-              >
-                Refresh status
-              </button>
+            <div className="space-y-4 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-8 text-center">
+              <p className="text-sm text-zinc-300">No more candidate reels right now.</p>
+              <p className="text-xs leading-relaxed text-zinc-500">
+                Disliked reels are hidden from new batches. Scan your niche again for fresh
+                options.
+              </p>
+              <OnboardingPrimaryButton busy={busy} onClick={() => void runPipeline({ broaden: true })}>
+                Find more opportunities
+              </OnboardingPrimaryButton>
             </div>
           ) : (
-            <div className="grid gap-3 sm:grid-cols-2">
-              {candidates.map((c) => {
-                const id = c.reel?.id ?? "";
-                return (
-                  <OnboardingReelVoteCard
-                    key={id}
-                    row={toScrapedRow(c)}
-                    score={c.score}
-                    verdict={votes[id]}
-                    onVote={(v) => setVotes((prev) => ({ ...prev, [id]: v }))}
-                  />
-                );
-              })}
-            </div>
+            <>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {candidates.map((c) => {
+                  const id = c.reel?.id ?? "";
+                  return (
+                    <OnboardingReelVoteCard
+                      key={id}
+                      row={toScrapedRow(c)}
+                      score={c.score}
+                      verdict={votes[id]}
+                      onVote={(v) => {
+                        setTasteNotice(null);
+                        setVotes((prev) => ({ ...prev, [id]: v }));
+                      }}
+                    />
+                  );
+                })}
+              </div>
+              <p className="text-center text-xs font-semibold text-zinc-400">
+                {votedCount}/{requiredVotes} minimum taste votes
+                {yesReels.length === 0 ? " · need ≥1 Yes" : ""}
+              </p>
+              <OnboardingPrimaryButton busy={busy} onClick={() => void submitVotes()}>
+                Save my choices and continue
+              </OnboardingPrimaryButton>
+              {poolExhausted && yesReels.length === 0 ? (
+                <OnboardingPrimaryButton
+                  busy={busy}
+                  onClick={() => void runPipeline({ broaden: true })}
+                >
+                  Find more with broader keywords
+                </OnboardingPrimaryButton>
+              ) : null}
+            </>
           )}
-          <p className="text-center text-xs font-semibold text-zinc-400">
-            {votedCount}/{requiredVotes} minimum taste votes
-          </p>
-          <OnboardingPrimaryButton busy={busy} onClick={() => void submitVotes()}>
-            Save my choices and continue
-          </OnboardingPrimaryButton>
         </div>
       )}
 
@@ -1278,30 +1358,42 @@ export function OnboardingWizard({
             </p>
           </div>
           {yesReels.length === 0 ? (
-            <p className="text-sm text-app-fg-muted">Mark at least one reel as Yes first.</p>
+            <div className="space-y-4 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-8 text-center">
+              <p className="text-sm text-zinc-300">
+                No Yes picks yet — you need one approved reel to generate your first post.
+              </p>
+              <OnboardingPrimaryButton
+                busy={busy}
+                onClick={() => void advance({ current_step: "reel_review" })}
+              >
+                Back to taste voting
+              </OnboardingPrimaryButton>
+            </div>
           ) : (
-            yesReels.map((c) => {
-              const id = c.reel?.id ?? "";
-              const row = toScrapedRow(c);
-              return (
-                <OpportunityCard
-                  key={id}
-                  reel={row}
-                  tone="onboarding"
-                  selectable
-                  selected={selectedReelId === id}
-                  onSelect={() => setSelectedReelId(id)}
-                />
-              );
-            })
+            <>
+              {yesReels.map((c) => {
+                const id = c.reel?.id ?? "";
+                const row = toScrapedRow(c);
+                return (
+                  <OpportunityCard
+                    key={id}
+                    reel={row}
+                    tone="onboarding"
+                    selectable
+                    selected={selectedReelId === id}
+                    onSelect={() => setSelectedReelId(id)}
+                  />
+                );
+              })}
+              <OnboardingPrimaryButton
+                busy={busy}
+                disabled={!selectedReelId}
+                onClick={() => void startFirstContent()}
+              >
+                Generate my first post
+              </OnboardingPrimaryButton>
+            </>
           )}
-          <OnboardingPrimaryButton
-            busy={busy}
-            disabled={!selectedReelId}
-            onClick={() => void startFirstContent()}
-          >
-            Generate my first post
-          </OnboardingPrimaryButton>
         </div>
       )}
 

@@ -91,13 +91,18 @@ export async function patchOnboardingStatus(
 export async function startOnboardingPipeline(
   clientSlug: string,
   orgSlug: string,
+  opts?: { broaden?: boolean },
 ): Promise<{ ok: true; job_id: string } | { ok: false; error: string }> {
   const base = getContentApiBase();
   const headers = await clientApiHeaders({ orgSlug });
   try {
     const res = await contentApiFetch(
       `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/onboarding/pipeline/start`,
-      { method: "POST", headers },
+      {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ broaden: Boolean(opts?.broaden) }),
+      },
     );
     const json = (await res.json().catch(() => ({}))) as { job_id?: string; detail?: unknown };
     if (!res.ok || !json.job_id) {
@@ -214,12 +219,14 @@ export async function startOnboardingBrainGenerate(
 export async function fetchOnboardingReelCandidates(
   clientSlug: string,
   orgSlug: string,
+  opts?: { includeRejected?: boolean },
 ): Promise<{ ok: true; data: OnboardingReelCandidate[] } | { ok: false; error: string }> {
   const base = getContentApiBase();
   const headers = await clientApiHeaders({ orgSlug });
+  const qs = opts?.includeRejected ? "?include_rejected=true" : "";
   try {
     const res = await contentApiFetch(
-      `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/onboarding/reel-candidates`,
+      `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/onboarding/reel-candidates${qs}`,
       { headers, cache: "no-store" },
     );
     const json = (await res.json().catch(() => [])) as OnboardingReelCandidate[];
