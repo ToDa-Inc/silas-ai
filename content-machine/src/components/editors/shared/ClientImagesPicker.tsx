@@ -2,11 +2,13 @@
  * ClientImagesPicker — grid / strip selector for the client's uploaded images.
  *
  * Used by Cover editor (compact strip) and Video editor (BackgroundPicker grid).
- * Pure leaf (props in / events out).
+ * Pure leaf (props in / events out). Supports inline upload so editors don't
+ * navigate away (and lose in-progress copy).
  */
 
+import { useRef } from "react";
 import Link from "next/link";
-import { Image as ImageIcon, Plus } from "lucide-react";
+import { Image as ImageIcon, Loader2, Plus } from "lucide-react";
 import type { ClientImageRow } from "@/lib/api-client";
 
 type Props = {
@@ -17,6 +19,9 @@ type Props = {
   emptyHint?: string;
   /** Horizontal strip — less vertical scroll in dense editors (e.g. reel cover). */
   compact?: boolean;
+  /** When set, Upload picks files in-place instead of navigating to Media. */
+  onUpload?: (files: File[]) => void | Promise<void>;
+  uploadBusy?: boolean;
 };
 
 export function ClientImagesPicker({
@@ -26,9 +31,52 @@ export function ClientImagesPicker({
   onPick,
   emptyHint = "No client images yet.",
   compact = false,
+  onUpload,
+  uploadBusy = false,
 }: Props) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const disabled = busy || uploadBusy;
+
+  const uploadControl = onUpload ? (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={() => fileInputRef.current?.click()}
+      className={`inline-flex items-center gap-1.5 rounded-lg bg-amber-500/15 font-bold text-app-on-amber-title hover:bg-amber-500/25 disabled:opacity-50 ${
+        compact ? "px-2 py-1 text-[10px]" : "px-3 py-1.5 text-xs"
+      }`}
+    >
+      {uploadBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+      Upload
+    </button>
+  ) : (
+    <Link
+      href="/media?tab=images"
+      className={`inline-flex items-center gap-1.5 rounded-lg bg-amber-500/15 font-bold text-app-on-amber-title hover:bg-amber-500/25 ${
+        compact ? "px-2 py-1 text-[10px]" : "px-3 py-1.5 text-xs"
+      }`}
+    >
+      <Plus className="h-3 w-3" />
+      Upload
+    </Link>
+  );
+
   return (
     <div>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp"
+        multiple
+        className="hidden"
+        disabled={disabled}
+        onChange={(e) => {
+          const files = Array.from(e.target.files ?? []);
+          e.target.value = "";
+          if (files.length > 0 && onUpload) void onUpload(files);
+        }}
+      />
+
       <div className={`flex items-center justify-between ${compact ? "mb-1.5" : "mb-3"}`}>
         <p className={`font-semibold text-app-fg ${compact ? "text-[10px]" : "text-xs"}`}>
           Client images{" "}
@@ -36,12 +84,15 @@ export function ClientImagesPicker({
             ({images.length})
           </span>
         </p>
-        <Link
-          href="/media?tab=images"
-          className={`font-semibold text-sky-500 hover:underline dark:text-sky-400 ${compact ? "text-[10px]" : "text-[11px]"}`}
-        >
-          Media →
-        </Link>
+        <div className="flex items-center gap-2">
+          {images.length > 0 && onUpload ? uploadControl : null}
+          <Link
+            href="/media?tab=images"
+            className={`font-semibold text-sky-500 hover:underline dark:text-sky-400 ${compact ? "text-[10px]" : "text-[11px]"}`}
+          >
+            Media →
+          </Link>
+        </div>
       </div>
 
       {images.length === 0 ? (
@@ -50,13 +101,7 @@ export function ClientImagesPicker({
         >
           <ImageIcon className={`mx-auto text-app-fg-subtle opacity-30 ${compact ? "mb-1 h-5 w-5" : "mb-2 h-6 w-6"}`} />
           <p className={`text-app-fg-subtle ${compact ? "mb-2 text-[10px]" : "mb-3 text-xs"}`}>{emptyHint}</p>
-          <Link
-            href="/media?tab=images"
-            className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500/15 px-3 py-1.5 text-xs font-bold text-app-on-amber-title hover:bg-amber-500/25"
-          >
-            <Plus className="h-3 w-3" />
-            Upload
-          </Link>
+          {uploadControl}
         </div>
       ) : compact ? (
         <div className="-mx-0.5 flex max-h-[11rem] flex-wrap gap-2 overflow-y-auto overflow-x-hidden pb-1 pt-0.5 [scrollbar-width:thin] sm:max-h-none sm:flex-nowrap sm:overflow-x-auto sm:overflow-y-hidden">
@@ -66,7 +111,7 @@ export function ClientImagesPicker({
               <button
                 key={img.id}
                 type="button"
-                disabled={busy}
+                disabled={disabled}
                 onClick={() => onPick(img.id)}
                 className={`w-[4.5rem] shrink-0 overflow-hidden rounded-lg border-2 p-0.5 text-left transition-colors sm:w-16 ${
                   isActive
@@ -93,7 +138,7 @@ export function ClientImagesPicker({
               <button
                 key={img.id}
                 type="button"
-                disabled={busy}
+                disabled={disabled}
                 onClick={() => onPick(img.id)}
                 className={`group flex flex-col gap-1 overflow-hidden rounded-xl border p-1.5 text-left transition-colors ${
                   isActive

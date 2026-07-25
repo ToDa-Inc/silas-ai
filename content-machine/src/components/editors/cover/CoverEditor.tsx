@@ -103,6 +103,9 @@ type Props = {
   onSelectImage: (id: string) => void;
   onGenerateAi: () => void;
   onComposeFromImage: () => void;
+  /** Inline client-image upload (avoids navigating away from the editor). */
+  onUploadImages?: (files: File[]) => void | Promise<void>;
+  imageUploadBusy?: boolean;
   step: number;
   embedded?: boolean;
 };
@@ -127,6 +130,8 @@ export function CoverEditor({
   onSelectImage,
   onGenerateAi,
   onComposeFromImage,
+  onUploadImages,
+  imageUploadBusy = false,
   step,
   embedded = false,
 }: Props) {
@@ -273,7 +278,9 @@ export function CoverEditor({
                       busy={thumbnailBusy}
                       onPick={onSelectImage}
                       compact
-                      emptyHint="No client images yet — upload PNG/JPG in Media."
+                      emptyHint="No client images yet — upload a PNG/JPG here."
+                      onUpload={onUploadImages}
+                      uploadBusy={imageUploadBusy}
                     />
                   ) : null}
 

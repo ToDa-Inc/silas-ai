@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { Loader2, Lock } from "lucide-react";
 import { useTranslations } from "next-intl";
@@ -9,7 +9,6 @@ import { createClient } from "@/lib/supabase/client";
 
 export function LoginClient() {
   const t = useTranslations("auth");
-  const router = useRouter();
   const searchParams = useSearchParams();
   const nextPath = searchParams.get("next") || "/dashboard";
   const authError = searchParams.get("error");
@@ -41,8 +40,9 @@ export function LoginClient() {
         setBusy(false);
         return;
       }
-      router.replace(nextPath);
-      router.refresh();
+      // Full navigation so auth cookies are on the first server request (middleware + RSC).
+      // Client-side router.replace can race and bounce back to /login with no error shown.
+      window.location.assign(nextPath);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("couldNotSignIn"));
       setBusy(false);

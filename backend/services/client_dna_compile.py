@@ -35,6 +35,9 @@ Include (roughly 800-1200 tokens of prose as one string, use \\n for paragraphs)
 • IDENTITY: Who is this client? What do they do? Positioning.
 • NICHE BOUNDARIES: What is IN scope vs OUT of scope (adjacent niches that are NOT theirs).
 • TARGET AUDIENCE: Psychographics — situation, feelings when they find this content.
+  Include audience geography/markets when Source A ICP has audience_geography (or similar):
+  worldwide = no region bias; english_speaking = prefer English-speaking markets;
+  dach = DACH; custom = use audience_geography_note. Do not invent a region if unset.
 • PAIN POINTS & DESIRES: Use the client's own language from Source B where possible.
 • CONTENT THAT RESONATES: Formats, angles, types of value.
 • CONTENT THAT DOES NOT WORK: What should score low (generic fluff, wrong audience).
@@ -65,7 +68,7 @@ def _context_texts_only(client_context: Any) -> Dict[str, str]:
 
 
 def compute_client_dna_source_hash(client_row: Dict[str, Any]) -> str:
-    """Hash of niche_config + icp + client_context section texts only (no metadata)."""
+    """Hash of language + niche_config + icp + client_context section texts."""
     nc = client_row.get("niche_config")
     if nc is None:
         nc = []
@@ -73,8 +76,14 @@ def compute_client_dna_source_hash(client_row: Dict[str, Any]) -> str:
     if not isinstance(icp, dict):
         icp = {}
     cc_texts = _context_texts_only(client_row.get("client_context"))
+    lang = str(client_row.get("language") or "de").strip().lower() or "de"
     blob = json.dumps(
-        {"niche_config": nc, "icp": icp, "context_texts": cc_texts},
+        {
+            "language": lang,
+            "niche_config": nc,
+            "icp": icp,
+            "context_texts": cc_texts,
+        },
         sort_keys=True,
         default=str,
     )

@@ -53,10 +53,16 @@ type Props = {
   onSelectCoverImage: (id: string) => void;
   onGenerateThumbnail: () => void;
   onComposeCoverFromImage: () => void;
+  onUploadImages?: (files: File[]) => void | Promise<void>;
+  imageUploadBusy?: boolean;
 
   captionBody: string;
   hashtags: string[];
+  hashtagsText?: string;
   captionFull: string;
+  onCaptionChange?: (value: string) => void;
+  onHashtagsChange?: (value: string) => void;
+  captionSaveInFlight?: number;
   embedded?: boolean;
 };
 
@@ -87,10 +93,16 @@ export function TalkingHeadEditor({
   onSelectCoverImage,
   onGenerateThumbnail,
   onComposeCoverFromImage,
+  onUploadImages,
+  imageUploadBusy = false,
 
   captionBody,
   hashtags,
+  hashtagsText,
   captionFull,
+  onCaptionChange,
+  onHashtagsChange,
+  captionSaveInFlight = 0,
   embedded = false,
 }: Props) {
   const { expanded: studioExpanded } = useStudioShell();
@@ -159,6 +171,8 @@ export function TalkingHeadEditor({
         onSelectImage={onSelectCoverImage}
         onGenerateAi={onGenerateThumbnail}
         onComposeFromImage={onComposeCoverFromImage}
+        onUploadImages={onUploadImages}
+        imageUploadBusy={imageUploadBusy}
         step={2}
         embedded={embedded}
       />
@@ -166,6 +180,10 @@ export function TalkingHeadEditor({
       <CaptionSection
         caption={captionBody}
         hashtags={hashtags}
+        hashtagsText={hashtagsText}
+        onCaptionChange={onCaptionChange}
+        onHashtagsChange={onHashtagsChange}
+        saveInFlight={captionSaveInFlight}
         onCopy={() => void copyText("caption + hashtags", captionFull)}
         regenInline={
           <RegenInline

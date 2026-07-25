@@ -23,6 +23,7 @@ import {
   clientApiContext,
   clientImagesDelete,
   clientImagesList,
+  clientImagesUpload,
   contentApiFetch,
   generationListSessions,
   type BrollClipRow,
@@ -57,15 +58,6 @@ function sessionTitle(s: GenerationSession): string {
 type Tab = "renders" | "covers" | "broll" | "images";
 
 const VALID_TAB = new Set<string>(["renders", "covers", "broll", "images"]);
-
-const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
-
-function imageValidationError(file: File): string | null {
-  const accepted = /\.(png|jpe?g|webp)$/i.test(file.name);
-  if (!accepted) return "Only PNG, JPG or WEBP images are supported.";
-  if (file.size > MAX_IMAGE_BYTES) return "Image too large (max 12 MB).";
-  return null;
-}
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
@@ -202,31 +194,13 @@ function MediaPageInner() {
     if (!cs || !os) return;
     setImageUploadBusy(true);
     try {
-      const base = getContentApiBase();
-      const { headers } = await clientApiContext({ orgSlug: os });
       let uploaded = 0;
       const failures: string[] = [];
 
       for (const file of files) {
-        const validationError = imageValidationError(file);
-        if (validationError) {
-          failures.push(`${file.name}: ${validationError}`);
-          continue;
-        }
-
-        const fd = new FormData();
-        fd.append("file", file);
-        const res = await contentApiFetch(
-          `${base}/api/v1/clients/${encodeURIComponent(cs)}/images`,
-          { method: "POST", headers, body: fd },
-        );
-        const json = (await res.json().catch(() => ({}))) as { detail?: unknown };
+        const res = await clientImagesUpload(cs, os, file);
         if (!res.ok) {
-          failures.push(
-            `${file.name}: ${
-              typeof json.detail === "string" ? json.detail : `Upload failed (${res.status})`
-            }`,
-          );
+          failures.push(`${file.name}: ${res.error}`);
           continue;
         }
         uploaded += 1;

@@ -193,6 +193,72 @@ export async function putClientClientContext(
   }
 }
 
+/** PUT partial client fields (language / icp / client_context). ICP and context are replaced wholesale — merge first. */
+export async function putClientFields(
+  clientSlug: string,
+  orgSlug: string,
+  fields: {
+    language?: string;
+    icp?: Record<string, unknown>;
+    client_context?: Record<string, unknown>;
+  },
+): Promise<{ ok: true; data: ClientRow } | { ok: false; error: string }> {
+  const base = getContentApiBase();
+  const headers = await clientApiHeaders({ orgSlug });
+  const body: Record<string, unknown> = {};
+  if (fields.language !== undefined) body.language = fields.language;
+  if (fields.icp !== undefined) body.icp = fields.icp;
+  if (fields.client_context !== undefined) body.client_context = fields.client_context;
+  try {
+    const res = await contentApiFetch(`${base}/api/v1/clients/${encodeURIComponent(clientSlug)}`, {
+      method: "PUT",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const json = (await res.json().catch(() => null)) as unknown;
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: formatFastApiError(json as Record<string, unknown>, `Save failed (${res.status})`),
+      };
+    }
+    if (!json || typeof json !== "object") {
+      return { ok: false, error: "Invalid client response" };
+    }
+    return { ok: true, data: json as ClientRow };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "fetch failed" };
+  }
+}
+
+/** Enqueue keyword niche discovery; poll GET /api/v1/jobs/{job_id}. */
+export async function startNicheDiscoveryRun(
+  clientSlug: string,
+  orgSlug: string,
+): Promise<{ ok: true; jobId: string } | { ok: false; error: string; status?: number }> {
+  const base = getContentApiBase();
+  const headers = await clientApiHeaders({ orgSlug });
+  try {
+    const res = await contentApiFetch(
+      `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/reels/niche-discovery/run`,
+      { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: "{}" },
+    );
+    const json = (await res.json().catch(() => ({}))) as { job_id?: string };
+    if (!res.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        error: formatFastApiError(json as Record<string, unknown>, `Request failed (${res.status})`),
+      };
+    }
+    const jobId = typeof json.job_id === "string" ? json.job_id : "";
+    if (!jobId) return { ok: false, error: "Couldn’t start discovery." };
+    return { ok: true, jobId };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "fetch failed" };
+  }
+}
+
 /** PUT replaces the full ``generation_libraries`` JSON object without touching ``client_context``. */
 export async function putClientGenerationLibraries(
   clientSlug: string,

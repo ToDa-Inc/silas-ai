@@ -199,6 +199,46 @@ export async function clientImagesList(
   }
 }
 
+const MAX_CLIENT_IMAGE_BYTES = 12 * 1024 * 1024;
+
+/** Validate a client-library image before upload (PNG/JPG/WEBP, max 12 MB). */
+export function clientImageValidationError(file: File): string | null {
+  const accepted = /\.(png|jpe?g|webp)$/i.test(file.name);
+  if (!accepted) return "Only PNG, JPG or WEBP images are supported.";
+  if (file.size > MAX_CLIENT_IMAGE_BYTES) return "Image too large (max 12 MB).";
+  return null;
+}
+
+export async function clientImagesUpload(
+  clientSlug: string,
+  orgSlug: string,
+  file: File,
+): Promise<{ ok: true; data: ClientImageRow } | { ok: false; error: string }> {
+  const validationError = clientImageValidationError(file);
+  if (validationError) return { ok: false, error: validationError };
+
+  const base = getContentApiBase();
+  const headers = await clientApiHeaders({ orgSlug });
+  try {
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await contentApiFetch(
+      `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/images`,
+      { method: "POST", headers, body: fd },
+    );
+    const json = (await res.json().catch(() => ({}))) as ClientImageRow & { detail?: unknown };
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: formatFastApiError(json as Record<string, unknown>, `Upload failed (${res.status})`),
+      };
+    }
+    return { ok: true, data: json as ClientImageRow };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "fetch failed" };
+  }
+}
+
 export async function clientImagesDelete(
   clientSlug: string,
   orgSlug: string,

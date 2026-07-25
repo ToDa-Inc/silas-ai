@@ -28,6 +28,7 @@ import {
   parseAnalysisBriefForDisplay,
 } from "@/lib/ai-profile-brief";
 import { cn } from "@/lib/cn";
+import { TargetingControls } from "@/components/targeting/targeting-controls";
 
 export type ContextSectionKey =
   | "onboarding_transcript"
@@ -275,6 +276,8 @@ type Props = {
   orgSlug: string;
   initialContext: ClientContextData | null | undefined;
   initialClientDna?: Record<string, unknown> | null;
+  initialLanguage?: string | null;
+  initialIcp?: Record<string, unknown> | null;
   disabled?: boolean;
 };
 
@@ -289,9 +292,15 @@ export function ContextEditor({
   orgSlug,
   initialContext,
   initialClientDna,
+  initialLanguage,
+  initialIcp,
   disabled,
 }: Props) {
   const router = useRouter();
+  const [language, setLanguage] = useState(initialLanguage ?? "de");
+  const [icp, setIcp] = useState<Record<string, unknown> | null>(
+    initialIcp && typeof initialIcp === "object" ? initialIcp : null,
+  );
   const [state, setState] = useState(() => normalizeFullContext(initialContext));
   const [baselineSig, setBaselineSig] = useState(() =>
     serializeStrategyBaseline(normalizeFullContext(initialContext)),
@@ -327,6 +336,14 @@ export function ContextEditor({
       initialClientDna && typeof initialClientDna === "object" ? { ...initialClientDna } : null,
     );
   }, [initialClientDna]);
+
+  useEffect(() => {
+    setLanguage(initialLanguage ?? "de");
+  }, [initialLanguage]);
+
+  useEffect(() => {
+    setIcp(initialIcp && typeof initialIcp === "object" ? initialIcp : null);
+  }, [initialIcp]);
 
   useEffect(() => {
     const next = normalizeFullContext(initialContext);
@@ -792,6 +809,29 @@ export function ContextEditor({
           {status}
         </p>
       ) : null}
+
+      <TargetingControls
+        clientSlug={clientSlug}
+        orgSlug={orgSlug}
+        initialLanguage={language}
+        initialIcp={icp}
+        disabled={disabled}
+        variant="context"
+        showRefreshRecommendations
+        onSaved={(row) => {
+          setLanguage(row.language ?? language);
+          setIcp(row.icp && typeof row.icp === "object" ? row.icp : icp);
+          if (row.client_context) {
+            const next = normalizeFullContext(row.client_context as ClientContextData);
+            setState(next);
+            setBaselineSig(serializeStrategyBaseline(next));
+          }
+          if (row.client_dna && typeof row.client_dna === "object") {
+            setClientDna({ ...row.client_dna });
+          }
+          router.refresh();
+        }}
+      />
 
       <section className="mb-8 rounded-2xl border border-emerald-500/20 bg-gradient-to-b from-emerald-500/[0.07] to-transparent p-5 shadow-sm dark:from-emerald-500/[0.05]">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">

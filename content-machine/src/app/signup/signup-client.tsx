@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Loader2, UserPlus } from "lucide-react";
 import { useTranslations } from "next-intl";
@@ -9,7 +8,6 @@ import { createClient } from "@/lib/supabase/client";
 
 export function SignupClient() {
   const t = useTranslations("auth");
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -35,8 +33,7 @@ export function SignupClient() {
         return;
       }
       if (data.session) {
-        router.replace("/onboarding");
-        router.refresh();
+        window.location.assign("/onboarding");
         return;
       }
       setInfo(t("checkEmail"));

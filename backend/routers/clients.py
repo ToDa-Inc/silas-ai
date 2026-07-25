@@ -27,7 +27,8 @@ from services.dna_chat_update import (
 router = APIRouter(prefix="/api/v1/clients", tags=["clients"])
 logger = logging.getLogger(__name__)
 
-_DNA_TRIGGER_FIELDS = frozenset({"niche_config", "icp", "client_context"})
+# language must trigger recompile — keyword pools follow clients.language
+_DNA_TRIGGER_FIELDS = frozenset({"niche_config", "icp", "client_context", "language"})
 
 
 def _background_recompile_client_dna(client_id: str) -> None:

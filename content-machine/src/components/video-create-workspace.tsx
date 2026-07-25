@@ -47,7 +47,7 @@ import {
   type CoverTab,
   type VideoEditorTab,
 } from "@/components/editor-ui";
-import { CaptionSection } from "@/components/editors/shared/CaptionSection";
+import { CaptionSection, parseHashtagInput } from "@/components/editors/shared/CaptionSection";
 import { CoverTextLayerEditor } from "@/components/editors/cover/CoverTextLayerEditor";
 import { BackgroundPicker } from "@/components/editors/video/BackgroundPicker";
 import { CarouselTextLayerEditor } from "@/components/editors/carousel/CarouselTextLayerEditor";
@@ -101,6 +101,7 @@ import {
   clientApiHeaders,
   contentApiFetch,
   clientImagesList,
+  clientImagesUpload,
   creationGenerateBackground,
   creationRenderVideo,
   creationSetBackgroundImage,
@@ -375,10 +376,13 @@ export function VideoCreateWorkspace({
   const [session, setSession] = useState<GenerationSession | null>(null);
   const [clips, setClips] = useState<BrollClipRow[]>([]);
   const [images, setImages] = useState<ClientImageRow[]>([]);
+  const [imageUploadBusy, setImageUploadBusy] = useState(false);
   const [selectedClipId, setSelectedClipId] = useState("");
   const [selectedImageId, setSelectedImageId] = useState("");
   const [textDraft, setTextDraft] = useState<TextBlock[]>([]);
   const [scriptDraft, setScriptDraft] = useState("");
+  const [captionDraft, setCaptionDraft] = useState("");
+  const [hashtagsDraft, setHashtagsDraft] = useState("");
   const [loading, setLoading] = useState(false);
   const [bgBusy, setBgBusy] = useState(false);
   const [renderBusy, setRenderBusy] = useState(false);
@@ -396,11 +400,23 @@ export function VideoCreateWorkspace({
   /** Counter of in-flight cover_spec PATCHes — drives the shared "Saving…" pill. */
   const [coverSpecInFlight, setCoverSpecInFlight] = useState(0);
   const coverSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** True while a debounced cover_spec save is waiting — flushed on unmount. */
+  const coverSavePendingRef = useRef(false);
+  const coverSaveSnapshotRef = useRef({
+    coverEdit: DEFAULT_COVER_EDIT as CoverEditState,
+    coverText: "",
+    coverMode: "ai" as CoverMode,
+    coverImageId: "",
+    clientSlug: "",
+    orgSlug: "",
+    sessionId: "" as string,
+  });
   /** Counter + debounce ref for text_blocks / script autosave. Mirrors the same
    *  pattern so the "Save text blocks" and "Save script" buttons can disappear. */
   const [contentInFlight, setContentInFlight] = useState(0);
   const textBlocksSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scriptSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const captionSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** In-flight count for carousel slide PATCHes (text + layout). Surfaces the
    *  previously-silent autosave in the section header SaveStatusPill. */
   const [carouselInFlight, setCarouselInFlight] = useState(0);
@@ -544,6 +560,96 @@ export function VideoCreateWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scriptDraft, bootstrapDone, clientSlug, orgSlug, session?.id]);
 
+  /** Debounced autosave for caption + hashtags (same PATCH endpoint as script). */
+  const captionDraftRef = useRef("");
+  const hashtagsDraftRef = useRef("");
+  useEffect(() => {
+    captionDraftRef.current = captionDraft;
+  }, [captionDraft]);
+  useEffect(() => {
+    hashtagsDraftRef.current = hashtagsDraft;
+  }, [hashtagsDraft]);
+  useEffect(() => {
+    if (!bootstrapDone) return;
+    const cs = clientSlug.trim();
+    const os = orgSlug.trim();
+    if (!cs || !os || !session?.id) return;
+    const serverCaption = session.caption_body ?? "";
+    const serverTags = Array.isArray(session.hashtags) ? session.hashtags : [];
+    const draftTags = parseHashtagInput(hashtagsDraft);
+    if (
+      serverCaption === captionDraft &&
+      JSON.stringify(serverTags) === JSON.stringify(draftTags)
+    ) {
+      return;
+    }
+    if (captionSaveTimer.current) clearTimeout(captionSaveTimer.current);
+    captionSaveTimer.current = setTimeout(() => {
+      void (async () => {
+        setContentInFlight((n) => n + 1);
+        try {
+          const tags = parseHashtagInput(hashtagsDraftRef.current);
+          const res = await patchCreateSession(cs, os, session.id, {
+            caption_body: captionDraftRef.current,
+            hashtags: tags,
+          });
+          if (res.ok) {
+            setSession((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    caption_body: res.data.caption_body ?? prev.caption_body,
+                    hashtags: res.data.hashtags ?? prev.hashtags,
+                  }
+                : prev,
+            );
+          }
+        } finally {
+          setContentInFlight((n) => Math.max(0, n - 1));
+        }
+      })();
+    }, 700);
+    return () => {
+      if (captionSaveTimer.current) {
+        clearTimeout(captionSaveTimer.current);
+        captionSaveTimer.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [captionDraft, hashtagsDraft, bootstrapDone, clientSlug, orgSlug, session?.id]);
+
+  coverSaveSnapshotRef.current = {
+    coverEdit,
+    coverText,
+    coverMode,
+    coverImageId,
+    clientSlug,
+    orgSlug,
+    sessionId: session?.id ?? "",
+  };
+
+  const flushCoverSpecSave = useCallback(async () => {
+    const snap = coverSaveSnapshotRef.current;
+    const cs = snap.clientSlug.trim();
+    const os = snap.orgSlug.trim();
+    if (!cs || !os || !snap.sessionId || !coverHydratedRef.current) return;
+    coverSavePendingRef.current = false;
+    setCoverSpecInFlight((n) => n + 1);
+    try {
+      const payload = coverSpecToPayload(snap.coverEdit, {
+        hookText: snap.coverText.trim() || null,
+        coverMode: snap.coverMode,
+        clientImageId: snap.coverImageId || null,
+      });
+      const res = await patchCoverSpec(cs, os, snap.sessionId, payload);
+      if (res.ok) {
+        setSession((prev) => (prev ? { ...prev, cover_spec: payload } : prev));
+      }
+    } finally {
+      setCoverSpecInFlight((n) => Math.max(0, n - 1));
+    }
+  }, []);
+
   /** Debounced autosave for the cover editor. Pattern mirrors `carouselSaveTimer`:
    *  any change to coverEdit / coverText / coverMode / coverImageId schedules a
    *  PATCH 500ms later, so dragging sliders or typing in the headline doesn't
@@ -554,25 +660,9 @@ export function VideoCreateWorkspace({
     const os = orgSlug.trim();
     if (!cs || !os || !session?.id) return;
     if (coverSaveTimer.current) clearTimeout(coverSaveTimer.current);
+    coverSavePendingRef.current = true;
     coverSaveTimer.current = setTimeout(() => {
-      void (async () => {
-        setCoverSpecInFlight((n) => n + 1);
-        try {
-          const payload = coverSpecToPayload(coverEdit, {
-            hookText: coverText.trim() || null,
-            coverMode,
-            clientImageId: coverImageId || null,
-          });
-          const res = await patchCoverSpec(cs, os, session.id, payload);
-          if (res.ok) {
-            // Mirror server-confirmed cover_spec into the session so any other
-            // listener (e.g. session header) sees the latest persisted state.
-            setSession((prev) => (prev ? { ...prev, cover_spec: payload } : prev));
-          }
-        } finally {
-          setCoverSpecInFlight((n) => Math.max(0, n - 1));
-        }
-      })();
+      void flushCoverSpecSave();
     }, 500);
     return () => {
       if (coverSaveTimer.current) {
@@ -580,12 +670,27 @@ export function VideoCreateWorkspace({
         coverSaveTimer.current = null;
       }
     };
-  }, [coverEdit, coverText, coverMode, coverImageId, clientSlug, orgSlug, session?.id]);
+  }, [coverEdit, coverText, coverMode, coverImageId, clientSlug, orgSlug, session?.id, flushCoverSpecSave]);
+
+  /** Flush a pending cover autosave if the workspace unmounts (e.g. Media link). */
+  useEffect(() => {
+    return () => {
+      if (coverSaveTimer.current) {
+        clearTimeout(coverSaveTimer.current);
+        coverSaveTimer.current = null;
+      }
+      if (coverSavePendingRef.current) {
+        void flushCoverSpecSave();
+      }
+    };
+  }, [flushCoverSpecSave]);
 
   const applySession = useCallback((s: GenerationSession) => {
     setSession(s);
     setTextDraft(Array.isArray(s.text_blocks) ? s.text_blocks.map((b) => ({ ...b })) : []);
     setScriptDraft(s.script ?? "");
+    setCaptionDraft(s.caption_body ?? "");
+    setHashtagsDraft(Array.isArray(s.hashtags) ? s.hashtags.join(" ") : "");
     setSelectedClipId(s.broll_clip_id ?? "");
     setSelectedImageId(s.client_image_id ?? "");
     if (s.selected_cover_template?.reference_image_id) {
@@ -668,9 +773,12 @@ export function VideoCreateWorkspace({
         show(sRes.error, "error");
       } else {
         applySession(sRes.data);
-        // Pre-select the first AI-written cover headline so users land on a real
-        // cover-style line; falls back to "" (custom textarea) for legacy sessions.
-        setCoverText(sRes.data.cover_text_options?.[0] ?? "");
+        // Only seed from AI suggestions when nothing was persisted — otherwise
+        // remount (or leaving for Media) wiped the user's typed headline.
+        const persistedHook = coverHookTextFromPayload(sRes.data.cover_spec);
+        if (!persistedHook) {
+          setCoverText(sRes.data.cover_text_options?.[0] ?? "");
+        }
       }
       if (bRes.ok) setClips(bRes.data);
       if (iRes.ok) setImages(iRes.data);
@@ -2223,6 +2331,46 @@ export function VideoCreateWorkspace({
     }
   }, [clientSlug, orgSlug, session, coverImageId, coverText, coverEdit, show]);
 
+  const onUploadClientImages = useCallback(
+    async (files: File[]) => {
+      const cs = clientSlug.trim();
+      const os = orgSlug.trim();
+      if (!cs || !os || files.length === 0) return;
+      setImageUploadBusy(true);
+      try {
+        let uploaded = 0;
+        let lastId = "";
+        const failures: string[] = [];
+        for (const file of files) {
+          const res = await clientImagesUpload(cs, os, file);
+          if (!res.ok) {
+            failures.push(`${file.name}: ${res.error}`);
+            continue;
+          }
+          uploaded += 1;
+          if (res.data?.id) lastId = res.data.id;
+        }
+        if (uploaded > 0) {
+          const iRes = await clientImagesList(cs, os);
+          if (iRes.ok) setImages(iRes.data);
+          if (lastId) {
+            setCoverMode("image");
+            setCoverImageId(lastId);
+          }
+        }
+        if (failures.length > 0) {
+          const prefix = uploaded > 0 ? `${uploaded} uploaded. ` : "";
+          show(`${prefix}${failures.length} failed: ${failures[0]}`, "error");
+        } else {
+          show(`${uploaded} image${uploaded === 1 ? "" : "s"} uploaded.`, "success");
+        }
+      } finally {
+        setImageUploadBusy(false);
+      }
+    },
+    [clientSlug, orgSlug, show],
+  );
+
   const onSetBackgroundImage = useCallback(
     async (imageId: string) => {
       const cs = clientSlug.trim();
@@ -2672,8 +2820,9 @@ export function VideoCreateWorkspace({
 
   const hooks = (Array.isArray(session.hooks) ? session.hooks : []) as Array<{ text?: string }>;
   const coverOptions = (Array.isArray(session.cover_text_options) ? session.cover_text_options : []) as string[];
-  const captionFull = `${session.caption_body ?? ""}${
-    Array.isArray(session.hashtags) && session.hashtags.length ? `\n\n${session.hashtags.join(" ")}` : ""
+  const hashtagsForUi = parseHashtagInput(hashtagsDraft);
+  const captionFull = `${captionDraft}${
+    hashtagsForUi.length ? `\n\n${hashtagsForUi.join(" ")}` : ""
   }`.trim();
 
   if (session.status === "angles_ready" && !session.last_error) {
@@ -2796,9 +2945,15 @@ export function VideoCreateWorkspace({
         onSelectCoverImage={setCoverImageId}
         onGenerateThumbnail={onGenerateThumbnail}
         onComposeCoverFromImage={onComposeCoverFromImage}
-        captionBody={session.caption_body ?? ""}
-        hashtags={session.hashtags ?? []}
+        onUploadImages={onUploadClientImages}
+        imageUploadBusy={imageUploadBusy}
+        captionBody={captionDraft}
+        hashtags={hashtagsForUi}
+        hashtagsText={hashtagsDraft}
         captionFull={captionFull}
+        onCaptionChange={setCaptionDraft}
+        onHashtagsChange={setHashtagsDraft}
+        captionSaveInFlight={contentInFlight}
       />
       </>
     );
@@ -3070,8 +3225,12 @@ export function VideoCreateWorkspace({
         />
 
         <CaptionSection
-          caption={session.caption_body ?? ""}
-          hashtags={session.hashtags ?? []}
+          caption={captionDraft}
+          hashtags={hashtagsForUi}
+          hashtagsText={hashtagsDraft}
+          onCaptionChange={setCaptionDraft}
+          onHashtagsChange={setHashtagsDraft}
+          saveInFlight={contentInFlight}
           onCopy={() => void copyText("caption + hashtags", captionFull)}
           regenInline={
             <RegenInline
@@ -4234,6 +4393,8 @@ export function VideoCreateWorkspace({
         onSelectImage={setCoverImageId}
         onGenerateAi={onGenerateThumbnail}
         onComposeFromImage={onComposeCoverFromImage}
+        onUploadImages={onUploadClientImages}
+        imageUploadBusy={imageUploadBusy}
         step={1}
         embedded={embedded}
       />
@@ -4305,8 +4466,12 @@ export function VideoCreateWorkspace({
       {videoSurface !== "cover" ? (
       <>
       <CaptionSection
-        caption={session.caption_body ?? ""}
-        hashtags={session.hashtags ?? []}
+        caption={captionDraft}
+        hashtags={hashtagsForUi}
+        hashtagsText={hashtagsDraft}
+        onCaptionChange={setCaptionDraft}
+        onHashtagsChange={setHashtagsDraft}
+        saveInFlight={contentInFlight}
         onCopy={() => void copyText("caption + hashtags", captionFull)}
         regenInline={
           <RegenInline
@@ -4332,8 +4497,8 @@ export function VideoCreateWorkspace({
         open={previewOpen}
         onClose={() => setPreviewOpen(false)}
         title="Post preview"
-        caption={session.caption_body}
-        hashtags={session.hashtags}
+        caption={captionDraft}
+        hashtags={hashtagsForUi}
         thumbnailUrl={session.thumbnail_url}
         videoUrl={session.rendered_video_url}
       />

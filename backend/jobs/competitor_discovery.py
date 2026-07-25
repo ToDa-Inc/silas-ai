@@ -30,6 +30,15 @@ def _build_niche_profile(cfg: Dict[str, Any]) -> str:
     icp = cfg.get("icp") or {}
     lang = cfg.get("language") or "de"
     lang_label = "German" if str(lang).lower() in ("de", "german") else str(lang)
+    geo = str(icp.get("audience_geography") or "").strip().lower()
+    geo_note = str(icp.get("audience_geography_note") or "").strip()
+    geo_labels = {
+        "worldwide": "Worldwide (no geographic restriction)",
+        "english_speaking": "English-speaking markets (global)",
+        "dach": "DACH (Germany, Austria, Switzerland)",
+        "custom": geo_note or "Custom geography",
+    }
+    geo_line = geo_labels.get(geo, geo_note or geo or "(not specified)")
 
     return f"""CLIENT NICHE PROFILE:
 Name: {cfg.get('name', '')}
@@ -42,8 +51,9 @@ NICHES:
 TARGET AUDIENCE:
 {icp.get('target', '')}
 Age: {icp.get('age_range', '')}
-Pain points: {'; '.join(icp.get('pain_points') or [])}
-Desires: {'; '.join(icp.get('desires') or [])}"""
+Geography: {geo_line}
+Pain points: {', '.join(icp.get('pain_points') or [])}
+Desires: {', '.join(icp.get('desires') or [])}"""
 
 
 def _build_relevance_prompt(niche_profile: str, account_data: dict, captions: List[dict]) -> str:

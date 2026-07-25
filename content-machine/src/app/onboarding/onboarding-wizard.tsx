@@ -8,6 +8,10 @@ import { OnboardingPipelineProgress } from "@/components/onboarding/onboarding-p
 import { OnboardingReelVoteCard } from "@/components/onboarding/onboarding-reel-vote-card";
 import { OnboardingVoiceStep } from "@/components/onboarding/onboarding-voice-step";
 import { StrategyDocPreviewCard } from "@/components/onboarding/strategy-doc-preview-card";
+import {
+  TargetingControls,
+  type TargetingControlsHandle,
+} from "@/components/targeting/targeting-controls";
 import { OpportunityCard } from "@/components/home/opportunity-card";
 import {
   OnboardingError,
@@ -144,6 +148,9 @@ export function OnboardingWizard({
   const [liveContext, setLiveContext] = useState<Record<string, unknown> | null>(
     initialContext ?? null,
   );
+  const [clientLanguage, setClientLanguage] = useState<"de" | "en">(defaultContentLang);
+  const [clientIcp, setClientIcp] = useState<Record<string, unknown> | null>(null);
+  const targetingRef = useRef<TargetingControlsHandle>(null);
 
   const currentStep: OnboardingStepKey = useMemo(() => {
     if (!hasTenancy) return "workspace";
@@ -268,8 +275,16 @@ export function OnboardingWizard({
     if (currentStep !== "strategy_docs" || !clientSlug || !orgSlug) return;
     void (async () => {
       const r = await fetchClientRowClient(clientSlug, orgSlug);
-      if (r.ok && r.data?.client_context) {
+      if (!r.ok) return;
+      if (r.data?.client_context) {
         setLiveContext(r.data.client_context as Record<string, unknown>);
+      }
+      if (r.data.language === "de" || r.data.language === "en") {
+        setClientLanguage(r.data.language);
+        setLanguage(r.data.language);
+      }
+      if (r.data.icp && typeof r.data.icp === "object") {
+        setClientIcp(r.data.icp);
       }
     })();
   }, [currentStep, clientSlug, orgSlug, status?.voice_transcript]);
@@ -1191,6 +1206,24 @@ export function OnboardingWizard({
 
       {currentStep === "strategy_docs" && (
         <div className="space-y-6">
+          <TargetingControls
+            ref={targetingRef}
+            clientSlug={clientSlug}
+            orgSlug={orgSlug}
+            initialLanguage={clientLanguage}
+            initialIcp={clientIcp}
+            variant="onboarding"
+            onSaved={(row) => {
+              if (row.language === "de" || row.language === "en") {
+                setClientLanguage(row.language);
+                setLanguage(row.language);
+              }
+              if (row.icp && typeof row.icp === "object") setClientIcp(row.icp);
+              if (row.client_context) {
+                setLiveContext(row.client_context as Record<string, unknown>);
+              }
+            }}
+          />
           <div className="grid gap-4 lg:grid-cols-[1fr_0.85fr]">
             <div className="rounded-3xl border border-amber-300/20 bg-amber-300/10 p-5">
               <div className="flex items-start gap-3">
@@ -1233,13 +1266,21 @@ export function OnboardingWizard({
             <ContextEditor
               clientSlug={clientSlug}
               orgSlug={orgSlug}
-              initialContext={initialContext as never}
+              initialContext={(liveContext ?? initialContext) as never}
+              initialLanguage={clientLanguage}
+              initialIcp={clientIcp}
               disabled={false}
             />
           ) : null}
           <OnboardingPrimaryButton
             busy={busy}
-            onClick={() => void advance({ complete_step: "strategy_docs", current_step: "pipeline" })}
+            onClick={() => {
+              void (async () => {
+                const ok = (await targetingRef.current?.save()) ?? true;
+                if (!ok) return;
+                await advance({ complete_step: "strategy_docs", current_step: "pipeline" });
+              })();
+            }}
           >
             Start finding content opportunities
           </OnboardingPrimaryButton>

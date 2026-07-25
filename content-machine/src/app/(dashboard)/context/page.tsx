@@ -38,6 +38,8 @@ export default async function ContextPage() {
           orgSlug={orgSlug}
           initialContext={client?.client_context}
           initialClientDna={client?.client_dna}
+          initialLanguage={client?.language}
+          initialIcp={client?.icp}
           disabled={disabled}
         />
       )}
