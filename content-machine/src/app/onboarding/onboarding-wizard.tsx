@@ -535,14 +535,13 @@ export function OnboardingWizard({
               </button>
             </div>
           ) : (
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid min-w-0 gap-3 sm:grid-cols-2">
               {candidates.map((c) => {
                 const id = c.reel?.id ?? "";
                 return (
                   <OnboardingReelVoteCard
                     key={id}
                     row={toScrapedRow(c)}
-                    score={c.score}
                     verdict={votes[id]}
                     onVote={(v) => setVotes((prev) => ({ ...prev, [id]: v }))}
                   />

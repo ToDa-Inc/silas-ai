@@ -62,7 +62,18 @@ export function ReelThumbnail({ src, alt = "Reel thumbnail", href, size = "md", 
   const imgSrc = useMemo(() => (url ? thumbnailImgSrc(url) : ""), [url]);
 
   if (!url || imgBroken) {
-    return empty;
+    if (!link) return empty;
+    return (
+      <a
+        href={link}
+        target="_blank"
+        rel="noreferrer"
+        title="Open reel"
+        className="inline-flex focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/55"
+      >
+        {empty}
+      </a>
+    );
   }
 
   const shell = cn(
