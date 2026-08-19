@@ -142,5 +142,49 @@ class TestDiscoverKeywordUrls(unittest.TestCase):
         self.assertEqual(meta["discovery_log"][-1]["usable_short_codes"], 1)
 
 
+class TestDiscoverSplitsByKeyword(unittest.TestCase):
+    def test_split_forwards_flag_and_calls_once_per_keyword(self) -> None:
+        calls: list[tuple[tuple, dict]] = []
+
+        def reel_batch(_token, keywords, **kwargs):
+            calls.append((tuple(keywords), dict(kwargs)))
+            return [
+                {
+                    "reel_url": f"https://www.instagram.com/reel/{kw}AAAAAA/",
+                    "user_name": f"user_{kw}",
+                    "keyword": kw,
+                }
+                for kw in keywords
+            ]
+
+        def post_batch(*_a, **_k):
+            raise AssertionError("fallback should not run")
+
+        raw, meta = discover_keyword_urls_with_fallback(
+            "tok",
+            ["gym", "psychologe"],
+            total_limit=40,
+            search_window="last-1-month",
+            client_handle="me",
+            banned_handles=set(),
+            banned_scs=set(),
+            dismissed_scs=set(),
+            reel_batch=reel_batch,
+            post_batch=post_batch,
+            split_by_keyword=True,
+        )
+        self.assertTrue(meta["keyword_search_split_by_keyword"])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0], ("gym", "psychologe"))
+        self.assertTrue(calls[0][1].get("split_by_keyword"))
+        self.assertEqual(calls[0][1].get("date"), "last-1-month")
+        self.assertEqual(len(raw), 2)
+        self.assertEqual(meta["keyword_search_coverage"]["gym"], 1)
+        self.assertEqual(meta["keyword_search_coverage"]["psychologe"], 1)
+        self.assertEqual(meta["keyword_search_keywords_with_results"], 2)
+        self.assertFalse(meta["keywords_run"][0]["batch"])
+        self.assertTrue(meta["keywords_run"][0]["split_by_keyword"])
+
+
 if __name__ == "__main__":
     unittest.main()

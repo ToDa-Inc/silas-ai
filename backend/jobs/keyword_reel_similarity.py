@@ -20,6 +20,10 @@ from services.apify import (
     enrich_reel_urls_direct,
 )
 from services.keyword_similarity_discovery import discover_keyword_urls_with_fallback
+from services.keyword_search_window import (
+    DEFAULT_DAYS,
+    resolve_search_window_and_days,
+)
 from services.apify_posted_at import apify_instagram_item_posted_at_iso
 from services.reel_thumbnail_url import reel_thumbnail_url_from_apify_item
 from services.instagram_post_url import (
@@ -45,8 +49,6 @@ MAX_ITEMS_PER_KEYWORD = 60
 MAX_KEYWORD_DISCOVERY_TOTAL = 600
 MAX_SCORE_SAFETY_CAP = 200  # hard ceiling to prevent runaway jobs — not a quality filter
 SIMILARITY_THRESHOLD = 85
-DEFAULT_DAYS = 2
-DEFAULT_SEARCH_WINDOW = "last-2-days"
 DEFAULT_MIN_VIEWS_PER_DAY = 2000.0  # views/day floor — raised since we score everything that passes
 
 # Apify / model cost telemetry (USD).
@@ -712,7 +714,9 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
         raise RuntimeError("client_dna.analysis_brief is empty — run DNA compilation first")
 
     nset = niche_settings(client)
-    days = int(nset.get("recency_days") or payload.get("days") or DEFAULT_DAYS)
+    search_window, days = resolve_search_window_and_days(
+        niche_settings=nset, payload=payload
+    )
     threshold = int(nset.get("similarity_threshold") or payload.get("threshold") or SIMILARITY_THRESHOLD)
     # Explicit job payload wins (e.g. one-off run with max_keywords=3); else niche settings.
     if payload.get("max_keywords") is not None:
@@ -725,7 +729,7 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
     min_views_per_day = float(
         nset.get("min_views_per_day") or payload.get("min_views_per_day") or DEFAULT_MIN_VIEWS_PER_DAY
     )
-    search_window = str(nset.get("search_window") or payload.get("search_window") or DEFAULT_SEARCH_WINDOW)
+    split_by_keyword = bool(payload.get("split_by_keyword"))
 
     keywords, kw_provenance = similarity_scan_keywords(
         client=client,
@@ -735,6 +739,8 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
     progress["keyword_provenance"] = kw_provenance
     progress["keyword_count"] = len(keywords)
     progress["search_window"] = search_window
+    progress["days"] = days
+    progress["keyword_search_split_by_keyword"] = split_by_keyword
     if not keywords:
         raise RuntimeError(
             "No reel search keywords for this client. Add client_dna.similarity_keywords.auto (via DNA compile), "
@@ -774,6 +780,7 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
             banned_handles=banned_handles,
             banned_scs=banned_scs,
             dismissed_scs=dismissed_scs,
+            split_by_keyword=split_by_keyword,
         )
     except ApifyUsageLimitError as e:
         progress["keyword_search_error_type"] = "apify_usage_limit"
@@ -817,6 +824,13 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
     if fe:
         progress["keyword_search_fallback_error"] = fe
     progress["keywords_run"] = discovery_meta["keywords_run"]
+    progress["keyword_search_coverage"] = discovery_meta.get("keyword_search_coverage") or {}
+    progress["keyword_search_keywords_with_results"] = discovery_meta.get(
+        "keyword_search_keywords_with_results"
+    )
+    progress["keyword_search_split_by_keyword"] = discovery_meta.get(
+        "keyword_search_split_by_keyword", split_by_keyword
+    )
     total_keyword_actor_items = discovery_meta["total_keyword_actor_items"]
 
     if discovery_meta.get("keyword_search_fallback_error"):

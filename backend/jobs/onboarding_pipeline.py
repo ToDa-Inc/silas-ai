@@ -18,6 +18,7 @@ from services.scrape_cycle import (
     enqueue_keyword_reel_similarity_for_client,
     enqueue_sync_all_jobs_for_client,
 )
+from services.keyword_search_window import onboarding_keyword_similarity_payload
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +123,10 @@ def run_onboarding_pipeline(settings: Settings, job: Dict[str, Any]) -> None:
             supabase, org_id=org_id, client_id=client_id
         )
         kw_stats = enqueue_keyword_reel_similarity_for_client(
-            supabase, org_id=org_id, client_id=client_id
+            supabase,
+            org_id=org_id,
+            client_id=client_id,
+            payload=onboarding_keyword_similarity_payload(),
         )
         kw_job = kw_stats.get("job_id") if isinstance(kw_stats, dict) else None
         if isinstance(kw_job, str) and kw_job:
