@@ -21,6 +21,9 @@ SEARCH_WINDOW_DAYS: Dict[str, int] = {
 
 ONBOARDING_SEARCH_WINDOW = "last-1-month"
 ONBOARDING_DAYS = 30
+DEFAULT_MIN_VIEWS_PER_DAY = 2000.0
+ONBOARDING_MIN_VIEWS_PER_DAY = 500.0
+ONBOARDING_URL_SOURCES = ["sasky", "google_cse"]
 
 
 def resolve_search_window_and_days(
@@ -59,6 +62,34 @@ def resolve_search_window_and_days(
     return window, max(1, days)
 
 
+def resolve_min_views_per_day(
+    *,
+    niche_settings: Optional[Mapping[str, Any]] = None,
+    payload: Optional[Mapping[str, Any]] = None,
+) -> float:
+    """Resolve views/day floor.
+
+    ``payload.min_views_per_day`` beats niche settings so onboarding can lower
+    the daily 2000 floor without editing niche_config.
+    """
+    nset = dict(niche_settings or {})
+    pl = dict(payload or {})
+    if pl.get("min_views_per_day") is not None:
+        return max(0.0, float(pl["min_views_per_day"]))
+    if nset.get("min_views_per_day") is not None:
+        return max(0.0, float(nset["min_views_per_day"]))
+    return DEFAULT_MIN_VIEWS_PER_DAY
+
+
+def payload_includes_google_cse(payload: Optional[Mapping[str, Any]] = None) -> bool:
+    """True when the job asked for Google CSE URL fan-in (onboarding only)."""
+    sources = (payload or {}).get("url_sources")
+    if not isinstance(sources, list):
+        return False
+    wanted = {"google_cse", "google"}
+    return any(str(s).strip().lower() in wanted for s in sources)
+
+
 def onboarding_keyword_similarity_payload() -> Dict[str, Any]:
     """Job payload for first-paint profile embedding during onboarding."""
     return {
@@ -66,4 +97,6 @@ def onboarding_keyword_similarity_payload() -> Dict[str, Any]:
         "days": ONBOARDING_DAYS,
         "split_by_keyword": True,
         "source": "onboarding",
+        "url_sources": list(ONBOARDING_URL_SOURCES),
+        "min_views_per_day": ONBOARDING_MIN_VIEWS_PER_DAY,
     }

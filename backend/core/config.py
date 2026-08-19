@@ -37,6 +37,17 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("APIFY_API_TOKEN", "APIFY_API_KEY"),
     )
 
+    google_cse_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("GOOGLE_CSE_API_KEY", "GOOGLE_CUSTOM_SEARCH_API_KEY"),
+        description="Programmable Search JSON API key. Empty skips onboarding Google CSE fan-in.",
+    )
+    google_cse_cx: str = Field(
+        default="",
+        validation_alias=AliasChoices("GOOGLE_CSE_CX", "GOOGLE_CSE_ENGINE_ID", "GOOGLE_CSE_ID"),
+        description="Programmable Search engine id (cx). Empty skips onboarding Google CSE fan-in.",
+    )
+
     apify_reel_actor: str = Field(
         default="apify~instagram-reel-scraper",
         validation_alias=AliasChoices("APIFY_REEL_ACTOR"),

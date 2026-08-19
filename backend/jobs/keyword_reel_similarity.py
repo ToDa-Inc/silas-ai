@@ -19,9 +19,15 @@ from services.apify import (
     ApifyUsageLimitError,
     enrich_reel_urls_direct,
 )
-from services.keyword_similarity_discovery import discover_keyword_urls_with_fallback
+from services.google_cse_instagram_reels import merge_google_cse_urls_if_enabled
+from services.keyword_similarity_discovery import (
+    discover_keyword_urls_with_fallback,
+    keyword_discovery_coverage,
+)
 from services.keyword_search_window import (
     DEFAULT_DAYS,
+    DEFAULT_MIN_VIEWS_PER_DAY,
+    resolve_min_views_per_day,
     resolve_search_window_and_days,
 )
 from services.apify_posted_at import apify_instagram_item_posted_at_iso
@@ -49,7 +55,6 @@ MAX_ITEMS_PER_KEYWORD = 60
 MAX_KEYWORD_DISCOVERY_TOTAL = 600
 MAX_SCORE_SAFETY_CAP = 200  # hard ceiling to prevent runaway jobs — not a quality filter
 SIMILARITY_THRESHOLD = 85
-DEFAULT_MIN_VIEWS_PER_DAY = 2000.0  # views/day floor — raised since we score everything that passes
 
 # Apify / model cost telemetry (USD).
 # Verified against actor pricing pages:
@@ -726,9 +731,7 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
     min_video_seconds = float(
         nset.get("min_video_seconds") or payload.get("min_video_duration_seconds") or 6.0
     )
-    min_views_per_day = float(
-        nset.get("min_views_per_day") or payload.get("min_views_per_day") or DEFAULT_MIN_VIEWS_PER_DAY
-    )
+    min_views_per_day = resolve_min_views_per_day(niche_settings=nset, payload=payload)
     split_by_keyword = bool(payload.get("split_by_keyword"))
 
     keywords, kw_provenance = similarity_scan_keywords(
@@ -833,11 +836,22 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
     )
     total_keyword_actor_items = discovery_meta["total_keyword_actor_items"]
 
-    if discovery_meta.get("keyword_search_fallback_error"):
-        progress["raw_urls_found"] = 0
-        supabase.table("background_jobs").update({"result": dict(progress)}).eq("id", job_id).execute()
-        _complete_job(supabase, job_id, progress, "No reel URLs found for keywords")
-        return
+    google_meta = merge_google_cse_urls_if_enabled(
+        raw_by_sc,
+        settings=settings,
+        payload=payload,
+        keywords=keywords,
+        client_handle=client_handle,
+        banned_handles=banned_handles,
+        banned_scs=banned_scs,
+        dismissed_scs=dismissed_scs,
+    )
+    progress["google_cse"] = google_meta
+    if google_meta.get("used"):
+        progress["keyword_search_coverage"] = keyword_discovery_coverage(raw_by_sc)
+        progress["keyword_search_keywords_with_results"] = sum(
+            1 for n in progress["keyword_search_coverage"].values() if n > 0
+        )
 
     progress["raw_urls_found"] = len(raw_by_sc)
     if not raw_by_sc:
@@ -890,7 +904,10 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
             continue
         views = _views(item)
         comments = int(item.get("commentsCount") or 0)
-        username = _owner_username(item) or meta["username"]
+        username = _owner_username(item) or meta.get("username") or ""
+        uname_l = username.lower().strip().lstrip("@")
+        if uname_l and (uname_l == client_handle or uname_l in banned_handles):
+            continue
         posted_at = apify_instagram_item_posted_at_iso(item) or ""
         reels.append({
             "url": canonical_reel_url_from_short_code(sc),

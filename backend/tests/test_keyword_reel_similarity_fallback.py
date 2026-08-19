@@ -66,6 +66,42 @@ class TestMergeKeywordDiscovery(unittest.TestCase):
         )
         self.assertEqual(raw["AAA"]["username"], "alt")
 
+    def test_missing_username_kept_then_filled(self) -> None:
+        raw: dict = {}
+        merge_keyword_discovery_items_into_raw_by_sc(
+            [
+                {
+                    "reel_url": "https://www.instagram.com/reel/NoUserSc/",
+                    "keyword": "führung",
+                }
+            ],
+            raw,
+            client_handle="client",
+            banned_handles=set(),
+            banned_scs=set(),
+            dismissed_scs=set(),
+            keywords=["führung"],
+        )
+        self.assertEqual(raw["NoUserSc"]["username"], "")
+        self.assertEqual(raw["NoUserSc"]["keywords"], ["führung"])
+        merge_keyword_discovery_items_into_raw_by_sc(
+            [
+                {
+                    "reel_url": "https://www.instagram.com/reel/NoUserSc/",
+                    "user_name": "laterfill",
+                    "keyword": "vorgesetzter",
+                }
+            ],
+            raw,
+            client_handle="client",
+            banned_handles=set(),
+            banned_scs=set(),
+            dismissed_scs=set(),
+            keywords=["führung"],
+        )
+        self.assertEqual(raw["NoUserSc"]["username"], "laterfill")
+        self.assertEqual(raw["NoUserSc"]["keywords"], ["führung", "vorgesetzter"])
+
 
 class TestDiscoverKeywordUrls(unittest.TestCase):
     def test_no_fallback_when_primary_has_urls(self) -> None:

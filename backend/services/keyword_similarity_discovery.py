@@ -28,9 +28,9 @@ def merge_keyword_discovery_items_into_raw_by_sc(
     for it in items:
         reel_url = (it.get("reel_url") or it.get("post_url") or "").strip()
         uname = (it.get("user_name") or it.get("username") or "").lower().strip()
-        if not reel_url or not uname:
+        if not reel_url:
             continue
-        if uname == client_handle or uname in banned_handles:
+        if uname and (uname == client_handle or uname in banned_handles):
             continue
         sc = instagram_post_short_code(reel_url)
         if not sc:
@@ -39,7 +39,13 @@ def merge_keyword_discovery_items_into_raw_by_sc(
             continue
         kw_tag = (it.get("keyword") or it.get("query") or "").strip()
         if sc not in raw_by_sc:
-            raw_by_sc[sc] = {"username": uname, "keywords": []}
+            row: Dict[str, Any] = {"username": uname, "keywords": []}
+            disc = str(it.get("discovery") or "").strip()
+            if disc:
+                row["discovery"] = disc
+            raw_by_sc[sc] = row
+        elif uname and not raw_by_sc[sc].get("username"):
+            raw_by_sc[sc]["username"] = uname
         if kw_tag and kw_tag not in raw_by_sc[sc]["keywords"]:
             raw_by_sc[sc]["keywords"].append(kw_tag)
         elif not raw_by_sc[sc]["keywords"] and keywords:
