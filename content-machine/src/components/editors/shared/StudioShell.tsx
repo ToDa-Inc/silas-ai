@@ -21,7 +21,10 @@
  * topActions stay pinned at the top.
  */
 
+"use client";
+
 import type { ReactNode } from "react";
+import { useTranslations } from "next-intl";
 
 export type StudioShellProps = {
   /** Format-aware tab toggle (e.g. `[Reel] [Cover]`). Optional — single-canvas
@@ -99,10 +102,12 @@ export function StudioFormatTabs<T extends string>({
   onChange: (v: T) => void;
   tabs: { id: T; label: string }[];
 }) {
+  const t = useTranslations("editors");
+
   return (
     <div
       role="tablist"
-      aria-label="Editor canvas"
+      aria-label={t("editorCanvas")}
       className="inline-flex rounded-xl border border-app-divider bg-app-chip-bg/40 p-1"
     >
       {tabs.map((t) => {

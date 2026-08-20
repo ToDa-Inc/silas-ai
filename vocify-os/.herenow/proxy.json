@@ -1,0 +1,24 @@
+{
+  "description": "Live HubSpot proxy boundary for Vocify OS. Store HUBSPOT_PRIVATE_APP_TOKEN in here.now Variables before enabling live mode.",
+  "routes": [
+    {
+      "path": "/api/hubspot/summary",
+      "method": "GET",
+      "target": "https://api.hubapi.com/crm/v3/objects/deals",
+      "headers": {
+        "Authorization": "Bearer ${HUBSPOT_PRIVATE_APP_TOKEN}",
+        "Content-Type": "application/json"
+      },
+      "query": {
+        "limit": "100",
+        "archived": "false",
+        "properties": "dealname,amount,dealstage,closedate,hubspot_owner_id,notes_last_updated,hs_next_activity_date,hs_lastmodifieddate"
+      },
+      "notes": [
+        "This direct route is intentionally documented as a contract, not the final summary transformer.",
+        "The browser currently expects a normalized summary payload with deals, overdueFollowUps, followUpsDue, meetingsBooked, and callQueue.",
+        "If here.now proxy supports response transforms, normalize here. Otherwise point this route to a small edge/API summarizer."
+      ]
+    }
+  ]
+}

@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from core.config import Settings
+from core.errors import MissingCredentialsError
 from core.database import get_supabase_for_settings
 from core.id_generator import generate_reel_id
 from services.apify_posted_at import apify_instagram_item_posted_at_iso
@@ -687,7 +688,7 @@ def _execute_reel_analyze_url_core(
     tmp_path: Optional[Path] = None
     try:
         if not settings.apify_api_token:
-            raise RuntimeError("APIFY_API_TOKEN required")
+            raise MissingCredentialsError("APIFY_API_TOKEN required")
         resolved = resolve_post_media(settings.apify_api_token, reel_url)
         if not resolved:
             raise ReelAnalyzeTerminalError("reel_not_found")
@@ -892,7 +893,7 @@ def _execute_reel_analyze_url_core(
 
 def run_reel_analyze_url(settings: Settings, job: Dict[str, Any]) -> None:
     if not settings.openrouter_api_key:
-        raise RuntimeError("OPENROUTER_API_KEY required")
+        raise MissingCredentialsError("OPENROUTER_API_KEY required")
 
     supabase = get_supabase_for_settings(settings)
     job_id = job["id"]
@@ -937,7 +938,7 @@ def run_reel_analyze_url(settings: Settings, job: Dict[str, Any]) -> None:
 
 def run_reel_analyze_bulk(settings: Settings, job: Dict[str, Any]) -> None:
     if not settings.openrouter_api_key:
-        raise RuntimeError("OPENROUTER_API_KEY required")
+        raise MissingCredentialsError("OPENROUTER_API_KEY required")
 
     supabase = get_supabase_for_settings(settings)
     job_id = job["id"]
@@ -948,7 +949,7 @@ def run_reel_analyze_bulk(settings: Settings, job: Dict[str, Any]) -> None:
     payload = job.get("payload") or {}
     skip_apify = bool(payload.get("skip_apify"))
     if not skip_apify and not settings.apify_api_token:
-        raise RuntimeError("APIFY_API_TOKEN required unless skip_apify is true")
+        raise MissingCredentialsError("APIFY_API_TOKEN required unless skip_apify is true")
 
     raw_urls = payload.get("urls") or []
     if not isinstance(raw_urls, list):

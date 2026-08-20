@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
 
 from core.config import Settings
+from core.errors import MissingCredentialsError
 from core.database import get_supabase_for_settings
 from core.id_generator import generate_baseline_id
 from services.apify import instagram_reel_scraper_input, run_actor
@@ -38,7 +39,7 @@ def _percentile(arr: list[int], p: float) -> int:
 
 def run_baseline_scrape(settings: Settings, job: Dict[str, Any]) -> None:
     if not settings.apify_api_token:
-        raise RuntimeError("APIFY_API_TOKEN not configured")
+        raise MissingCredentialsError("APIFY_API_TOKEN not configured")
 
     supabase = get_supabase_for_settings(settings)
     job_id = job["id"]

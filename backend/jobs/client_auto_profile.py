@@ -9,6 +9,7 @@ from typing import Any, Dict, List
 logger = logging.getLogger(__name__)
 
 from core.config import Settings
+from core.errors import MissingCredentialsError
 from core.database import get_supabase_for_settings
 from services.apify import instagram_reel_scraper_input, run_actor
 from services.instagram_account_lookup import fetch_instagram_user_by_username
@@ -115,7 +116,7 @@ def _map_language(label: str, fallback: str) -> str:
 
 def run_client_auto_profile(settings: Settings, job: Dict[str, Any]) -> None:
     if not settings.apify_api_token or not settings.openrouter_api_key:
-        raise RuntimeError("APIFY_API_TOKEN and OPENROUTER_API_KEY required")
+        raise MissingCredentialsError("APIFY_API_TOKEN and OPENROUTER_API_KEY required")
 
     supabase = get_supabase_for_settings(settings)
     job_id = job["id"]

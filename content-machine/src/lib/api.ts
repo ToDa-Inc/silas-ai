@@ -13,11 +13,18 @@ import { resolveTenancy, type ResolvedTenancy } from "@/lib/tenancy";
 import { ACTIVE_CLIENT_SLUG_COOKIE } from "@/lib/workspace-cookie";
 import type { ReelAnalysisSummary } from "@/lib/reel-types";
 
+import { formatApiError } from "@/lib/format-api-error";
+
 export { getContentApiBase } from "@/lib/env";
 export type { ReelAnalysisDetail, ReelAnalysisSummary } from "@/lib/reel-types";
 
 export function getApiBase(): string {
   return getContentApiBase();
+}
+
+async function apiErrorFromResponse(res: Response, fallback?: string): Promise<string> {
+  const json = await res.json().catch(() => ({}));
+  return formatApiError(json, fallback ?? `Request failed (${res.status})`);
 }
 
 export type ServerApiContext = {
@@ -351,7 +358,7 @@ export async function fetchCompetitors(): Promise<{
       return {
         ok: false,
         data: [],
-        error: `${res.status} ${await res.text()}`,
+        error: await apiErrorFromResponse(res),
       };
     }
     return { ok: true, data: await res.json() };
@@ -372,6 +379,9 @@ export type OnboardingStatusRow = {
   completed_steps: string[];
   quiz_answers: Record<string, unknown>;
   pipeline_progress: Record<string, unknown>;
+  ig_prefill: Record<string, unknown>;
+  voice_transcript: Record<string, unknown>;
+  context_preview_locked: boolean;
   job_ids: Record<string, unknown>;
   selected_reel_id: string | null;
   selected_analysis_id: string | null;
@@ -398,7 +408,7 @@ export async function fetchOnboardingStatus(): Promise<{
       { headers: { ...headers }, cache: "no-store" },
     );
     if (!res.ok) {
-      return { ok: false, data: null, error: `${res.status} ${await res.text()}` };
+      return { ok: false, data: null, error: await apiErrorFromResponse(res) };
     }
     return { ok: true, data: (await res.json()) as OnboardingStatusRow };
   } catch (e) {
@@ -437,7 +447,7 @@ export async function fetchClient(): Promise<{
       return {
         ok: false,
         data: null,
-        error: `${res.status} ${await res.text()}`,
+        error: await apiErrorFromResponse(res),
       };
     }
     return { ok: true, data: await res.json() };
@@ -477,7 +487,7 @@ export async function fetchBaseline(): Promise<{
       return {
         ok: false,
         data: null,
-        error: `${res.status} ${await res.text()}`,
+        error: await apiErrorFromResponse(res),
       };
     }
     return { ok: true, data: await res.json() };
@@ -517,7 +527,7 @@ export async function fetchOwnReels(): Promise<{
       return {
         ok: false,
         data: [],
-        error: `${res.status} ${await res.text()}`,
+        error: await apiErrorFromResponse(res),
       };
     }
     return { ok: true, data: await res.json() };
@@ -562,7 +572,7 @@ export async function fetchIntelligenceStats(): Promise<{
       return {
         ok: false,
         data: null,
-        error: `${res.status} ${await res.text()}`,
+        error: await apiErrorFromResponse(res),
       };
     }
     return { ok: true, data: await res.json() };
@@ -661,7 +671,7 @@ export async function fetchIntelligenceActivity(sinceIso?: string): Promise<{
       return {
         ok: false,
         data: null,
-        error: `${res.status} ${await res.text()}`,
+        error: await apiErrorFromResponse(res),
       };
     }
     return { ok: true, data: await res.json() };
@@ -711,7 +721,7 @@ export async function fetchScrapedReels(
       return {
         ok: false,
         data: [],
-        error: `${res.status} ${await res.text()}`,
+        error: await apiErrorFromResponse(res),
       };
     }
     return { ok: true, data: await res.json() };
@@ -737,7 +747,7 @@ async function fetchDashboardLane(
       `${base}/api/v1/clients/${clientSlug}/dashboard/${path}?days=${days}&limit=${limit}`,
       { headers: { ...headers }, cache: "no-store" },
     );
-    if (!res.ok) return { ok: false, data: [], error: `${res.status} ${await res.text()}` };
+    if (!res.ok) return { ok: false, data: [], error: await apiErrorFromResponse(res) };
     return { ok: true, data: await res.json() };
   } catch (e) {
     return { ok: false, data: [], error: e instanceof Error ? e.message : "fetch failed" };
@@ -757,6 +767,160 @@ export function fetchDashboardFreshNiche(days = 3, limit = DASHBOARD_LANE_LIMIT)
 /** GET /dashboard/competitor-wins — recent competitor reels beating their account avg. */
 export function fetchDashboardCompetitorWins(days = 3, limit = DASHBOARD_LANE_LIMIT) {
   return fetchDashboardLane("competitor-wins", days, limit);
+}
+
+export type DashboardTodayPicks = {
+  fresh_niche: ScrapedReelRow[];
+  competitor_wins: ScrapedReelRow[];
+  computed_at: string | null;
+  is_fallback: boolean;
+  pick_date: string | null;
+  primary_reel_id: string | null;
+  daily_session_id: string | null;
+  draft_status: string | null;
+  draft_error: string | null;
+};
+
+/** GET /dashboard/today-picks — once-per-day snapshot with safe inline fallback. */
+export async function fetchDashboardTodayPicks(): Promise<{
+  ok: boolean;
+  data: DashboardTodayPicks | null;
+  error?: string;
+}> {
+  const base = getContentApiBase();
+  try {
+    const { headers, clientSlug } = await getCachedServerApiContext();
+    if (!clientSlug) return { ok: false, data: null, error: "No active creator" };
+    const res = await fetch(
+      `${base}/api/v1/clients/${clientSlug}/dashboard/today-picks`,
+      { headers: { ...headers }, cache: "no-store" },
+    );
+    if (!res.ok) return { ok: false, data: null, error: await apiErrorFromResponse(res) };
+    return { ok: true, data: await res.json() };
+  } catch (e) {
+    return { ok: false, data: null, error: e instanceof Error ? e.message : "fetch failed" };
+  }
+}
+
+export type HomeSummaryExport = {
+  session_id: string;
+  thumbnail_url: string | null;
+  hook_text: string | null;
+};
+
+export type HomeSummaryRow = {
+  scout: {
+    watching_accounts: number;
+    new_this_week: number;
+    top_opportunity_reel_id: string | null;
+    working: boolean;
+  };
+  writer: {
+    drafts_ready: number;
+    in_progress: number;
+    latest_draft_session_id: string | null;
+    last_export: HomeSummaryExport | null;
+    working: boolean;
+  };
+  analyst: {
+    reels_studied: number;
+    avg_views: number | null;
+    outliers: number;
+    trend_pct: number | null;
+    working: boolean;
+  };
+  state: {
+    phase: string;
+    setup_complete: boolean;
+    onboarding_step: string;
+    is_building: boolean;
+  };
+  momentum: {
+    posts_made: number;
+    last_export: HomeSummaryExport | null;
+  };
+  daily_post?: {
+    primary_reel_id: string | null;
+    daily_session_id: string | null;
+    draft_status: string | null;
+    draft_error: string | null;
+  };
+};
+
+/** True when payload has the nested agent blocks HomeFeed reads without guards. */
+export function isHomeSummaryRow(value: unknown): value is HomeSummaryRow {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Record<string, unknown>;
+  return (
+    !!row.scout &&
+    typeof row.scout === "object" &&
+    !!row.writer &&
+    typeof row.writer === "object" &&
+    !!row.state &&
+    typeof row.state === "object"
+  );
+}
+
+/** GET /home/summary — agent team stats + setup state for Home cockpit. */
+export async function fetchHomeSummary(): Promise<{
+  ok: boolean;
+  data: HomeSummaryRow | null;
+  error?: string;
+}> {
+  const base = getContentApiBase();
+  try {
+    const { headers, clientSlug } = await getCachedServerApiContext();
+    if (!clientSlug) {
+      return { ok: false, data: null, error: "No active creator" };
+    }
+    const res = await fetch(
+      `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/home/summary`,
+      { headers: { ...headers }, cache: "no-store" },
+    );
+    if (!res.ok) {
+      return { ok: false, data: null, error: await apiErrorFromResponse(res) };
+    }
+    const json: unknown = await res.json();
+    if (!isHomeSummaryRow(json)) {
+      return { ok: false, data: null, error: "Invalid home summary payload" };
+    }
+    return { ok: true, data: json };
+  } catch (e) {
+    return {
+      ok: false,
+      data: null,
+      error: e instanceof Error ? e.message : "fetch failed",
+    };
+  }
+}
+
+/** GET /reels/adapt-preview — broader opportunity pool for hero fallback. */
+export async function fetchAdaptPreviewReels(limit = 8): Promise<{
+  ok: boolean;
+  data: ScrapedReelRow[];
+  error?: string;
+}> {
+  const base = getContentApiBase();
+  try {
+    const { headers, clientSlug } = await getCachedServerApiContext();
+    if (!clientSlug) {
+      return { ok: false, data: [], error: "No active creator" };
+    }
+    const res = await fetch(
+      `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/reels/adapt-preview?limit=${limit}`,
+      { headers: { ...headers }, cache: "no-store" },
+    );
+    if (!res.ok) {
+      return { ok: false, data: [], error: await apiErrorFromResponse(res) };
+    }
+    return { ok: true, data: (await res.json()) as ScrapedReelRow[] };
+  } catch (e) {
+    return {
+      ok: false,
+      data: [],
+      error: e instanceof Error ? e.message : "fetch failed",
+    };
+  }
 }
 
 export type ReelsListSortBy =
@@ -875,7 +1039,7 @@ export async function fetchReelsList(query: ReelsListQuery = {}): Promise<{
         ok: false,
         data: [],
         total: 0,
-        error: `${res.status} ${await res.text()}`,
+        error: await apiErrorFromResponse(res),
       };
     }
     const data = (await res.json()) as ScrapedReelRow[];
@@ -912,7 +1076,7 @@ export async function fetchOutlierCount(): Promise<{
       headers: { ...headers },
       cache: "no-store",
     });
-    if (!res.ok) return { ok: false, count: 0, error: `${res.status}` };
+    if (!res.ok) return { ok: false, count: 0, error: await apiErrorFromResponse(res) };
     const data = await res.json();
     return { ok: true, count: data.count ?? 0 };
   } catch (e) {

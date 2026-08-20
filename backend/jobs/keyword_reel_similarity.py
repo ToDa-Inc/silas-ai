@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Set
 import httpx
 
 from core.config import Settings
+from core.errors import MissingCredentialsError
 from core.database import get_supabase_for_settings
 from core.id_generator import generate_reel_id
 from services.apify import (
@@ -660,7 +661,7 @@ def score_reel_dict_for_keyword_similarity(
 
 def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None:
     if not settings.apify_api_token or not settings.openrouter_api_key:
-        raise RuntimeError("APIFY_API_TOKEN and OPENROUTER_API_KEY required")
+        raise MissingCredentialsError("APIFY_API_TOKEN and OPENROUTER_API_KEY required")
 
     supabase = get_supabase_for_settings(settings)
     job_id = job["id"]
@@ -732,7 +733,12 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
         nset.get("min_video_seconds") or payload.get("min_video_duration_seconds") or 6.0
     )
     min_views_per_day = resolve_min_views_per_day(niche_settings=nset, payload=payload)
+    if payload.get("onboarding_fast"):
+        min_views_per_day = min(
+            min_views_per_day, float(payload.get("min_views_per_day") or 800)
+        )
     split_by_keyword = bool(payload.get("split_by_keyword"))
+    max_score_cap = int(payload.get("max_score_cap") or MAX_SCORE_SAFETY_CAP)
 
     keywords, kw_provenance = similarity_scan_keywords(
         client=client,
@@ -741,6 +747,7 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
     )
     progress["keyword_provenance"] = kw_provenance
     progress["keyword_count"] = len(keywords)
+    progress["keywords_used"] = keywords
     progress["search_window"] = search_window
     progress["days"] = days
     progress["keyword_search_split_by_keyword"] = split_by_keyword
@@ -975,7 +982,7 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
     ranked = prerank_reels_for_similarity(filtered, keywords=keywords, recency_days=days)
     # Score everything that passed the filters — no arbitrary quality cap.
     # Safety ceiling only: prevents runaway jobs if upstream filters misconfigure.
-    to_score = ranked[:MAX_SCORE_SAFETY_CAP]
+    to_score = ranked[:max_score_cap]
 
     score_carousel_n = sum(
         1 for r in to_score if _ig_type_is_static_multimodal(str(r.get("ig_type") or ""))
@@ -1028,6 +1035,16 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
     supabase.table("background_jobs").update({"result": dict(progress)}).eq("id", job_id).execute()
 
     qualifying = [r for r in scored if r["similarity_score"] >= threshold]
+    if payload.get("onboarding_fast") and not qualifying and scored:
+        # Safety net for genuinely sparse niches only — with a proper discovery window
+        # (see ONBOARDING_KEYWORD_PAYLOAD) this should rarely trigger. Keeps the taste-training
+        # step from showing zero examples rather than lowering the real 85-point quality bar.
+        floor = int(payload.get("onboarding_save_floor") or 50)
+        min_save = int(payload.get("min_onboarding_save") or 8)
+        near = [r for r in scored if int(r.get("similarity_score") or 0) >= floor]
+        qualifying = sorted(near or scored, key=lambda x: x["similarity_score"], reverse=True)[:min_save]
+        progress["onboarding_fallback_saved"] = len(qualifying)
+        progress["onboarding_fallback_floor"] = floor
     if qualifying:
         # Persist replay payload before DB write — if upsert throws, worker keeps status=failed
         # but result.recovery_snapshot remains for apply_keyword_similarity_recovery_snapshot().

@@ -13,7 +13,8 @@ from supabase import Client
 from core.config import Settings, get_settings
 from core.database import get_supabase
 from core.deps import require_org_access, resolve_client_id
-from services.client_context_generate import generate_sections_from_transcript
+from services.client_context_generate import generate_section_from_brief
+from services.client_context_real_prompts import generate_sections_from_real_prompts
 from services.context_extract import extract_text_from_upload
 
 router = APIRouter(prefix="/api/v1", tags=["context"])
@@ -21,16 +22,17 @@ router = APIRouter(prefix="/api/v1", tags=["context"])
 STORAGE_BUCKET = "client-context"
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
-ALLOWED_SECTIONS = frozenset(
+GENERATED_SECTIONS = frozenset(
     {
         "icp",
         "brand_map",
         "story_board",
         "communication_guideline",
         "offer_documentation",
-        "onboarding_transcript",
     }
 )
+
+ALLOWED_SECTIONS = GENERATED_SECTIONS | frozenset({"onboarding_transcript"})
 
 
 def _safe_ext(filename: str) -> str:
@@ -49,6 +51,11 @@ def _display_name(filename: str) -> str:
 
 class ContextGenerateBody(BaseModel):
     transcript: str = Field(..., min_length=40, max_length=200_000)
+
+
+class ContextGenerateSectionBody(BaseModel):
+    section: str = Field(..., min_length=1, max_length=64)
+    brief: str = Field(..., min_length=20, max_length=60_000)
 
 
 @router.post("/clients/{slug}/context/upload")
@@ -118,6 +125,7 @@ def generate_client_context_drafts(
     body: ContextGenerateBody,
     org_id: Annotated[str, Depends(require_org_access)],
     client_id: Annotated[str, Depends(resolve_client_id)],
+    supabase: Annotated[Client, Depends(get_supabase)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> Dict[str, Any]:
     """Draft the five strategy sections from a transcript; does not persist."""
@@ -130,10 +138,16 @@ def generate_client_context_drafts(
             detail="OPENROUTER_API_KEY not configured",
         )
     try:
-        sections = generate_sections_from_transcript(
+        crow = supabase.table("clients").select("name,language").eq("id", client_id).limit(1).execute()
+        client_name = str((crow.data or [{}])[0].get("name") or "")
+        model = settings.openrouter_onboarding_model or settings.openrouter_model
+        client_lang = str((crow.data or [{}])[0].get("language") or "de")
+        sections = generate_sections_from_real_prompts(
             openrouter_key=settings.openrouter_api_key,
-            model=settings.openrouter_model,
+            model=model,
             transcript=body.transcript,
+            client_name=client_name,
+            lang=client_lang,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -141,3 +155,38 @@ def generate_client_context_drafts(
         raise HTTPException(status_code=502, detail=str(e)) from e
 
     return {"sections": sections}
+
+
+@router.post("/clients/{slug}/context/generate-section")
+def generate_client_context_section(
+    slug: str,
+    body: ContextGenerateSectionBody,
+    org_id: Annotated[str, Depends(require_org_access)],
+    client_id: Annotated[str, Depends(resolve_client_id)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> Dict[str, Any]:
+    """Draft a single strategy section from a short Q&A brief; does not persist."""
+    _ = org_id
+    _ = client_id
+    _ = slug
+    sec = (body.section or "").strip()
+    if sec not in GENERATED_SECTIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid section. Allowed: {', '.join(sorted(GENERATED_SECTIONS))}",
+        )
+    if not settings.openrouter_api_key:
+        raise HTTPException(status_code=503, detail="OPENROUTER_API_KEY not configured")
+    try:
+        text = generate_section_from_brief(
+            openrouter_key=settings.openrouter_api_key,
+            model=settings.openrouter_model,
+            section=sec,
+            brief=body.brief,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+
+    return {"section": sec, "text": text}

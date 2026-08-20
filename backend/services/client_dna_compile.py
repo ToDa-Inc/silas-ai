@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.config import Settings
+from core.errors import MissingCredentialsError
 from services.openrouter import openrouter_post_chat_completions
 from services.niche_keywords_compile import (
     generate_similarity_keywords_auto,
@@ -273,7 +274,7 @@ def force_recompile_client_dna_sync(
     row = dict(res.data[0])
     new_hash = compute_client_dna_source_hash(row)
     if not settings.openrouter_api_key:
-        raise RuntimeError("OPENROUTER_API_KEY not configured")
+        raise MissingCredentialsError("OPENROUTER_API_KEY not configured")
     dna = compile_client_dna(
         openrouter_key=settings.openrouter_api_key,
         model=settings.openrouter_model,

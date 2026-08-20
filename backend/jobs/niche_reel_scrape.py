@@ -25,6 +25,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.config import Settings
+from core.errors import MissingCredentialsError
 from core.database import get_supabase_for_settings
 from core.id_generator import generate_reel_id
 from services.apify import instagram_reel_scraper_input, run_actor, run_keyword_reel_search
@@ -133,7 +134,7 @@ def run_niche_reel_scrape(settings: Settings, job: Dict[str, Any]) -> None:
         "gating. Retire enqueue sites in routers/intelligence.py."
     )
     if not settings.apify_api_token:
-        raise RuntimeError("APIFY_API_TOKEN not configured")
+        raise MissingCredentialsError("APIFY_API_TOKEN not configured")
 
     supabase = get_supabase_for_settings(settings)
     job_id = job["id"]

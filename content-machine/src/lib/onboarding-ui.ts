@@ -26,6 +26,37 @@ export const ONBOARDING_STEP_ORDER: OnboardingStepKey[] = [
   "tour",
 ];
 
+/** Steps that auto-forward when already completed — skip when navigating back. */
+const SKIP_WHEN_COMPLETED_ON_BACK: ReadonlySet<OnboardingStepKey> = new Set(["source"]);
+
+/** Previous step in the onboarding flow (skips auto-forward completed steps). */
+export function previousOnboardingStep(
+  current: OnboardingStepKey,
+  options?: { completedSteps?: string[]; minStep?: OnboardingStepKey },
+): OnboardingStepKey | null {
+  const completed = new Set(options?.completedSteps ?? []);
+  const minStep = options?.minStep ?? "workspace";
+  const minIdx = ONBOARDING_STEP_ORDER.indexOf(minStep);
+  let idx = ONBOARDING_STEP_ORDER.indexOf(current);
+  if (idx <= 0) return null;
+
+  while (idx > 0) {
+    idx -= 1;
+    const step = ONBOARDING_STEP_ORDER[idx];
+    if (minIdx >= 0 && idx < minIdx) return null;
+    if (SKIP_WHEN_COMPLETED_ON_BACK.has(step) && completed.has(step)) continue;
+    return step;
+  }
+  return null;
+}
+
+export function canGoBackInOnboarding(
+  current: OnboardingStepKey,
+  options?: { completedSteps?: string[]; minStep?: OnboardingStepKey },
+): boolean {
+  return previousOnboardingStep(current, options) !== null;
+}
+
 export type OnboardingChapterId = "identity" | "brain" | "first_win";
 
 export type OnboardingChapter = {
@@ -38,64 +69,66 @@ export type OnboardingChapter = {
 export const ONBOARDING_CHAPTERS: OnboardingChapter[] = [
   {
     id: "identity",
-    label: "Who you are",
-    subtitle: "Workspace, niche, and source material",
+    label: "Identity",
+    subtitle: "Creator, niche, audience",
     steps: ["workspace", "quiz", "source"],
   },
   {
     id: "brain",
-    label: "Train your brain",
-    subtitle: "Strategy docs and market discovery",
+    label: "Creator Brain",
+    subtitle: "Context, patterns, discovery",
     steps: ["strategy_docs", "pipeline"],
   },
   {
     id: "first_win",
     label: "First win",
-    subtitle: "Pick an outlier, create, and export",
+    subtitle: "Pick, create, export",
     steps: ["reel_review", "first_content", "editor", "action_plan", "tour"],
   },
 ];
 
 export const STEP_HEADINGS: Record<OnboardingStepKey, { title: string; description: string }> = {
   workspace: {
-    title: "Create your workspace",
-    description: "One organization and your first creator profile.",
+    title: "Let's build your Creator Brain",
+    description: "Start with the creator profile Silas will use to find opportunities and generate your first post.",
   },
   quiz: {
-    title: "Your niche",
-    description: "Structured answers feed discovery and your AI profile.",
+    title: "Tell us about you — in your own words",
+    description:
+      "Record one voice memo or type your answers. We build your ICP, Brand Map, Storyboard, and Communication Guideline from it.",
   },
   source: {
-    title: "Source material",
-    description: "Paste a transcript or brief — we draft your strategy sections from it.",
+    title: "Add the raw truth",
+    description:
+      "Answer a few quick questions or paste notes — we turn your answers into strategy docs Silas can use.",
   },
   strategy_docs: {
-    title: "Strategy documents",
-    description: "Review and save the five core docs, then we compile Client DNA.",
+    title: "Your brain preview",
+    description: "Review what Silas understood. Keep it lightweight now; you can refine the full brain later.",
   },
   pipeline: {
-    title: "Market discovery",
-    description: "We find competitors, similar reels, and run analyses in the background.",
+    title: "Silas is finding your opening",
+    description: "We're reading your niche, finding similar creators, and preparing content options worth acting on.",
   },
   reel_review: {
-    title: "Approve outliers",
-    description: "Vote on candidate reels — we learn what resonates with you.",
+    title: "Train your taste",
+    description: "Vote on the best opportunities. Silas learns what feels on-brand before creating anything for you.",
   },
   first_content: {
-    title: "Choose your first reel",
-    description: "Pick one YES vote to adapt into your first post.",
+    title: "Pick your first win",
+    description: "Choose the opportunity you want Silas to turn into your first export-ready content piece.",
   },
   editor: {
-    title: "Create & export",
-    description: "Refine copy, visual, cover, and caption — then export when ready.",
+    title: "Create your first post",
+    description: "Refine the copy, visuals, cover, and caption. When the export is ready, your dashboard unlocks.",
   },
   action_plan: {
-    title: "Your 7-day plan",
-    description: "Concrete daily actions based on your DNA and first session.",
+    title: "Your first week is mapped",
+    description: "A concrete 7-day plan based on your Creator Brain, taste votes, and first generation session.",
   },
   tour: {
-    title: "You're set",
-    description: "Open the full dashboard — Intelligence, Create, and Context are unlocked.",
+    title: "You're ready",
+    description: "Open the full studio. Intelligence, Create, and Creator Brain are now connected.",
   },
   done: { title: "Done", description: "" },
 };
@@ -106,18 +139,17 @@ export type PipelinePhaseId =
   | "baseline_scrape"
   | "auto_profile"
   | "competitor_discovery"
+  | "keyword_scan"
   | "profile_scrapes"
   | "auto_analyze"
   | "complete"
   | "failed";
 
 export const PIPELINE_PHASES: { id: PipelinePhaseId; label: string; hint: string }[] = [
-  { id: "dna_compile", label: "Compile AI profile", hint: "From your strategy docs" },
-  { id: "baseline_scrape", label: "Read your Instagram", hint: "Own reels and captions" },
-  { id: "auto_profile", label: "Enrich niche profile", hint: "Merge with your quiz answers" },
-  { id: "competitor_discovery", label: "Find similar creators", hint: "Identity keywords + seeds" },
-  { id: "profile_scrapes", label: "Collect competitor reels", hint: "Profile scrapes queued" },
-  { id: "auto_analyze", label: "Analyze winning patterns", hint: "Hooks, structure, formats" },
+  { id: "dna_compile", label: "Build your Creator Brain", hint: "Positioning, audience, voice, and offers" },
+  { id: "competitor_discovery", label: "Find creators in your niche", hint: "Adjacent accounts worth studying" },
+  { id: "keyword_scan", label: "Scan trending niche reels", hint: "Quick examples from your topic keywords" },
+  { id: "auto_analyze", label: "Detect repeatable patterns", hint: "Hooks, formats, structures, and payoff" },
 ];
 
 export function chapterForStep(step: OnboardingStepKey): OnboardingChapter {
@@ -143,7 +175,11 @@ export function pipelinePhaseStatus(
 ): "done" | "active" | "pending" | "failed" {
   if (current === "failed" && phaseId !== "complete") return "pending";
   if (current === "failed") return "failed";
-  if (!current || current === "queued") return phaseId === "dna_compile" ? "active" : "pending";
+  // No phase at all means the pipeline job hasn't been started yet — don't show
+  // a spinner as if it's already running. "queued" means the job was created
+  // and is waiting for a worker, which is worth showing as active.
+  if (!current) return "pending";
+  if (current === "queued") return phaseId === "dna_compile" ? "active" : "pending";
   if (current === "complete") return "done";
   const order = PIPELINE_PHASES.map((p) => p.id);
   const curIdx = order.indexOf(current as PipelinePhaseId);
@@ -156,10 +192,10 @@ export function pipelinePhaseStatus(
 
 /** Same inputs as signup (`signup-client.tsx`). */
 export const onboardingInputClass =
-  "w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-500";
+  "w-full rounded-xl border border-white/10 bg-white/[0.045] px-3 py-3 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 transition focus:border-app-accent/55 focus:bg-white/[0.07] focus:ring-4 focus:ring-app-accent/10";
 
 export const onboardingTextareaClass =
-  "min-h-[220px] w-full resize-y rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm leading-relaxed text-zinc-100 placeholder:text-zinc-500";
+  "min-h-[220px] w-full resize-y rounded-xl border border-white/10 bg-white/[0.045] px-3 py-3 text-sm leading-relaxed text-zinc-100 outline-none placeholder:text-zinc-600 transition focus:border-app-accent/55 focus:bg-white/[0.07] focus:ring-4 focus:ring-app-accent/10";
 
 export const onboardingLabelClass =
-  "mb-1 block text-[10px] font-bold uppercase tracking-widest text-zinc-500";
+  "mb-2 block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500";

@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Loader2, Users } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { AppSelect } from "@/components/ui/app-select";
 import { useToast } from "@/components/ui/toast-provider";
 import { invalidateApiContext } from "@/lib/api-client";
@@ -16,6 +17,8 @@ type Props = {
 };
 
 export function ClientSwitcher({ clients, activeSlug, orgLabel }: Props) {
+  const t = useTranslations("nav");
+  const tCommon = useTranslations("common");
   const router = useRouter();
   const { show } = useToast();
   const [busy, setBusy] = useState(false);
@@ -36,7 +39,7 @@ export function ClientSwitcher({ clients, activeSlug, orgLabel }: Props) {
         body: JSON.stringify({ slug }),
       });
       if (!r.ok) {
-        show("Couldn’t switch creator — try again.", "error");
+        show(tCommon("switchCreatorFailed"), "error");
         return;
       }
       invalidateApiContext();
@@ -54,7 +57,7 @@ export function ClientSwitcher({ clients, activeSlug, orgLabel }: Props) {
       </span>
       <div className="relative flex items-end gap-2">
         <AppSelect
-          label="Creator"
+          label={t("creator")}
           value={
             activeSlug && clients.some((c) => c.slug === activeSlug) ? activeSlug : clients[0]!.slug
           }

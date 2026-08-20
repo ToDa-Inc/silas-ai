@@ -110,10 +110,10 @@ export function InteractiveOverlay({ regions, selection, onSelect, debugShowAll 
             style={style}
             className={`pointer-events-auto absolute rounded-md transition-shadow ${
               active
-                ? "shadow-[inset_0_0_0_2px_rgba(245,158,11,0.85)]"
+                ? "shadow-[inset_0_0_0_2px_var(--brand-accent)]"
                 : debugShowAll
-                  ? "shadow-[inset_0_0_0_1px_rgba(245,158,11,0.35)]"
-                  : "shadow-none hover:shadow-[inset_0_0_0_1px_rgba(245,158,11,0.55)]"
+                  ? "shadow-[inset_0_0_0_1px_var(--glow-accent)]"
+                  : "shadow-none hover:shadow-[inset_0_0_0_1px_var(--shadow-accent)]"
             }`}
           />
         );

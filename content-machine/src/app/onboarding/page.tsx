@@ -1,10 +1,19 @@
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { ToastProvider } from "@/components/ui/toast-provider";
 import { fetchClient, fetchOnboardingStatus, getCachedServerApiContext } from "@/lib/api";
+import {
+  ONBOARDING_BYPASS_COOKIE,
+  readOnboardingBypassActive,
+} from "@/lib/onboarding-bypass";
 import { OnboardingWizard } from "./onboarding-wizard";
 
 export default async function OnboardingPage() {
   const { user, tenancy, clientSlug, orgSlug } = await getCachedServerApiContext();
+  const cookieStore = await cookies();
+  const onboardingBypassActive = readOnboardingBypassActive(
+    cookieStore.get(ONBOARDING_BYPASS_COOKIE)?.value,
+  );
   if (!user) {
     redirect("/login?next=/onboarding");
   }
@@ -31,6 +40,7 @@ export default async function OnboardingPage() {
               ? (clientRes.data.client_context as Record<string, unknown>)
               : null
           }
+          onboardingBypassActive={onboardingBypassActive}
         />
       </ToastProvider>
     );
@@ -38,7 +48,13 @@ export default async function OnboardingPage() {
 
   return (
     <ToastProvider>
-      <OnboardingWizard hasTenancy={false} clientSlug="" orgSlug="" initialStatus={null} />
+      <OnboardingWizard
+        hasTenancy={false}
+        clientSlug=""
+        orgSlug=""
+        initialStatus={null}
+        onboardingBypassActive={onboardingBypassActive}
+      />
     </ToastProvider>
   );
 }

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { Loader2, Sparkles, UserPlus } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { ReelThumbnail } from "@/components/reel-thumbnail";
 import type { ScrapedReelRow, WeekBreakoutsPayload } from "@/lib/api";
 import {
@@ -22,6 +23,7 @@ import { AppSelect } from "@/components/ui/app-select";
 import { PendingLink } from "@/components/ui/pending-link";
 import { ReplicateSection } from "./replicate-section";
 import { ReelCardWithAnalysis } from "./reel-card-with-analysis";
+import { ReelPreviewTooltip } from "./reel-preview-tooltip";
 import { RecreateButton } from "@/components/recreate-button";
 import {
   ActivityLaneBlock,
@@ -59,43 +61,43 @@ type Props = {
 /** `group` steps in display order — dividers between groups (hierarchy: act → your channel → market → library). */
 const HOME_TABS: {
   id: HomeOverviewTab;
-  label: string;
+  labelKey: "adaptToday" | "yourReels" | "nicheFinds" | "hotNow" | "stillWinning" | "saved";
   hint: string;
   group: number;
 }[] = [
   {
     id: "today",
-    label: "Adapt today",
+    labelKey: "adaptToday",
     group: 1,
     hint: "Fresh posts from tracked competitors that are beating their usual reach — strong candidates to adapt first.",
   },
   {
     id: "yours",
-    label: "Your reels",
+    labelKey: "yourReels",
     group: 2,
     hint: "Reels from this creator’s connected Instagram only.",
   },
   {
     id: "niche",
-    label: "Niche finds",
+    labelKey: "nicheFinds",
     group: 3,
     hint: "Accounts surfaced by your daily keyword scan — possible leads until you add them as competitors.",
   },
   {
     id: "hot",
-    label: "Hot now",
+    labelKey: "hotNow",
     group: 3,
     hint: "Competitor reels from roughly the last day or two that are already outpacing that account’s usual reach.",
   },
   {
     id: "steady",
-    label: "Still winning",
+    labelKey: "stillWinning",
     group: 3,
     hint: "Older competitor posts that kept gaining after their first spike.",
   },
   {
     id: "saved",
-    label: "Saved",
+    labelKey: "saved",
     group: 4,
     hint: "URLs you pasted or analyzed manually — your library for scripts and remakes.",
   },
@@ -120,6 +122,7 @@ export function IntelligenceOverviewSections({
   disabledHint,
   momentum,
 }: Props) {
+  const t = useTranslations("intelligence");
   const [tab, setTab] = useState<HomeOverviewTab>("today");
   const [niche, setNiche] = useState<ScrapedReelRow[]>([]);
   const [own, setOwn] = useState<ScrapedReelRow[]>([]);
@@ -246,12 +249,14 @@ export function IntelligenceOverviewSections({
             return (
               <ReelCardWithAnalysis key={reel.id} row={reel} clientSlug={clientSlug} orgSlug={orgSlug} compact>
                 <div className="group/thumb relative shrink-0 overflow-hidden rounded">
-                  <ReelThumbnail
-                    src={reel.thumbnail_url}
-                    alt={`@${reel.account_username} reel`}
-                    href={reel.post_url}
-                    size="sm"
-                  />
+                  <ReelPreviewTooltip reel={reel} className="inline-flex">
+                    <ReelThumbnail
+                      src={reel.thumbnail_url}
+                      alt={`@${reel.account_username} reel`}
+                      href={reel.post_url}
+                      size="sm"
+                    />
+                  </ReelPreviewTooltip>
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-[11px] font-semibold leading-tight text-app-fg">@{reel.account_username}</p>
@@ -339,12 +344,14 @@ export function IntelligenceOverviewSections({
             return (
               <ReelCardWithAnalysis key={reel.id} row={reel} clientSlug={clientSlug} orgSlug={orgSlug} compact>
                 <div className="group/thumb relative shrink-0 overflow-hidden rounded">
-                  <ReelThumbnail
-                    src={reel.thumbnail_url}
-                    alt={`@${reel.account_username} reel`}
-                    href={reel.post_url}
-                    size="sm"
-                  />
+                  <ReelPreviewTooltip reel={reel} className="inline-flex">
+                    <ReelThumbnail
+                      src={reel.thumbnail_url}
+                      alt={`@${reel.account_username} reel`}
+                      href={reel.post_url}
+                      size="sm"
+                    />
+                  </ReelPreviewTooltip>
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-[11px] font-semibold leading-tight text-app-fg">@{reel.account_username}</p>
@@ -415,12 +422,14 @@ export function IntelligenceOverviewSections({
           {saved.map((reel) => (
             <ReelCardWithAnalysis key={reel.id} row={reel} clientSlug={clientSlug} orgSlug={orgSlug} compact>
               <div className="group/thumb relative shrink-0 overflow-hidden rounded">
-                <ReelThumbnail
-                  src={reel.thumbnail_url}
-                  alt={`@${reel.account_username} reel`}
-                  href={reel.post_url}
-                  size="sm"
-                />
+                <ReelPreviewTooltip reel={reel} className="inline-flex">
+                  <ReelThumbnail
+                    src={reel.thumbnail_url}
+                    alt={`@${reel.account_username} reel`}
+                    href={reel.post_url}
+                    size="sm"
+                  />
+                </ReelPreviewTooltip>
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-[11px] font-semibold leading-tight text-app-fg">@{reel.account_username}</p>
@@ -571,19 +580,19 @@ export function IntelligenceOverviewSections({
       >
         <div className="mx-auto max-w-[1100px] px-4 pb-3 pt-3 md:px-8">
           <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-app-fg-muted">
-            Intelligence
+            {t("title")}
           </p>
           <nav
             className="flex w-full min-w-0 flex-wrap items-stretch gap-y-2 sm:flex-nowrap"
             aria-label="Intelligence sections"
             role="tablist"
           >
-            {HOME_TABS.map((t, i) => {
+            {HOME_TABS.map((tabItem, i) => {
               const prev = i > 0 ? HOME_TABS[i - 1] : null;
-              const showDivider = prev != null && t.group !== prev.group;
-              const selected = tab === t.id;
+              const showDivider = prev != null && tabItem.group !== prev.group;
+              const selected = tab === tabItem.id;
               return (
-                <Fragment key={t.id}>
+                <Fragment key={tabItem.id}>
                   {showDivider ? (
                     <div
                       className="mx-0.5 hidden h-8 w-px shrink-0 self-center bg-zinc-300/90 dark:bg-white/15 sm:block"
@@ -594,16 +603,16 @@ export function IntelligenceOverviewSections({
                     type="button"
                     role="tab"
                     aria-selected={selected}
-                    id={`intel-tab-${t.id}`}
-                    onClick={() => setTab(t.id)}
+                    id={`intel-tab-${tabItem.id}`}
+                    onClick={() => setTab(tabItem.id)}
                     className={cn(
                       "min-h-[2.5rem] min-w-0 flex-1 basis-[calc(50%-0.25rem)] rounded-lg px-2 py-2 text-center text-[11px] font-semibold leading-tight transition-colors sm:basis-0 sm:px-3 sm:text-xs",
                       selected
-                        ? "bg-amber-500/20 text-amber-950 shadow-[inset_0_0_0_1px_rgba(245,158,11,0.35)] ring-2 ring-amber-500/30 dark:bg-amber-500/15 dark:text-amber-50 dark:shadow-[inset_0_0_0_1px_rgba(251,191,36,0.25)] dark:ring-amber-400/25"
+                        ? "bg-app-accent/20 text-zinc-950 shadow-[inset_0_0_0_1px_var(--glow-accent)] ring-2 ring-app-accent/30 dark:bg-app-accent/15 dark:text-zinc-50 dark:shadow-[inset_0_0_0_1px_var(--glow-accent)] dark:ring-app-accent/25"
                         : "text-app-fg-muted hover:bg-zinc-200/80 hover:text-app-fg dark:hover:bg-white/[0.06]",
                     )}
                   >
-                    <span className="block truncate">{t.label}</span>
+                    <span className="block truncate">{t(tabItem.labelKey)}</span>
                   </button>
                 </Fragment>
               );

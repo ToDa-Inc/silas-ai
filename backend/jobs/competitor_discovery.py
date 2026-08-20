@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from core.config import Settings
+from core.errors import MissingCredentialsError
 from core.database import get_supabase_for_settings
 from core.id_generator import generate_competitor_id
 from services.apify import SEARCH_ACTOR, instagram_reel_scraper_input, run_actor
@@ -222,7 +223,7 @@ def _latest_valid_baseline(supabase, client_id: str) -> Optional[dict]:
 
 def run_competitor_discovery(settings: Settings, job: Dict[str, Any]) -> None:
     if not settings.apify_api_token or not settings.openrouter_api_key:
-        raise RuntimeError("APIFY_API_TOKEN and OPENROUTER_API_KEY required for discovery")
+        raise MissingCredentialsError("APIFY_API_TOKEN and OPENROUTER_API_KEY required for discovery")
 
     supabase = get_supabase_for_settings(settings)
     job_id = job["id"]

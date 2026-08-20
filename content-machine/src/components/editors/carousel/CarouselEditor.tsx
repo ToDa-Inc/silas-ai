@@ -121,6 +121,7 @@ type Props = {
   onApplyBackgroundToAll: (sourceIdx: number) => void | Promise<void>;
   onRemoveSlide: (idx: number) => void | Promise<void>;
   onError: (message: string) => void;
+  embedded?: boolean;
 };
 
 export function CarouselEditor({
@@ -154,6 +155,7 @@ export function CarouselEditor({
   onRemoveSlide,
   onError,
   inFlight,
+  embedded = false,
 }: Props) {
   const [exportBusy, setExportBusy] = useState(false);
   const [toolbarMenuOpen, setToolbarMenuOpen] = useState(false);
@@ -435,6 +437,7 @@ export function CarouselEditor({
             </nav>
 
             <EditorShell
+              embedded={embedded}
               preview={
                 <CarouselTextLayerEditor
                   key={`editor-${selectedSlide.idx}-${selectedBgRev}`}

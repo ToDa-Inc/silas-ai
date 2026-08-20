@@ -80,6 +80,9 @@ def _from_keywords_manual(cc: Any) -> List[str]:
 
 
 def _from_similarity_keywords(dna: dict) -> List[str]:
+    """Native-language pool only. "auto_en" is deliberately excluded here — it's a fallback net
+    consumed explicitly via ``similarity_keywords_auto_en`` / payload override during the
+    onboarding zero-results retry, not mixed into the precise first-pass search."""
     sim = dna.get("similarity_keywords") or {}
     out: List[str] = []
     if isinstance(sim, dict):
@@ -91,12 +94,29 @@ def _from_similarity_keywords(dna: dict) -> List[str]:
                 elif x:
                     out.append(str(x).strip())
         for key, bucket in sim.items():
-            if key == "auto":
+            if key in ("auto", "auto_en", "compiled_at"):
                 continue
             if isinstance(bucket, list):
                 out.extend(str(x).strip() for x in bucket if x)
     elif isinstance(sim, list):
         out.extend(str(x).strip() for x in sim if x)
+    return out
+
+
+def similarity_keywords_auto_en(dna: dict) -> List[str]:
+    """English fallback phrases from client_dna.similarity_keywords.auto_en (onboarding retry only)."""
+    sim = dna.get("similarity_keywords") or {}
+    if not isinstance(sim, dict):
+        return []
+    auto_en = sim.get("auto_en")
+    if not isinstance(auto_en, list):
+        return []
+    out: List[str] = []
+    for x in auto_en:
+        if isinstance(x, dict) and x.get("text"):
+            out.append(str(x["text"]).strip())
+        elif x:
+            out.append(str(x).strip())
     return out
 
 

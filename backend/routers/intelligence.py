@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
+from pydantic import BaseModel, ConfigDict, Field
 from supabase import Client
 
 from core.cache import cache_delete, cache_get, cache_set
@@ -61,11 +62,22 @@ from services.scrape_cycle import (
     enqueue_keyword_reel_similarity_for_client,
     find_stale_competitors,
 )
+from services.daily_opportunities import (
+    compute_and_store_daily_opportunities,
+    get_today_snapshot_meta,
+    hydrate_reels_by_ids,
+    reconcile_daily_post_fields,
+    _backfill_primary_reel_id,
+    _load_snapshot_row,
+    _today_utc,
+)
+from services.daily_post_draft import DRAFT_STATUS_PENDING, DRAFT_STATUS_READY, run_daily_post_draft_job
 from services.reel_metrics import (
     compute_niche_benchmarks,
     enrich_engagement_metrics,
     normalize_scraped_reel_row_for_api,
 )
+from services.reel_thumbnail_refresh import refresh_stale_reel_thumbnails
 from services.reels_media_type_filter import apply_reels_media_type_filter
 
 router = APIRouter(prefix="/api/v1", tags=["intelligence"])
@@ -1029,13 +1041,28 @@ def _normalize_silas_rating(val: Any) -> Optional[str]:
     return str(val)
 
 
+def _preview_summary_from_analysis_row(row: dict) -> Optional[str]:
+    """Best one-liner for hover previews — Silas content summary, then niche fit, then content_angle."""
+    for key in ("content_summary", "what_the_video_is_about", "content_angle"):
+        val = row.get(key)
+        if isinstance(val, str):
+            t = val.strip()
+            if t:
+                return t[:500]
+    return None
+
+
 def _attach_reel_analyses(supabase: Client, client_id: str, reels: list[dict]) -> None:
     """Merge latest reel_analyses summary onto each scraped_reels row (by reel_id, else post_url)."""
     if not reels:
         return
     select_v2 = (
         "id, reel_id, post_url, total_score, replicability_rating, analyzed_at, prompt_version, "
-        "weighted_total:full_analysis_json->weighted_total, silas_rating:full_analysis_json->>rating"
+        "content_angle, "
+        "weighted_total:full_analysis_json->weighted_total, "
+        "silas_rating:full_analysis_json->>rating, "
+        "content_summary:full_analysis_json->structured_summary->>content_summary, "
+        "what_the_video_is_about:full_analysis_json->keyword_similarity->>what_the_video_is_about"
     )
     select_legacy = (
         "id, reel_id, post_url, total_score, replicability_rating, analyzed_at, prompt_version"
@@ -1123,6 +1150,7 @@ def _attach_reel_analyses(supabase: Client, client_id: str, reels: list[dict]) -
                 "prompt_version": chosen.get("prompt_version"),
                 "weighted_total": _coerce_json_weighted_total(chosen.get("weighted_total")),
                 "silas_rating": _normalize_silas_rating(chosen.get("silas_rating")),
+                "preview_summary": _preview_summary_from_analysis_row(chosen),
             }
 
 
@@ -2373,6 +2401,7 @@ def list_reels(
     slug: str,
     client_id: Annotated[str, Depends(resolve_client_id)],
     supabase: Annotated[Client, Depends(get_supabase)],
+    settings: Annotated[Settings, Depends(get_settings)],
     outlier_only: bool = Query(False),
     own_reels_only: bool = Query(
         False,
@@ -2509,6 +2538,11 @@ def list_reels(
             # Table missing or RLS — return reels without analysis
             pass
 
+    if data:
+        refresh_stale_reel_thumbnails(
+            supabase, settings, data, max_refresh=min(limit, 30)
+        )
+
     # Total count (matching filters, ignoring limit/offset). Lightweight HEAD
     # query — no row payload returned, only the count metadata.
     total = len(data)
@@ -2564,6 +2598,7 @@ def adapt_preview_reels(
     slug: str,
     client_id: Annotated[str, Depends(resolve_client_id)],
     supabase: Annotated[Client, Depends(get_supabase)],
+    settings: Annotated[Settings, Depends(get_settings)],
     limit: int = Query(5, ge=1, le=20, description="How many reels to return after ranking."),
     pool: int = Query(
         250,
@@ -2614,7 +2649,10 @@ def adapt_preview_reels(
             return float("inf")
 
     rows.sort(key=_cvr_sort_key, reverse=False)
-    return rows[:limit]
+    top = rows[:limit]
+    if top:
+        refresh_stale_reel_thumbnails(supabase, settings, top, max_refresh=len(top))
+    return top
 
 
 @router.get("/clients/{slug}/reels/source-preview", response_model=ScrapedReelOut)
@@ -3317,8 +3355,460 @@ def dashboard_competitor_wins(
     return top
 
 
+class DashboardTodayPicksOut(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    fresh_niche: List[Dict[str, Any]] = Field(default_factory=list)
+    competitor_wins: List[Dict[str, Any]] = Field(default_factory=list)
+    computed_at: Optional[str] = None
+    is_fallback: bool = False
+    pick_date: Optional[str] = None
+    primary_reel_id: Optional[str] = None
+    daily_session_id: Optional[str] = None
+    draft_status: Optional[str] = None
+    draft_error: Optional[str] = None
 
 
+def _daily_post_from_snap(
+    supabase: Client,
+    client_id: str,
+    snap: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    return reconcile_daily_post_fields(supabase, client_id, snap)
+
+
+def _build_today_picks_payload(
+    supabase: Client,
+    client_id: str,
+    snap: Optional[Dict[str, Any]],
+    settings: Optional[Settings] = None,
+) -> dict:
+    daily = _daily_post_from_snap(supabase, client_id, snap)
+    if not snap:
+        return {
+            "fresh_niche": [],
+            "competitor_wins": [],
+            "computed_at": None,
+            "is_fallback": True,
+            "pick_date": None,
+            **daily,
+        }
+
+    fresh_ids = snap.get("fresh_niche_reel_ids") if isinstance(snap.get("fresh_niche_reel_ids"), list) else []
+    win_ids = (
+        snap.get("competitor_win_reel_ids")
+        if isinstance(snap.get("competitor_win_reel_ids"), list)
+        else []
+    )
+    fresh_ids = [str(x) for x in fresh_ids if str(x).strip()]
+    win_ids = [str(x) for x in win_ids if str(x).strip()]
+
+    fresh = hydrate_reels_by_ids(supabase, client_id, fresh_ids)
+    wins = hydrate_reels_by_ids(supabase, client_id, win_ids)
+    combined = fresh + wins
+    if combined and settings is not None:
+        refresh_stale_reel_thumbnails(
+            supabase, settings, combined, max_refresh=len(combined)
+        )
+    if combined:
+        try:
+            _attach_reel_analyses(supabase, client_id, combined)
+        except Exception:
+            pass
+
+    source = str(snap.get("source") or "cron")
+    return {
+        "fresh_niche": fresh,
+        "competitor_wins": wins,
+        "computed_at": snap.get("computed_at"),
+        "is_fallback": source not in ("cron",),
+        "pick_date": str(snap.get("pick_date") or ""),
+        **daily,
+    }
+
+
+@router.get(
+    "/clients/{slug}/dashboard/today-picks",
+    response_model=DashboardTodayPicksOut,
+)
+def dashboard_today_picks(
+    slug: str,
+    background_tasks: BackgroundTasks,
+    client_id: Annotated[str, Depends(resolve_client_id)],
+    supabase: Annotated[Client, Depends(get_supabase)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict:
+    """Today's fixed opportunity picks from snapshot; lazy-computes if cron has not run yet."""
+    _ = slug
+    day = _today_utc()
+    snap = _load_snapshot_row(supabase, client_id, day)
+    if not snap:
+        snap = get_today_snapshot_meta(supabase, client_id, settings=settings, ensure_draft=False)
+    elif snap:
+        snap = _backfill_primary_reel_id(supabase, client_id, snap)
+
+    if snap:
+        daily = reconcile_daily_post_fields(supabase, client_id, snap)
+        attempted_raw = snap.get("draft_attempted_at")
+        if daily.get("draft_status") == DRAFT_STATUS_PENDING and attempted_raw:
+            try:
+                attempted_at = datetime.fromisoformat(str(attempted_raw).replace("Z", "+00:00"))
+                if attempted_at.tzinfo is None:
+                    attempted_at = attempted_at.replace(tzinfo=timezone.utc)
+                age_s = (datetime.now(timezone.utc) - attempted_at).total_seconds()
+                if age_s >= 45:
+                    background_tasks.add_task(
+                        run_daily_post_draft_job,
+                        client_id,
+                        str(snap.get("pick_date") or day.isoformat()),
+                    )
+            except (ValueError, TypeError):
+                pass
+
+    return _build_today_picks_payload(supabase, client_id, snap, settings=settings)
+
+
+@router.post(
+    "/clients/{slug}/dashboard/today-post",
+    response_model=DashboardTodayPicksOut,
+)
+def dashboard_create_today_post(
+    slug: str,
+    background_tasks: BackgroundTasks,
+    client_id: Annotated[str, Depends(resolve_client_id)],
+    supabase: Annotated[Client, Depends(get_supabase)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict:
+    """Kick off today's script-ready post; returns immediately while packaging runs."""
+    _ = slug
+    if not settings.openrouter_api_key:
+        raise HTTPException(status_code=503, detail="OPENROUTER_API_KEY not configured")
+
+    day = _today_utc()
+    row = _load_snapshot_row(supabase, client_id, day)
+    if not row:
+        compute_and_store_daily_opportunities(
+            supabase, client_id, source="manual", pick_date=day
+        )
+        row = _load_snapshot_row(supabase, client_id, day)
+    if row:
+        row = _backfill_primary_reel_id(supabase, client_id, row)
+
+    daily = reconcile_daily_post_fields(supabase, client_id, row)
+    if (
+        daily.get("draft_status") == DRAFT_STATUS_READY
+        and str(daily.get("daily_session_id") or "").strip()
+    ):
+        cache_delete(f"home_summary:{client_id}")
+        return _build_today_picks_payload(supabase, client_id, row, settings=settings)
+
+    in_flight = (
+        daily.get("draft_status") == DRAFT_STATUS_PENDING
+        and str(daily.get("daily_session_id") or "").strip()
+        and row.get("draft_attempted_at")
+    )
+    if not in_flight and row:
+        background_tasks.add_task(
+            run_daily_post_draft_job,
+            client_id,
+            str(row.get("pick_date") or day.isoformat()),
+        )
+
+    cache_delete(f"home_summary:{client_id}")
+    row = _load_snapshot_row(supabase, client_id, day) or row
+    return _build_today_picks_payload(supabase, client_id, row, settings=settings)
+
+
+# ---------------------------------------------------------------------------
+# Home dashboard summary (agent team + hero hints)
+# ---------------------------------------------------------------------------
+
+_SCOUT_JOB_TYPES = (
+    "competitor_discovery",
+    "profile_scrape",
+    "keyword_reel_similarity",
+    "onboarding_pipeline",
+)
+_ANALYST_JOB_TYPES = ("auto_analyze_scraped", "baseline_scrape", "reel_analyze_url")
+_WRITER_JOB_TYPES = ("video_render",)
+
+
+def _count_exact(supabase: Client, table: str, **filters) -> int:
+    try:
+        q = supabase.table(table).select("id", count="exact")
+        for key, val in filters.items():
+            if key.endswith("_not_null") and val:
+                q = q.not_.is_(key.replace("_not_null", ""), "null")
+            elif key.endswith("_gte"):
+                q = q.gte(key.replace("_gte", ""), val)
+            else:
+                q = q.eq(key, val)
+        res = q.limit(1).execute()
+        return int(res.count or 0)
+    except Exception:
+        return 0
+
+
+def _any_active_job_types(supabase: Client, client_id: str, job_types: tuple[str, ...]) -> bool:
+    try:
+        res = (
+            supabase.table("background_jobs")
+            .select("id")
+            .eq("client_id", client_id)
+            .in_("job_type", list(job_types))
+            .in_("status", ["queued", "running"])
+            .limit(1)
+            .execute()
+        )
+        return bool(res.data)
+    except Exception:
+        return False
+
+
+def _top_opportunity_reel_id(supabase: Client, client_id: str) -> Optional[str]:
+    """Best-effort top reel for hero: competitor win first, else fresh niche."""
+    since_iso = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    try:
+        wins = (
+            supabase.table("scraped_reels")
+            .select("id, views, account_avg_views, competitor_id")
+            .eq("client_id", client_id)
+            .not_.is_("competitor_id", "null")
+            .gte("posted_at", since_iso)
+            .order("views", desc=True)
+            .limit(30)
+            .execute()
+        )
+        best_id: Optional[str] = None
+        best_ratio = 0.0
+        for row in wins.data or []:
+            avg = _int_metric_val(row.get("account_avg_views"))
+            views = _int_metric_val(row.get("views"))
+            if avg > 0 and views > 0:
+                ratio = views / float(avg)
+                if ratio >= 1.5 and ratio > best_ratio:
+                    best_ratio = ratio
+                    best_id = str(row.get("id") or "")
+        if best_id:
+            return best_id
+        fresh = (
+            supabase.table("scraped_reels")
+            .select("id")
+            .eq("client_id", client_id)
+            .eq("source", "keyword_similarity")
+            .gte("posted_at", since_iso)
+            .order("views", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if fresh.data:
+            return str(fresh.data[0].get("id") or "") or None
+        fallback = (
+            supabase.table("scraped_reels")
+            .select("id")
+            .eq("client_id", client_id)
+            .not_.is_("competitor_id", "null")
+            .order("views", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if fallback.data:
+            return str(fallback.data[0].get("id") or "") or None
+    except Exception:
+        logger.warning("home_summary top_opportunity_reel_id failed", exc_info=True)
+    return None
+
+
+def _latest_export_session(supabase: Client, client_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        res = (
+            supabase.table("generation_sessions")
+            .select("id, thumbnail_url, rendered_video_url, hooks, caption_body, updated_at")
+            .eq("client_id", client_id)
+            .order("updated_at", desc=True)
+            .limit(30)
+            .execute()
+        )
+        for row in res.data or []:
+            thumb = str(row.get("thumbnail_url") or row.get("rendered_video_url") or "").strip()
+            hooks = row.get("hooks")
+            hook_text = ""
+            if isinstance(hooks, list) and hooks and isinstance(hooks[0], dict):
+                hook_text = str(hooks[0].get("text") or "").strip()
+            if not hook_text:
+                hook_text = str(row.get("caption_body") or "").strip()[:120]
+            if thumb or hook_text:
+                return {
+                    "session_id": str(row.get("id") or ""),
+                    "thumbnail_url": thumb or None,
+                    "hook_text": hook_text or None,
+                }
+    except Exception:
+        logger.warning("home_summary latest_export failed", exc_info=True)
+    return None
+
+
+@router.get("/clients/{slug}/home/summary")
+def home_summary(
+    slug: str,
+    client_id: Annotated[str, Depends(resolve_client_id)],
+    supabase: Annotated[Client, Depends(get_supabase)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> Dict[str, Any]:
+    """Aggregated Home cockpit stats for Scout / Writer / Analyst agents."""
+    _ = slug
+    cache_key = f"home_summary:{client_id}"
+    cached = cache_get(cache_key, ttl_seconds=90)
+    if cached is not None:
+        return cached
+
+    day = _today_utc()
+    snap = _load_snapshot_row(supabase, client_id, day)
+    if snap:
+        snap = _backfill_primary_reel_id(supabase, client_id, snap)
+    daily = _daily_post_from_snap(supabase, client_id, snap)
+
+    week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+
+    watching = _count_exact(supabase, "competitors", client_id=client_id)
+    try:
+        new_res = (
+            supabase.table("scraped_reels")
+            .select("id", count="exact")
+            .eq("client_id", client_id)
+            .gte("first_seen_at", week_ago)
+            .limit(1)
+            .execute()
+        )
+        new_this_week = int(new_res.count or 0)
+    except Exception:
+        new_this_week = 0
+
+    stats = _compute_client_stats(supabase, client_id)
+    outlier_count = 0
+    try:
+        oc_res = (
+            supabase.table("scraped_reels")
+            .select("id", count="exact")
+            .eq("client_id", client_id)
+            .eq("is_outlier", True)
+            .not_.is_("competitor_id", "null")
+            .limit(1)
+            .execute()
+        )
+        outlier_count = int(oc_res.count or 0)
+    except Exception:
+        pass
+
+    drafts_ready = 0
+    in_progress = 0
+    posts_made = 0
+    latest_draft_session_id: Optional[str] = None
+    try:
+        sess_res = (
+            supabase.table("generation_sessions")
+            .select("id, status, render_status, rendered_video_url, updated_at")
+            .eq("client_id", client_id)
+            .order("updated_at", desc=True)
+            .limit(100)
+            .execute()
+        )
+        for row in sess_res.data or []:
+            st = str(row.get("status") or "")
+            if st == "content_ready":
+                drafts_ready += 1
+                posts_made += 1
+                if not latest_draft_session_id:
+                    latest_draft_session_id = str(row.get("id") or "")
+            elif st == "angles_ready" or str(row.get("render_status") or "") == "rendering":
+                in_progress += 1
+            elif row.get("rendered_video_url"):
+                posts_made += 1
+    except Exception:
+        pass
+
+    last_export = _latest_export_session(supabase, client_id)
+    top_reel_id = daily.get("primary_reel_id") or _top_opportunity_reel_id(supabase, client_id)
+
+    daily_session_id = daily.get("daily_session_id")
+    if daily.get("draft_status") == "ready" and daily_session_id:
+        latest_draft_session_id = daily_session_id
+
+    onboarding_row: Optional[Dict[str, Any]] = None
+    try:
+        ob = (
+            supabase.table("client_onboarding_state")
+            .select("status, current_step, pipeline_progress")
+            .eq("client_id", client_id)
+            .limit(1)
+            .execute()
+        )
+        if ob.data:
+            onboarding_row = dict(ob.data[0])
+    except Exception:
+        pass
+
+    pipeline_progress = (
+        onboarding_row.get("pipeline_progress")
+        if isinstance(onboarding_row, dict) and isinstance(onboarding_row.get("pipeline_progress"), dict)
+        else {}
+    )
+    phase = str(pipeline_progress.get("phase") or "")
+    onboarding_status = str(onboarding_row.get("status") or "") if onboarding_row else ""
+    onboarding_step = str(onboarding_row.get("current_step") or "") if onboarding_row else ""
+    setup_complete = onboarding_status == "completed" or onboarding_step == "done" or phase == "complete"
+
+    building_phases = {
+        "dna_compile",
+        "baseline_scrape",
+        "auto_profile",
+        "competitor_discovery",
+        "profile_scrapes",
+        "auto_analyze",
+    }
+    is_building = phase in building_phases or _any_active_job_types(
+        supabase, client_id, _SCOUT_JOB_TYPES
+    )
+
+    scout_working = _any_active_job_types(supabase, client_id, _SCOUT_JOB_TYPES)
+    writer_working = _any_active_job_types(supabase, client_id, _WRITER_JOB_TYPES)
+    analyst_working = _any_active_job_types(supabase, client_id, _ANALYST_JOB_TYPES)
+
+    result: Dict[str, Any] = {
+        "scout": {
+            "watching_accounts": watching,
+            "new_this_week": new_this_week,
+            "top_opportunity_reel_id": top_reel_id,
+            "working": scout_working,
+        },
+        "writer": {
+            "drafts_ready": drafts_ready,
+            "in_progress": in_progress,
+            "latest_draft_session_id": latest_draft_session_id,
+            "last_export": last_export,
+            "working": writer_working,
+        },
+        "analyst": {
+            "reels_studied": int(stats.get("total_own_reels") or 0),
+            "avg_views": stats.get("average_views_last_30_reels"),
+            "outliers": outlier_count,
+            "trend_pct": stats.get("avg_views_change_vs_prior_week_pct"),
+            "working": analyst_working,
+        },
+        "state": {
+            "phase": phase,
+            "setup_complete": setup_complete,
+            "onboarding_step": onboarding_step,
+            "is_building": is_building,
+        },
+        "momentum": {
+            "posts_made": posts_made,
+            "last_export": last_export,
+        },
+        "daily_post": daily,
+    }
+    cache_set(cache_key, result)
+    return result
 
 
 

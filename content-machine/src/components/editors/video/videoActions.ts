@@ -16,6 +16,7 @@
  */
 
 import type { EditorAction } from "../shared/actionRegistry";
+import type { RegenScope } from "../shared/RegenInline";
 import type { VideoSpec } from "@/lib/video-spec";
 
 export type VideoActionsHost = {
@@ -24,7 +25,7 @@ export type VideoActionsHost = {
   /** True while AI refine is mid-flight; disables refine actions. */
   aiRefineBusy: boolean;
   /** True while the regen scope of that name is busy. */
-  regenBusyScope: "hooks" | "script" | "caption" | "text_blocks" | null;
+  regenBusyScope: RegenScope | null;
 
   /** Current spec; some actions are spec-dependent (e.g. enable Outline only when text isn't already outlined). */
   spec: VideoSpec | null;

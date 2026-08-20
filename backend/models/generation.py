@@ -445,6 +445,7 @@ class GenerationSessionOut(BaseModel):
     carousel_slide_count: Optional[int] = None
     status: str
     feedback: Optional[str] = None
+    last_error: Optional[str] = None
     prompt_version: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None

@@ -1,4 +1,6 @@
-import { replicabilityLabel } from "@/lib/replicability-label";
+import { replicabilityLabel, type ReplicabilityTranslator } from "@/lib/replicability-label";
+
+export type { ReplicabilityTranslator };
 
 /** True when we should show Silas v2 weighted /100 (persisted + v2 prompt). */
 export function isSilasV2WeightedDisplay(a: {
@@ -12,29 +14,32 @@ export function isSilasV2WeightedDisplay(a: {
   );
 }
 
-export function formatSilasScoreSummary(a: {
-  total_score?: number | null;
-  replicability_rating?: string | null;
-  weighted_total?: number | null;
-  silas_rating?: string | null;
-  /** Job completion payload uses `rating` (human-readable). */
-  rating?: string | null;
-  prompt_version?: string | null;
-}): { scoreText: string; maxSuffix: string; ratingText: string | null } {
+export function formatSilasScoreSummary(
+  a: {
+    total_score?: number | null;
+    replicability_rating?: string | null;
+    weighted_total?: number | null;
+    silas_rating?: string | null;
+    /** Job completion payload uses `rating` (human-readable). */
+    rating?: string | null;
+    prompt_version?: string | null;
+  },
+  t?: ReplicabilityTranslator,
+): { scoreText: string; maxSuffix: string; ratingText: string | null } {
   if (isSilasV2WeightedDisplay(a)) {
     const n = Number(a.weighted_total);
     const rounded = Number.isFinite(n) ? Math.round(n) : null;
     const ratingText =
       (a.silas_rating && a.silas_rating.trim()) ||
       (a.rating && a.rating.trim()) ||
-      (a.replicability_rating ? replicabilityLabel(a.replicability_rating) : null);
+      (a.replicability_rating ? replicabilityLabel(a.replicability_rating, t) : null);
     return {
       scoreText: rounded != null ? String(rounded) : "—",
       maxSuffix: "/100",
       ratingText,
     };
   }
-  const ratingText = a.replicability_rating ? replicabilityLabel(a.replicability_rating) : null;
+  const ratingText = a.replicability_rating ? replicabilityLabel(a.replicability_rating, t) : null;
   return {
     scoreText: a.total_score != null ? String(a.total_score) : "—",
     maxSuffix: "/50",

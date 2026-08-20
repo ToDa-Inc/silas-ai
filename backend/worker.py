@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional
 
 from core.config import Settings, get_settings
 from core.database import get_supabase_for_settings
+from core.errors import MissingCredentialsError
 from core.id_generator import generate_job_id
 from jobs.baseline_scrape import run_baseline_scrape
 from jobs.client_auto_profile import run_client_auto_profile
@@ -27,6 +28,7 @@ from jobs.format_digest_recompute import run_format_digest_recompute
 from jobs.milestone_scrape import run_milestone_scrape
 from jobs.batch_rescore_scraped_reels_similarity import run_batch_rescore_scraped_reels_similarity
 from jobs.keyword_reel_similarity import run_keyword_reel_similarity
+from jobs.onboarding_ig_prefill import run_onboarding_ig_prefill
 from jobs.onboarding_pipeline import run_onboarding_pipeline
 from jobs.niche_reel_scrape import run_niche_reel_scrape
 from jobs.reel_analyze_url import run_reel_analyze_bulk, run_reel_analyze_url
@@ -41,6 +43,46 @@ def _fail_job(settings: Settings, job_id: str, message: str) -> None:
             "status": "failed",
             "completed_at": datetime.now(timezone.utc).isoformat(),
             "error_message": message[:8000],
+        }
+    ).eq("id", job_id).execute()
+
+
+_MAX_MISSING_CREDENTIALS_REQUEUES = 5
+
+
+def _requeue_or_fail_job(settings: Settings, job: Dict[str, Any], message: str) -> None:
+    """Release a job this worker can't run (missing credentials) back to the queue.
+
+    Multiple worker processes (e.g. teammates' local dev workers) can share one
+    background_jobs queue via claim_next_job(). If *this* process claimed a job it
+    lacks credentials for, failing it permanently would silently drop real work
+    (Apify/OpenRouter results already produced elsewhere get discarded) just because
+    this particular worker isn't configured. Put it back as 'queued' so a properly
+    configured worker picks it up on its next poll instead.
+
+    Capped at `_MAX_MISSING_CREDENTIALS_REQUEUES` (tracked in payload) so that if *no*
+    worker in the pool has the required credentials, the job still fails loudly instead
+    of bouncing between misconfigured workers forever.
+    """
+    job_id = job["id"]
+    payload = dict(job.get("payload") or {})
+    attempts = int(payload.get("_missing_cred_requeues") or 0) + 1
+    supabase = get_supabase_for_settings(settings)
+    if attempts > _MAX_MISSING_CREDENTIALS_REQUEUES:
+        _fail_job(
+            settings,
+            job_id,
+            f"No worker in the pool has the required credentials after "
+            f"{_MAX_MISSING_CREDENTIALS_REQUEUES} attempts: {message}",
+        )
+        return
+    payload["_missing_cred_requeues"] = attempts
+    supabase.table("background_jobs").update(
+        {
+            "status": "queued",
+            "started_at": None,
+            "payload": payload,
+            "error_message": f"requeued (this worker missing credentials, attempt {attempts}): {message[:1500]}",
         }
     ).eq("id", job_id).execute()
 
@@ -154,6 +196,20 @@ def _process_job_sync(settings: Settings, job: Dict[str, Any]) -> None:
         run_daily_intelligence_tick(settings, job)
     elif jt == "onboarding_pipeline":
         run_onboarding_pipeline(settings, job)
+    elif jt == "onboarding_ig_prefill":
+        run_onboarding_ig_prefill(settings, job)
+    elif jt == "onboarding_voice_transcribe":
+        if (job.get("payload") or {}).get("inline_api"):
+            return
+        from jobs.onboarding_voice_transcribe import run_onboarding_voice_transcribe
+
+        run_onboarding_voice_transcribe(settings, job)
+    elif jt == "onboarding_brain_generate":
+        if (job.get("payload") or {}).get("inline_api"):
+            return
+        from jobs.onboarding_brain_generate import run_onboarding_brain_generate
+
+        run_onboarding_brain_generate(settings, job)
     elif jt == "video_render":
         jid = str(job.get("id") or "").strip()
         if jid:
@@ -162,12 +218,41 @@ def _process_job_sync(settings: Settings, job: Dict[str, Any]) -> None:
         _fail_job(settings, job["id"], f"Unknown job_type: {jt}")
 
 
+async def _run_claimed_job(settings: Settings, job: Dict[str, Any]) -> None:
+    jid = job.get("id")
+    print(f"Picked job {jid} type={job.get('job_type')}")
+    try:
+        await asyncio.to_thread(_process_job_sync, settings, job)
+        print(f"Completed job {jid}")
+    except MissingCredentialsError as e:
+        print(f"Job {jid} missing credentials on this worker — requeuing: {e!s}")
+        _requeue_or_fail_job(settings, job, str(e))
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(tb)
+        _fail_job(settings, jid, f"{e!s}\n{tb}")
+
+
 async def job_loop(settings: Settings) -> None:
-    """Claim and run queued background_jobs. Unchanged behavior from pre-scheduler worker."""
-    print("job_loop started — polling claim_next_job every 5s")
+    """Claim and run queued background_jobs, up to `settings.worker_concurrency` at once.
+
+    Concurrency (not just 1-at-a-time) is required, not just a throughput nicety:
+    orchestration jobs like onboarding_pipeline enqueue sub-jobs and then block this
+    same worker in wait_for_jobs() until those sub-jobs finish. With concurrency=1 that
+    self-deadlocks — the sub-job can never be claimed because the only worker slot is
+    busy waiting for it. claim_next_job() is RPC/row-locked so concurrent claims from
+    one process are as safe as the existing multi-process (dev + prod) case already was.
+    """
+    print(f"job_loop started — polling claim_next_job every 5s, concurrency={settings.worker_concurrency}")
     idle_polls = 0
+    running: set[asyncio.Task] = set()
     while True:
         try:
+            running = {t for t in running if not t.done()}
+            if len(running) >= settings.worker_concurrency:
+                done, running = await asyncio.wait(running, return_when=asyncio.FIRST_COMPLETED)
+                continue
+
             job = await asyncio.to_thread(_claim_job_safe, settings)
             if not job:
                 idle_polls += 1
@@ -184,18 +269,16 @@ async def job_loop(settings: Settings) -> None:
                         "Queue builds when Intelligence sync enqueues scrapes, or run phase0_claim_next_job.sql "
                         "if RPC errors appeared above."
                     )
-                await asyncio.sleep(5)
+                if running:
+                    done, running = await asyncio.wait(
+                        running, timeout=5, return_when=asyncio.FIRST_COMPLETED
+                    )
+                else:
+                    await asyncio.sleep(5)
                 continue
+
             idle_polls = 0
-            jid = job.get("id")
-            print(f"Picked job {jid} type={job.get('job_type')}")
-            try:
-                await asyncio.to_thread(_process_job_sync, settings, job)
-                print(f"Completed job {jid}")
-            except Exception as e:
-                tb = traceback.format_exc()
-                print(tb)
-                _fail_job(settings, jid, f"{e!s}\n{tb}")
+            running.add(asyncio.create_task(_run_claimed_job(settings, job)))
         except Exception:
             print(traceback.format_exc())
             await asyncio.sleep(5)

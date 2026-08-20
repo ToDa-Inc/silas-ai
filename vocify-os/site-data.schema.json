@@ -1,0 +1,50 @@
+{
+  "collections": {
+    "initiatives": {
+      "fields": {
+        "title": { "type": "string", "required": true },
+        "colour": { "type": "string", "required": true },
+        "position": { "type": "integer", "required": true },
+        "archived": { "type": "boolean", "default": false }
+      },
+      "access": {
+        "read": "public",
+        "insert": "owner",
+        "update": "owner",
+        "delete": "owner"
+      }
+    },
+    "tasks": {
+      "fields": {
+        "title": { "type": "string", "required": true },
+        "initiative_id": { "type": "string", "required": true },
+        "status": { "type": "string", "required": true },
+        "priority": { "type": "integer", "minimum": 0, "maximum": 3, "required": true },
+        "due_date": { "type": "string" },
+        "hubspot_deal_id": { "type": "string" },
+        "owner": { "type": "string" },
+        "notes": { "type": "string" },
+        "archived": { "type": "boolean", "default": false }
+      },
+      "access": {
+        "read": "public",
+        "insert": "owner",
+        "update": "owner",
+        "delete": "owner"
+      }
+    },
+    "daily_focus": {
+      "fields": {
+        "task_id": { "type": "string", "required": true },
+        "date": { "type": "string", "required": true },
+        "order_index": { "type": "integer", "required": true }
+      },
+      "access": {
+        "read": "public",
+        "insert": "owner",
+        "update": "owner",
+        "delete": "owner"
+      }
+    }
+  }
+}

@@ -256,7 +256,7 @@ export function GenerationLibrariesPanel({ clientSlug, orgSlug, client, disabled
                           </button>
                           {openCtaTypeId === cta.id ? (
                             <div
-                              className="absolute left-0 top-full z-40 mt-2 w-full overflow-hidden rounded-xl border border-outline-variant/15 bg-[#18181b] py-1 shadow-xl"
+                              className="absolute left-0 top-full z-40 mt-2 w-full overflow-hidden rounded-xl border border-outline-variant/15 bg-zinc-900 py-1 shadow-xl"
                               role="listbox"
                             >
                               {CTA_TYPES.map((t) => (

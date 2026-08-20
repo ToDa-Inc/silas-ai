@@ -458,7 +458,7 @@ def generate_freepik_washed_background_png(
     if wash:
         bg = _wash_image(bg, target_w, target_h)
     else:
-        bg = _resize_crop(bg, target_w, target_h)
+        bg = _resize_cover(bg, target_w, target_h)
     out = io.BytesIO()
     bg.save(out, format="PNG", optimize=True)
     return out.getvalue()

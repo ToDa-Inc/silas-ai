@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ExternalLink, Sparkles, X } from "lucide-react";
@@ -44,6 +45,7 @@ export function ActivityReelHubModal({
   orgSlug,
   onAfterAnalyzeJob,
 }: Props) {
+  const t = useTranslations("common");
   const router = useRouter();
   const [sub, setSub] = useState<Sub>("hub");
 
@@ -87,7 +89,7 @@ export function ActivityReelHubModal({
   }
 
   const postUrl = reel.post_url?.trim() || "";
-  const score = reel.analysis ? formatSilasScoreSummary(reel.analysis) : null;
+  const score = reel.analysis ? formatSilasScoreSummary(reel.analysis, t) : null;
   const postedAt = formatPostedAt(reel.posted_at);
 
   return (

@@ -1,0 +1,10 @@
+{
+  "publishes": {
+    "boreal-fresco-zhq7": {
+      "siteUrl": "https://boreal-fresco-zhq7.here.now/"
+    },
+    "presto-pepper-kam7": {
+      "siteUrl": "https://presto-pepper-kam7.here.now/"
+    }
+  }
+}

@@ -4,9 +4,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Loader2, UserPlus } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { createClient } from "@/lib/supabase/client";
 
 export function SignupClient() {
+  const t = useTranslations("auth");
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -37,9 +39,7 @@ export function SignupClient() {
         router.refresh();
         return;
       }
-      setInfo(
-        "Check your email to confirm your account — then you’ll set up your workspace (organization and first creator).",
-      );
+      setInfo(t("checkEmail"));
     } finally {
       setBusy(false);
     }
@@ -53,15 +53,12 @@ export function SignupClient() {
             <UserPlus className="h-7 w-7" aria-hidden />
           </div>
         </div>
-        <h1 className="text-center text-xl font-bold text-on-surface">Create account</h1>
-        <p className="mt-2 text-center text-sm text-zinc-500">
-          Next you&apos;ll create your workspace: an organization and your first creator (client). That
-          scopes Intelligence, competitor data, and your brand context to that creator.
-        </p>
+        <h1 className="text-center text-xl font-bold text-on-surface">{t("createAccount")}</h1>
+        <p className="mt-2 text-center text-sm text-zinc-500">{t("signUpSubtitle")}</p>
         <form onSubmit={(e) => void onSubmit(e)} className="mt-8 space-y-4">
           <label className="block text-sm">
             <span className="mb-1 block text-[10px] font-bold uppercase tracking-widest text-zinc-500">
-              Email
+              {t("email")}
             </span>
             <input
               type="email"
@@ -74,7 +71,7 @@ export function SignupClient() {
           </label>
           <label className="block text-sm">
             <span className="mb-1 block text-[10px] font-bold uppercase tracking-widest text-zinc-500">
-              Password
+              {t("password")}
             </span>
             <input
               type="password"
@@ -94,13 +91,13 @@ export function SignupClient() {
             className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary-container py-2.5 text-sm font-bold text-on-primary-container disabled:opacity-50"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
-            {busy ? "Creating…" : "Sign up"}
+            {busy ? t("creating") : t("signUp")}
           </button>
         </form>
         <p className="mt-6 text-center text-sm text-zinc-500">
-          Already have an account?{" "}
+          {t("alreadyHaveAccount")}{" "}
           <Link href="/login" className="font-semibold text-primary hover:underline">
-            Sign in
+            {t("signInLink")}
           </Link>
         </p>
       </div>

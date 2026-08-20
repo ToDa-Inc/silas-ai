@@ -13,6 +13,7 @@ from services.scrape_cycle import (
     enqueue_stale_profile_scrapes_all_clients,
     enqueue_sync_all_jobs_all_clients,
 )
+from services.daily_opportunities import compute_daily_opportunities_all_clients
 
 router = APIRouter(prefix="/api/v1/cron", tags=["cron"])
 
@@ -132,3 +133,14 @@ def cron_niche_discovery_alias(
 ) -> Dict[str, Any]:
     """Same as POST /keyword-reel-similarity — shorter path for cron / GitHub Actions URLs."""
     return cron_keyword_reel_similarity(settings, x_cron_secret)
+
+
+@router.post("/daily-opportunity-snapshot", status_code=status.HTTP_200_OK)
+def cron_daily_opportunity_snapshot(
+    settings: Annotated[Settings, Depends(get_settings)],
+    x_cron_secret: Annotated[Optional[str], Header(alias="X-Cron-Secret")] = None,
+) -> Dict[str, Any]:
+    """Compute and store once-per-day home-feed opportunity picks for all active clients."""
+    _require_cron_secret(settings, x_cron_secret)
+    supabase = get_supabase()
+    return compute_daily_opportunities_all_clients(supabase, settings)

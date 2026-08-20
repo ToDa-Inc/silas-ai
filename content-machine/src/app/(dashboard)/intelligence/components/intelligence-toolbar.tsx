@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { SyncDataModal } from "./sync-data-modal";
 
 type Props = {
@@ -19,19 +20,23 @@ type Props = {
 
 const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 
-function formatRelativeAgo(iso: string, now: number): string | null {
+function formatRelativeAgo(
+  iso: string,
+  now: number,
+  t: (key: string, values?: { count?: number }) => string,
+): string | null {
   const ts = Date.parse(iso);
   if (!Number.isFinite(ts)) return null;
   const diffMs = now - ts;
-  if (diffMs < 0) return "just now";
+  if (diffMs < 0) return t("justNow");
   const sec = Math.floor(diffMs / 1000);
-  if (sec < 45) return "just now";
+  if (sec < 45) return t("justNow");
   const min = Math.floor(sec / 60);
-  if (min < 60) return `${min} min ago`;
+  if (min < 60) return t("minutesAgo", { count: min });
   const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr} hr ago`;
+  if (hr < 24) return t("hoursAgo", { count: hr });
   const days = Math.floor(hr / 24);
-  if (days < 7) return `${days} day${days === 1 ? "" : "s"} ago`;
+  if (days < 7) return t("daysAgo", { count: days });
   return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
@@ -43,6 +48,7 @@ export function IntelligenceToolbar({
   lastSyncedAt,
   variant = "default",
 }: Props) {
+  const t = useTranslations("intelligence");
   const [open, setOpen] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   // Resolved on the client to avoid SSR/CSR drift, then re-ticked every minute so the
@@ -55,13 +61,11 @@ export function IntelligenceToolbar({
   }, []);
 
   const tsParsed = lastSyncedAt ? Date.parse(lastSyncedAt) : NaN;
-  const ago = lastSyncedAt && now != null ? formatRelativeAgo(lastSyncedAt, now) : null;
+  const ago = lastSyncedAt && now != null ? formatRelativeAgo(lastSyncedAt, now, t) : null;
   const stale =
     Number.isFinite(tsParsed) && now != null ? now - tsParsed > STALE_AFTER_MS : false;
 
-  const buttonTitle =
-    disabledHint?.trim() ||
-    "Pull the latest reels and numbers for this creator and everyone you track.";
+  const buttonTitle = disabledHint?.trim() || t("refreshHint");
 
   const embedded = variant === "embedded";
 
@@ -77,7 +81,7 @@ export function IntelligenceToolbar({
         type="button"
         disabled={disabled || !clientSlug.trim() || !orgSlug.trim()}
         title={buttonTitle}
-        aria-label="Refresh data"
+        aria-label={t("refresh")}
         onClick={() => setOpen(true)}
         className={
           embedded
@@ -89,7 +93,7 @@ export function IntelligenceToolbar({
         }
       >
         <RefreshCw className={embedded ? "h-3.5 w-3.5 shrink-0" : "h-4 w-4 shrink-0"} aria-hidden />
-        Refresh
+        {t("refresh")}
       </button>
       {ago ? (
         <p
@@ -100,16 +104,16 @@ export function IntelligenceToolbar({
                 : "text-[10px] leading-snug text-amber-700 dark:text-amber-400"
               : "text-[10px] leading-snug text-app-fg-muted"
           }
-          aria-label={`Last refreshed ${ago}`}
+          aria-label={t("lastRefreshed", { ago })}
         >
           {stale
             ? embedded
-              ? `Last refreshed ${ago} · tap Refresh when you want new numbers`
-              : `Last refreshed ${ago} — may be out of date`
-            : `Last refreshed ${ago}`}
+              ? t("lastRefreshedEmbeddedStale", { ago })
+              : t("lastRefreshedStale", { ago })
+            : t("lastRefreshed", { ago })}
         </p>
       ) : !disabled && clientSlug.trim() ? (
-        <p className="text-[10px] leading-snug text-app-fg-muted">Not refreshed yet</p>
+        <p className="text-[10px] leading-snug text-app-fg-muted">{t("notRefreshed")}</p>
       ) : null}
       {statusMsg ? (
         <p

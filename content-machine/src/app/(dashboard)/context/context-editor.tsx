@@ -81,6 +81,43 @@ const GENERATED_KEYS: Exclude<ContextSectionKey, "onboarding_transcript">[] = [
   "offer_documentation",
 ];
 
+type SectionQuestion = { q: string; placeholder?: string };
+
+const SECTION_QUESTIONNAIRES: Record<
+  Exclude<ContextSectionKey, "onboarding_transcript">,
+  SectionQuestion[]
+> = {
+  icp: [
+    { q: "Who exactly is your ideal client? (role, niche, stage)", placeholder: "e.g. B2B SaaS founders, pre-Series A" },
+    { q: "What are their top 3 pains right now?", placeholder: "e.g. no pipeline, posting with no results, no time" },
+    { q: "What do they want most — the outcome they're after?", placeholder: "e.g. predictable inbound leads every week" },
+    { q: "Any demographics or psychographics worth noting? (optional)", placeholder: "e.g. 30–45, time-poor, skeptical of “gurus”" },
+  ],
+  brand_map: [
+    { q: "Your positioning in one sentence?", placeholder: "e.g. The outbound-meets-content system for B2B founders" },
+    { q: "Your core values — what you stand for?" },
+    { q: "Personality / vibe of the brand?", placeholder: "e.g. bold, warm, expert, no fluff" },
+    { q: "What makes you different from competitors?" },
+  ],
+  story_board: [
+    { q: "How did you start — your origin story?" },
+    { q: "A turning point or defining moment?" },
+    { q: "1–2 real anecdotes or client examples you reference often?" },
+  ],
+  communication_guideline: [
+    { q: "Your tone in 3–5 adjectives?", placeholder: "e.g. confident, warm, direct" },
+    { q: "Words or phrases you love to use?" },
+    { q: "Words, phrases or topics to avoid?" },
+    { q: "Any style rules? (emojis, length, formatting) (optional)" },
+  ],
+  offer_documentation: [
+    { q: "What do you sell? (name + format)", placeholder: "e.g. “Pipeline OS”, 12-week group program" },
+    { q: "Price or price range?" },
+    { q: "The core promise / transformation?" },
+    { q: "Common objections and how you handle them? (optional)" },
+  ],
+};
+
 function normalizeSection(raw: unknown): ClientContextSection {
   if (raw && typeof raw === "object" && "text" in raw) {
     const o = raw as Record<string, unknown>;
@@ -271,6 +308,10 @@ export function ContextEditor({
     step: "send" | "read";
   } | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  /** Section whose "Build with questions" panel is open, and per-section answers. */
+  const [qaOpenSection, setQaOpenSection] = useState<ContextSectionKey | null>(null);
+  const [qaAnswers, setQaAnswers] = useState<Record<string, string[]>>({});
+  const [qaBusySection, setQaBusySection] = useState<ContextSectionKey | null>(null);
   const [clientDna, setClientDna] = useState<Record<string, unknown> | null>(() =>
     initialClientDna && typeof initialClientDna === "object" ? { ...initialClientDna } : null,
   );
@@ -507,6 +548,66 @@ export function ContextEditor({
         updated_at: prev[key].updated_at,
       },
     }));
+  }
+
+  function setQaAnswer(key: ContextSectionKey, idx: number, value: string) {
+    setQaAnswers((prev) => {
+      const arr = [...(prev[key] ?? [])];
+      arr[idx] = value;
+      return { ...prev, [key]: arr };
+    });
+  }
+
+  async function handleGenerateSection(
+    key: Exclude<ContextSectionKey, "onboarding_transcript">,
+  ) {
+    if (disabled || qaBusySection || !clientSlug.trim() || !orgSlug.trim()) return;
+    const questions = SECTION_QUESTIONNAIRES[key];
+    const answers = qaAnswers[key] ?? [];
+    const brief = questions
+      .map((item, i) => ({ q: item.q, a: (answers[i] ?? "").trim() }))
+      .filter((p) => p.a)
+      .map((p) => `Q: ${p.q}\nA: ${p.a}`)
+      .join("\n\n");
+    if (brief.trim().length < 20) {
+      setStatus("Answer at least one question with a bit of detail before generating.");
+      return;
+    }
+    setQaBusySection(key);
+    setStatus(null);
+    const apiBase = getContentApiBase();
+    const headersBase = await clientApiHeaders({ orgSlug });
+    try {
+      const r = await contentApiFetch(
+        `${apiBase}/api/v1/clients/${encodeURIComponent(clientSlug)}/context/generate-section`,
+        {
+          method: "POST",
+          headers: { ...headersBase, "Content-Type": "application/json" },
+          body: JSON.stringify({ section: key, brief }),
+        },
+      );
+      const text = await r.text();
+      const json = parseJsonObject(text) as { text?: string } | null;
+      if (!r.ok) {
+        setStatus(formatFastApiError(json as Record<string, unknown>, text));
+        return;
+      }
+      const generated = json && typeof json.text === "string" ? json.text.trim() : "";
+      if (!generated) {
+        setStatus("The AI returned an empty document. Add more detail and try again.");
+        return;
+      }
+      setState((prev) => ({
+        ...prev,
+        [key]: { ...prev[key], text: generated, source: "generated", file: null },
+      }));
+      setQaOpenSection(null);
+      setStatus("Draft ready — review and save.");
+    } catch {
+      setStatus("Network error.");
+    } finally {
+      setQaBusySection(null);
+    }
   }
 
   async function handleSave() {
@@ -976,6 +1077,9 @@ export function ContextEditor({
           const rowUpload = uploadActivity?.section === key ? uploadActivity : null;
           const busyUp = Boolean(rowUpload);
           const filled = row.text.trim().length > 0;
+          const qaOpen = qaOpenSection === key;
+          const qaBusy = qaBusySection === key;
+          const questions = SECTION_QUESTIONNAIRES[key];
           return (
             <li
               key={key}
@@ -1029,7 +1133,22 @@ export function ContextEditor({
               </button>
               {open ? (
                 <div className="space-y-2 px-3 pb-3 pt-1 sm:pl-9">
-                  <div className="flex justify-end">
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <button
+                      type="button"
+                      disabled={disabled || qaBusy}
+                      onClick={() => setQaOpenSection(qaOpen ? null : key)}
+                      className={cn(
+                        "inline-flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-[11px] font-medium transition disabled:opacity-50",
+                        qaOpen
+                          ? "border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                          : "border-outline-variant/20 text-app-fg-secondary hover:bg-white/[0.04]",
+                      )}
+                      aria-expanded={qaOpen}
+                    >
+                      <Sparkles className="h-3 w-3" aria-hidden />
+                      <span>Build with questions</span>
+                    </button>
                     <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-outline-variant/20 px-2.5 py-1.5 text-[11px] font-medium text-app-fg-secondary hover:bg-white/[0.04]">
                       {busyUp ? (
                         <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
@@ -1050,6 +1169,49 @@ export function ContextEditor({
                       />
                     </label>
                   </div>
+                  {qaOpen ? (
+                    <div className="space-y-3 rounded-lg border border-amber-500/25 bg-amber-500/[0.04] p-3 dark:bg-amber-500/[0.05]">
+                      <p className="text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-400">
+                        Answer a few questions and let AI draft this document. You can edit it
+                        afterwards, and you don&apos;t have to fill every field.
+                      </p>
+                      {questions.map((item, i) => (
+                        <label key={i} className="block">
+                          <span className="mb-1 block text-[11px] font-medium text-app-fg-secondary">
+                            {item.q}
+                          </span>
+                          <textarea
+                            value={qaAnswers[key]?.[i] ?? ""}
+                            onChange={(e) => setQaAnswer(key, i, e.target.value)}
+                            disabled={disabled || qaBusy}
+                            rows={2}
+                            className="w-full resize-y rounded-lg border border-outline-variant/15 bg-surface-container-low/80 px-3 py-2 text-sm text-on-surface placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-amber-500/40 disabled:opacity-50"
+                            placeholder={item.placeholder ?? ""}
+                          />
+                        </label>
+                      ))}
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={disabled || qaBusy}
+                          onClick={() => void handleGenerateSection(key)}
+                          className="inline-flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-bold text-zinc-950 disabled:opacity-50"
+                        >
+                          {qaBusy ? (
+                            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                          ) : (
+                            <Sparkles className="h-4 w-4" aria-hidden />
+                          )}
+                          {qaBusy ? "Generating…" : "Generate with AI"}
+                        </button>
+                        {filled ? (
+                          <span className="text-[11px] text-zinc-500">
+                            This will replace the current text.
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
                   {rowUpload ? (
                     <div
                       className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs"

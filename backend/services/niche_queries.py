@@ -2,7 +2,17 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List
+
+
+def sanitize_apify_search_term(text: str, *, max_len: int = 48, max_words: int = 5) -> str:
+    """Apify user search rejects punctuation and long free-text quiz answers."""
+    cleaned = re.sub(r"[^\w\s-]", " ", str(text or ""), flags=re.UNICODE)
+    words = [w for w in cleaned.split() if len(w) >= 2][:max_words]
+    if not words:
+        return "content creator"
+    return " ".join(words)[:max_len].strip() or "content creator"
 
 
 def pick_default_keyword(niche_config: List) -> str:
@@ -69,8 +79,8 @@ def collect_keywords(niches: List, payload: Dict[str, Any]) -> List[str]:
                     seen.add(s)
                     ordered.append(s)
     if not ordered:
-        return [pick_default_keyword(niches)]
-    return ordered
+        return [sanitize_apify_search_term(pick_default_keyword(niches))]
+    return [sanitize_apify_search_term(k) for k in ordered[:12]]
 
 
 def build_niche_reel_search_queries(

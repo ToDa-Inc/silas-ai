@@ -63,11 +63,12 @@ class TestOnboardingKeywordPayload(unittest.TestCase):
         self.assertEqual(payload["min_views_per_day"], ONBOARDING_MIN_VIEWS_PER_DAY)
         self.assertTrue(payload_includes_google_cse(payload))
 
-    def test_onboarding_pipeline_enqueues_month_window_payload(self) -> None:
+    def test_onboarding_pipeline_runs_inline_with_month_window_payload(self) -> None:
         src = _ONBOARDING_PIPELINE.read_text(encoding="utf-8")
         self.assertIn("from services.keyword_search_window import onboarding_keyword_similarity_payload", src)
-        self.assertIn("payload=onboarding_keyword_similarity_payload()", src)
-        self.assertIn("enqueue_keyword_reel_similarity_for_client", src)
+        self.assertIn("**onboarding_keyword_similarity_payload()", src)
+        self.assertIn("payload=dict(ONBOARDING_KEYWORD_PAYLOAD)", src)
+        self.assertNotIn("enqueue_keyword_reel_similarity_for_client", src)
 
 
 class TestResolveMinViewsPerDay(unittest.TestCase):

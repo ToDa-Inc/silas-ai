@@ -2,6 +2,7 @@
 
 import { useEffect, useId } from "react";
 import { Loader2 } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/cn";
 
 type Props = {
@@ -22,12 +23,15 @@ export function ConfirmDialog({
   onClose,
   title,
   description,
-  confirmLabel = "Confirm",
-  cancelLabel = "Cancel",
+  confirmLabel,
+  cancelLabel,
   variant = "default",
   busy = false,
   onConfirm,
 }: Props) {
+  const t = useTranslations("common");
+  const resolvedConfirm = confirmLabel ?? t("confirm");
+  const resolvedCancel = cancelLabel ?? t("cancel");
   const titleId = useId();
   const descId = useId();
 
@@ -81,7 +85,7 @@ export function ConfirmDialog({
             onClick={onClose}
             className="inline-flex items-center justify-center rounded-lg border border-zinc-200/90 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-800 shadow-sm transition-colors hover:bg-zinc-50 disabled:opacity-50 dark:border-white/15 dark:bg-zinc-900/80 dark:text-app-fg dark:hover:bg-zinc-800"
           >
-            {cancelLabel}
+            {resolvedCancel}
           </button>
           <button
             type="button"
@@ -95,7 +99,7 @@ export function ConfirmDialog({
             )}
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
-            {confirmLabel}
+            {resolvedConfirm}
           </button>
         </div>
       </div>

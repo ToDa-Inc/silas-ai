@@ -1,7 +1,11 @@
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { DashboardShell } from "@/components/dashboard/dashboard-shell";
 import { fetchOnboardingStatus, getCachedServerApiContext } from "@/lib/api";
+import {
+  ONBOARDING_BYPASS_COOKIE,
+  readOnboardingBypassActive,
+} from "@/lib/onboarding-bypass";
 import { dashboardPathAllowedDuringOnboarding } from "@/lib/onboarding-gates";
 import { createClient } from "@/lib/supabase/server";
 
@@ -11,6 +15,11 @@ export default async function DashboardLayout({
   children: React.ReactNode;
 }) {
   const ctx = await getCachedServerApiContext();
+  const cookieStore = await cookies();
+  const onboardingBypass = readOnboardingBypassActive(
+    cookieStore.get(ONBOARDING_BYPASS_COOKIE)?.value,
+  );
+
   if (!ctx.user) {
     const h = await headers();
     const nextPath = h.get("x-middleware-pathname")?.trim() || "/dashboard";
@@ -19,7 +28,7 @@ export default async function DashboardLayout({
   if (ctx.user && !ctx.tenancy) {
     redirect("/onboarding");
   }
-  if (ctx.user && ctx.tenancy && ctx.clientSlug) {
+  if (!onboardingBypass && ctx.user && ctx.tenancy && ctx.clientSlug) {
     const h = await headers();
     const path = h.get("x-middleware-pathname")?.trim() || "";
     if (!dashboardPathAllowedDuringOnboarding(path)) {
@@ -61,6 +70,7 @@ export default async function DashboardLayout({
       clients={clients}
       activeClientSlug={ctx.clientSlug}
       orgLabel={ctx.tenancy?.orgSlug ?? ""}
+      onboardingBypassActive={onboardingBypass}
     >
       {children}
     </DashboardShell>

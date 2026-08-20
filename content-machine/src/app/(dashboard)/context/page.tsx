@@ -1,8 +1,10 @@
 import { Database } from "lucide-react";
+import { getTranslations } from "next-intl/server";
 import { fetchClient, getCachedServerApiContext } from "@/lib/api";
 import { ContextEditor } from "./context-editor";
 
 export default async function ContextPage() {
+  const t = await getTranslations("context");
   const { clientSlug, orgSlug, user, tenancy } = await getCachedServerApiContext();
   const clientRes = await fetchClient();
   const client = clientRes.ok ? clientRes.data : null;
@@ -15,11 +17,8 @@ export default async function ContextPage() {
       <div className="mb-8 flex items-center gap-3">
         <Database className="h-8 w-8 text-zinc-500" aria-hidden />
         <div>
-          <h1 className="text-lg font-semibold text-app-fg">Context</h1>
-          <p className="mt-1 text-sm text-app-fg-secondary">
-            Transcript and strategy sections below feed your AI profile — what the system uses to
-            understand this creator for reel analysis (and future generators).
-          </p>
+          <h1 className="text-lg font-semibold text-app-fg">{t("title")}</h1>
+          <p className="mt-1 text-sm text-app-fg-secondary">{t("subtitle")}</p>
         </div>
       </div>
 

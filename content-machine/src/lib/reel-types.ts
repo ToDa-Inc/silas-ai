@@ -48,6 +48,8 @@ export type ReelAnalysisSummary = {
   prompt_version?: string | null;
   weighted_total?: number | null;
   silas_rating?: string | null;
+  /** One-line topic summary from Silas or niche analysis (list/hover UI). */
+  preview_summary?: string | null;
 };
 
 export type ReelAnalysisStructuredSummary = {

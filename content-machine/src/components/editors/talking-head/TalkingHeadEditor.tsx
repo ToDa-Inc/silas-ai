@@ -18,6 +18,8 @@ import { Copy, Video } from "lucide-react";
 import { SaveStatusPill } from "@/components/editor-ui";
 import type { ClientImageRow, GenerationSession } from "@/lib/api-client";
 import type { CoverEditState } from "@/lib/cover-edit";
+import { useStudioShell } from "@/components/studio-shell-context";
+import { cn } from "@/lib/cn";
 
 import { AiContextSection } from "../shared/AiContextSection";
 import { CaptionSection } from "../shared/CaptionSection";
@@ -55,6 +57,7 @@ type Props = {
   captionBody: string;
   hashtags: string[];
   captionFull: string;
+  embedded?: boolean;
 };
 
 export function TalkingHeadEditor({
@@ -88,7 +91,11 @@ export function TalkingHeadEditor({
   captionBody,
   hashtags,
   captionFull,
+  embedded = false,
 }: Props) {
+  const { expanded: studioExpanded } = useStudioShell();
+  const scriptRows = Math.min(48, Math.max(14, scriptDraft.split("\n").length + 2));
+
   return (
     <div className="space-y-4">
       <div className="glass rounded-2xl border border-app-divider/80 p-5 md:p-6">
@@ -116,8 +123,14 @@ export function TalkingHeadEditor({
         <textarea
           value={scriptDraft}
           onChange={(e) => setScriptDraft(e.target.value)}
-          rows={Math.min(28, Math.max(10, scriptDraft.split("\n").length + 1))}
-          className="glass-inset w-full resize-y rounded-xl px-3 py-3 font-mono text-[13px] leading-relaxed text-app-fg placeholder:text-app-fg-subtle focus:outline-none focus:ring-2 focus:ring-amber-500/35"
+          rows={scriptRows}
+          className={cn(
+            "glass-inset w-full resize-y rounded-xl px-4 py-3 font-mono text-sm leading-relaxed text-app-fg placeholder:text-app-fg-subtle focus:outline-none focus:ring-2 focus:ring-amber-500/35",
+            embedded &&
+              (studioExpanded
+                ? "min-h-[min(62vh,680px)]"
+                : "min-h-[min(46vh,480px)]"),
+          )}
           placeholder="## Hook&#10;…&#10;&#10;## Build-up&#10;…&#10;&#10;## Reframe&#10;…"
         />
         <div className="mt-3 flex items-center gap-2 text-[11px] text-app-fg-subtle">
@@ -147,6 +160,7 @@ export function TalkingHeadEditor({
         onGenerateAi={onGenerateThumbnail}
         onComposeFromImage={onComposeCoverFromImage}
         step={2}
+        embedded={embedded}
       />
 
       <CaptionSection

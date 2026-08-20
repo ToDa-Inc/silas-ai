@@ -10,6 +10,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from core.config import Settings
+from core.errors import MissingCredentialsError
 from core.database import get_supabase_for_settings
 from core.id_generator import generate_reel_id
 from jobs.keyword_reel_similarity import score_reel_dict_for_keyword_similarity
@@ -118,7 +119,7 @@ def _ratio_str(r: Optional[Decimal]) -> Optional[str]:
 
 def run_profile_scrape(settings: Settings, job: Dict[str, Any]) -> None:
     if not settings.apify_api_token:
-        raise RuntimeError("APIFY_API_TOKEN not configured")
+        raise MissingCredentialsError("APIFY_API_TOKEN not configured")
 
     supabase = get_supabase_for_settings(settings)
     job_id = job["id"]
