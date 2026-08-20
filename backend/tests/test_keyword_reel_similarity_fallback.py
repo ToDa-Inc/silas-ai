@@ -66,6 +66,42 @@ class TestMergeKeywordDiscovery(unittest.TestCase):
         )
         self.assertEqual(raw["AAA"]["username"], "alt")
 
+    def test_missing_username_kept_then_filled(self) -> None:
+        raw: dict = {}
+        merge_keyword_discovery_items_into_raw_by_sc(
+            [
+                {
+                    "reel_url": "https://www.instagram.com/reel/NoUserSc/",
+                    "keyword": "führung",
+                }
+            ],
+            raw,
+            client_handle="client",
+            banned_handles=set(),
+            banned_scs=set(),
+            dismissed_scs=set(),
+            keywords=["führung"],
+        )
+        self.assertEqual(raw["NoUserSc"]["username"], "")
+        self.assertEqual(raw["NoUserSc"]["keywords"], ["führung"])
+        merge_keyword_discovery_items_into_raw_by_sc(
+            [
+                {
+                    "reel_url": "https://www.instagram.com/reel/NoUserSc/",
+                    "user_name": "laterfill",
+                    "keyword": "vorgesetzter",
+                }
+            ],
+            raw,
+            client_handle="client",
+            banned_handles=set(),
+            banned_scs=set(),
+            dismissed_scs=set(),
+            keywords=["führung"],
+        )
+        self.assertEqual(raw["NoUserSc"]["username"], "laterfill")
+        self.assertEqual(raw["NoUserSc"]["keywords"], ["führung", "vorgesetzter"])
+
 
 class TestDiscoverKeywordUrls(unittest.TestCase):
     def test_no_fallback_when_primary_has_urls(self) -> None:
@@ -140,6 +176,50 @@ class TestDiscoverKeywordUrls(unittest.TestCase):
             ],
         )
         self.assertEqual(meta["discovery_log"][-1]["usable_short_codes"], 1)
+
+
+class TestDiscoverSplitsByKeyword(unittest.TestCase):
+    def test_split_forwards_flag_and_calls_once_per_keyword(self) -> None:
+        calls: list[tuple[tuple, dict]] = []
+
+        def reel_batch(_token, keywords, **kwargs):
+            calls.append((tuple(keywords), dict(kwargs)))
+            return [
+                {
+                    "reel_url": f"https://www.instagram.com/reel/{kw}AAAAAA/",
+                    "user_name": f"user_{kw}",
+                    "keyword": kw,
+                }
+                for kw in keywords
+            ]
+
+        def post_batch(*_a, **_k):
+            raise AssertionError("fallback should not run")
+
+        raw, meta = discover_keyword_urls_with_fallback(
+            "tok",
+            ["gym", "psychologe"],
+            total_limit=40,
+            search_window="last-1-month",
+            client_handle="me",
+            banned_handles=set(),
+            banned_scs=set(),
+            dismissed_scs=set(),
+            reel_batch=reel_batch,
+            post_batch=post_batch,
+            split_by_keyword=True,
+        )
+        self.assertTrue(meta["keyword_search_split_by_keyword"])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0], ("gym", "psychologe"))
+        self.assertTrue(calls[0][1].get("split_by_keyword"))
+        self.assertEqual(calls[0][1].get("date"), "last-1-month")
+        self.assertEqual(len(raw), 2)
+        self.assertEqual(meta["keyword_search_coverage"]["gym"], 1)
+        self.assertEqual(meta["keyword_search_coverage"]["psychologe"], 1)
+        self.assertEqual(meta["keyword_search_keywords_with_results"], 2)
+        self.assertFalse(meta["keywords_run"][0]["batch"])
+        self.assertTrue(meta["keywords_run"][0]["split_by_keyword"])
 
 
 if __name__ == "__main__":

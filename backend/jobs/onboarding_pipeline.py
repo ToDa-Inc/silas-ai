@@ -36,6 +36,7 @@ from services.similarity_discovery_keywords import (
     similarity_keywords_auto_en,
     similarity_scan_keywords,
 )
+from services.keyword_search_window import onboarding_keyword_similarity_payload
 
 logger = logging.getLogger(__name__)
 
@@ -55,12 +56,10 @@ ONBOARDING_COMPETITOR_PAYLOAD: Dict[str, Any] = {
 # a same-niche test scored 92+); the earlier "no candidates" case was caused by the narrow
 # window returning too small/stale a raw pool, not by the bar being too strict.
 ONBOARDING_KEYWORD_PAYLOAD: Dict[str, Any] = {
+    **onboarding_keyword_similarity_payload(),
     "onboarding_fast": True,
     "max_keywords": 3,
-    "search_window": "last-1-month",
-    "days": 30,
     "max_score_cap": 12,
-    "min_views_per_day": 800,
     "min_onboarding_save": 8,
 }
 # Retry pass, used only when the first (precise, narrow-keyword) pass saves zero reels: casts
@@ -68,10 +67,9 @@ ONBOARDING_KEYWORD_PAYLOAD: Dict[str, Any] = {
 # -training material — an empty reel-review screen is a worse onboarding outcome than a few
 # lower-confidence matches the user can reject.
 ONBOARDING_KEYWORD_PAYLOAD_RETRY: Dict[str, Any] = {
+    **onboarding_keyword_similarity_payload(),
     "onboarding_fast": True,
     "max_keywords": 10,
-    "search_window": "last-1-month",
-    "days": 30,
     "max_score_cap": 12,
     "min_views_per_day": 250,
     "min_onboarding_save": 4,
@@ -79,10 +77,9 @@ ONBOARDING_KEYWORD_PAYLOAD_RETRY: Dict[str, Any] = {
 # User rejected the first taste batch ("Find more") — skip the narrow pass, use a different
 # keyword mix (skip already-tried terms), drop the bar further so we surface *new* candidates.
 ONBOARDING_KEYWORD_PAYLOAD_BROADEN: Dict[str, Any] = {
+    **onboarding_keyword_similarity_payload(),
     "onboarding_fast": True,
     "max_keywords": 12,
-    "search_window": "last-1-month",
-    "days": 30,
     "max_score_cap": 12,
     "min_views_per_day": 150,
     "min_onboarding_save": 3,

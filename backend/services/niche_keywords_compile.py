@@ -14,8 +14,10 @@ logger = logging.getLogger(__name__)
 
 _SYSTEM = """You output ONLY valid JSON (no markdown). Generate short Instagram reel search phrases.
 Rules:
-- 2–6 words each, lowercase, no hashtags, no questions, no first-person sentences.
-- Phrases someone would type to find reels in this niche (not bio keywords).
+- Prefer 3–5 native words (2–6 allowed). Lowercase, no hashtags, no questions, no first-person sentences.
+- Prefer problem/content phrases someone would type to find reels (pain, situation, how-to) — not job titles or bio keywords.
+- At most one native role/profession term in the whole list. For a toxic boss niche use Führung or Vorgesetzter — never Chef (homograph with cook).
+- Do not use an English loanword as the sole query. Do not emit course-ad phrases (webinar, masterclass, waitlist, link in bio).
 - 6–12 phrases in "phrases", matching the client's primary language (language_hint).
 - JSON shape: {"phrases": ["phrase one", "phrase two", ...]}"""
 
@@ -26,8 +28,10 @@ Rules:
 # speaker would actually caption or search for the same content.
 _SYSTEM_BILINGUAL = """You output ONLY valid JSON (no markdown). Generate short Instagram reel search phrases.
 Rules:
-- 2–6 words each, lowercase, no hashtags, no questions, no first-person sentences.
-- Phrases someone would type to find reels in this niche (not bio keywords).
+- Prefer 3–5 native words (2–6 allowed). Lowercase, no hashtags, no questions, no first-person sentences.
+- Prefer problem/content phrases someone would type to find reels (pain, situation, how-to) — not job titles or bio keywords.
+- At most one native role/profession term in the native list. For a toxic boss niche use Führung or Vorgesetzter — never Chef (homograph with cook).
+- Do not use an English loanword as the sole native query. Do not emit course-ad phrases (webinar, masterclass, waitlist, link in bio).
 - 6–12 phrases in "phrases", matching the client's primary language (language_hint).
 - Also generate 4–8 phrases in "phrases_en": natural, idiomatic ENGLISH search terms for the
   SAME niche — how an English-speaking Instagram user would actually search/caption this content,

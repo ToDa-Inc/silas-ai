@@ -6,6 +6,7 @@ import {
   ONBOARDING_BYPASS_COOKIE,
   readOnboardingBypassActive,
 } from "@/lib/onboarding-bypass";
+import { dashboardPathAllowedDuringOnboarding } from "@/lib/onboarding-gates";
 import { createClient } from "@/lib/supabase/server";
 
 export default async function DashboardLayout({
@@ -28,14 +29,18 @@ export default async function DashboardLayout({
     redirect("/onboarding");
   }
   if (!onboardingBypass && ctx.user && ctx.tenancy && ctx.clientSlug) {
-    const onboarding = await fetchOnboardingStatus();
-    if (
-      onboarding.ok &&
-      onboarding.data &&
-      onboarding.data.status !== "completed" &&
-      onboarding.data.current_step !== "done"
-    ) {
-      redirect("/onboarding");
+    const h = await headers();
+    const path = h.get("x-middleware-pathname")?.trim() || "";
+    if (!dashboardPathAllowedDuringOnboarding(path)) {
+      const onboarding = await fetchOnboardingStatus();
+      if (
+        onboarding.ok &&
+        onboarding.data &&
+        onboarding.data.status !== "completed" &&
+        onboarding.data.current_step !== "done"
+      ) {
+        redirect("/onboarding");
+      }
     }
   }
   let clients: { slug: string; name: string }[] = ctx.workspaceClients ?? [];

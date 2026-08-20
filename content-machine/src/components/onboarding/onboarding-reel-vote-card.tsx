@@ -4,22 +4,23 @@ import { ThumbsDown, ThumbsUp } from "lucide-react";
 import { ReelThumbnail } from "@/components/reel-thumbnail";
 import { cn } from "@/lib/cn";
 import type { ScrapedReelRow } from "@/lib/api";
+import { formatNicheMatchPercent } from "@/lib/reel-provenance";
 
 type Props = {
   row: ScrapedReelRow;
-  score: number;
   verdict: "yes" | "no" | undefined;
   onVote: (verdict: "yes" | "no") => void;
   dimmed?: boolean;
 };
 
-export function OnboardingReelVoteCard({ row, score, verdict, onVote, dimmed }: Props) {
-  const user = row.account_username?.trim() || "creator";
+export function OnboardingReelVoteCard({ row, verdict, onVote, dimmed }: Props) {
+  const user = row.account_username?.trim() || null;
+  const match = formatNicheMatchPercent(row.similarity_score);
 
   return (
     <article
       className={cn(
-        "overflow-hidden rounded-xl border bg-app-card/20 shadow-sm transition-all duration-200",
+        "min-w-0 overflow-hidden rounded-xl border bg-app-card/20 shadow-sm transition-all duration-200",
         verdict === "yes"
           ? "border-emerald-500/50 ring-1 ring-emerald-500/30"
           : verdict === "no"
@@ -32,12 +33,12 @@ export function OnboardingReelVoteCard({ row, score, verdict, onVote, dimmed }: 
         <div className="relative shrink-0">
           <ReelThumbnail
             src={row.thumbnail_url}
-            alt={`@${user} reel`}
+            alt={user ? `@${user} reel` : "Reel"}
             href={row.post_url}
             size="lg"
           />
           {row.is_outlier || row.outlier_ratio != null ? (
-            <span className="absolute -right-1 -top-1 rounded-md bg-amber-500 px-1.5 py-0.5 text-[9px] font-bold text-zinc-950">
+            <span className="absolute -right-1 -top-1 rounded-md bg-amber-500 px-1.5 py-0.5 text-[9px] font-bold text-amber-950">
               {row.outlier_ratio != null
                 ? `${Number(row.outlier_ratio).toFixed(1)}×`
                 : "Outlier"}
@@ -45,12 +46,14 @@ export function OnboardingReelVoteCard({ row, score, verdict, onVote, dimmed }: 
           ) : null}
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-xs font-semibold text-app-fg">@{user}</p>
+          <p className="truncate text-xs font-semibold text-app-fg">
+            {user ? `@${user}` : "Unknown account"}
+          </p>
           <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-app-fg-muted">
             {row.caption?.trim() || row.hook_text?.trim() || "No caption"}
           </p>
           <p className="mt-2 text-[10px] font-medium text-app-fg-subtle">
-            Match score {score.toFixed(1)}
+            {match ?? "Match not scored"}
             {row.views != null ? ` · ${formatCompact(row.views)} views` : ""}
           </p>
           <p className="mt-0.5 text-[9px] leading-snug text-app-fg-subtle/80">

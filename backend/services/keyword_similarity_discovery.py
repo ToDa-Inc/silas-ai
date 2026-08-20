@@ -28,9 +28,9 @@ def merge_keyword_discovery_items_into_raw_by_sc(
     for it in items:
         reel_url = (it.get("reel_url") or it.get("post_url") or "").strip()
         uname = (it.get("user_name") or it.get("username") or "").lower().strip()
-        if not reel_url or not uname:
+        if not reel_url:
             continue
-        if uname == client_handle or uname in banned_handles:
+        if uname and (uname == client_handle or uname in banned_handles):
             continue
         sc = instagram_post_short_code(reel_url)
         if not sc:
@@ -39,11 +39,29 @@ def merge_keyword_discovery_items_into_raw_by_sc(
             continue
         kw_tag = (it.get("keyword") or it.get("query") or "").strip()
         if sc not in raw_by_sc:
-            raw_by_sc[sc] = {"username": uname, "keywords": []}
+            row: Dict[str, Any] = {"username": uname, "keywords": []}
+            disc = str(it.get("discovery") or "").strip()
+            if disc:
+                row["discovery"] = disc
+            raw_by_sc[sc] = row
+        elif uname and not raw_by_sc[sc].get("username"):
+            raw_by_sc[sc]["username"] = uname
         if kw_tag and kw_tag not in raw_by_sc[sc]["keywords"]:
             raw_by_sc[sc]["keywords"].append(kw_tag)
         elif not raw_by_sc[sc]["keywords"] and keywords:
             raw_by_sc[sc]["keywords"].append(keywords[0])
+
+
+def keyword_discovery_coverage(raw_by_sc: Dict[str, Dict[str, Any]]) -> Dict[str, int]:
+    """Count unique shortcodes per keyword tag (empty if Sasky omitted ``keyword``)."""
+    counts: Dict[str, int] = {}
+    for row in raw_by_sc.values():
+        for kw in row.get("keywords") or []:
+            key = str(kw).strip()
+            if not key:
+                continue
+            counts[key] = counts.get(key, 0) + 1
+    return counts
 
 
 def discover_keyword_urls_with_fallback(
@@ -58,11 +76,16 @@ def discover_keyword_urls_with_fallback(
     dismissed_scs: Set[str],
     reel_batch: Callable[..., List[Any]] = run_keyword_reel_search_batch,
     post_batch: Callable[..., List[Any]] = run_keyword_post_search_batch,
+    split_by_keyword: bool = False,
 ) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Any]]:
     """Sasky reel-keyword search, then posts-keyword fallback if no usable URLs.
 
     Returns ``(raw_by_sc, discovery_meta)`` where ``discovery_meta`` includes ``keywords_run``,
     counts, and optional ``keyword_search_fallback_error``.
+
+    ``split_by_keyword`` forwards to the Sasky batch helpers so each term gets an
+    equal share of ``total_limit`` (needed for onboarding; the combined actor
+    otherwise dumps the whole limit into the first keyword).
 
     Raises ``ApifyUsageLimitError`` from batch calls unchanged. On fallback failure
     (non-limit), returns empty ``raw_by_sc`` and sets ``keyword_search_fallback_error``.
@@ -75,12 +98,18 @@ def discover_keyword_urls_with_fallback(
         "keyword_search_fallback_error": None,
         "total_keyword_actor_items": 0,
         "keyword_discovery_impl": "posts_fallback_v1",
+        "keyword_search_split_by_keyword": bool(split_by_keyword),
         "discovery_log": [],
         "keywords_run": [],
+        "keyword_search_coverage": {},
     }
 
     items_primary = reel_batch(
-        apify_token, keywords, max_items_total=total_limit, date=search_window
+        apify_token,
+        keywords,
+        max_items_total=total_limit,
+        date=search_window,
+        split_by_keyword=split_by_keyword,
     )
     meta["keyword_search_primary_items"] = len(items_primary)
     meta["total_keyword_actor_items"] = len(items_primary)
@@ -107,7 +136,8 @@ def discover_keyword_urls_with_fallback(
     if raw_by_sc:
         meta["keywords_run"] = [
             {
-                "batch": True,
+                "batch": not split_by_keyword,
+                "split_by_keyword": bool(split_by_keyword),
                 "source_actor": KEYWORD_REEL_ACTOR,
                 "primary_items": len(items_primary),
                 "fallback_used": False,
@@ -115,6 +145,8 @@ def discover_keyword_urls_with_fallback(
                 "unique_short_codes": len(raw_by_sc),
             }
         ]
+        meta["keyword_search_coverage"] = keyword_discovery_coverage(raw_by_sc)
+        meta["keyword_search_keywords_with_results"] = len(meta["keyword_search_coverage"])
         return raw_by_sc, meta
 
     meta["keyword_search_fallback_reason"] = (
@@ -133,7 +165,11 @@ def discover_keyword_urls_with_fallback(
 
     try:
         items_fallback = post_batch(
-            apify_token, keywords, max_items_total=total_limit, date=search_window
+            apify_token,
+            keywords,
+            max_items_total=total_limit,
+            date=search_window,
+            split_by_keyword=split_by_keyword,
         )
         meta["keyword_search_fallback_used"] = True
         meta["keyword_search_fallback_items"] = len(items_fallback)
@@ -177,6 +213,8 @@ def discover_keyword_urls_with_fallback(
                 "unique_short_codes": 0,
             }
         ]
+        meta["keyword_search_coverage"] = {}
+        meta["keyword_search_keywords_with_results"] = 0
         return {}, meta
 
     kr_entry: Dict[str, Any] = {
@@ -190,4 +228,6 @@ def discover_keyword_urls_with_fallback(
         "fallback_reason": meta["keyword_search_fallback_reason"],
     }
     meta["keywords_run"] = [kr_entry]
+    meta["keyword_search_coverage"] = keyword_discovery_coverage(raw_by_sc)
+    meta["keyword_search_keywords_with_results"] = len(meta["keyword_search_coverage"])
     return raw_by_sc, meta

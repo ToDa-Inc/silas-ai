@@ -15,6 +15,24 @@ CANDIDATE_SOURCES = frozenset(
     }
 )
 
+# Fields the vote UI reads (handle, thumb, niche %). Ranking `score` stays separate.
+CANDIDATE_REEL_COLUMNS = (
+    "id, shortcode, post_url, caption, likes, comments, views, posted_at, "
+    "source, similarity_score, is_outlier, outlier_likes_ratio, competitor_id, "
+    "account_username, thumbnail_url, video_url, format"
+)
+
+
+def shape_candidate_reel(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize a scraped_reels row for the onboarding vote card."""
+    out = dict(row)
+    username = out.get("account_username")
+    if isinstance(username, str):
+        out["account_username"] = username.strip()
+    if out.get("outlier_ratio") is None and out.get("outlier_likes_ratio") is not None:
+        out["outlier_ratio"] = out["outlier_likes_ratio"]
+    return out
+
 
 def _engagement_score(row: Dict[str, Any]) -> float:
     likes = float(row.get("likes") or 0)
@@ -85,11 +103,7 @@ def list_onboarding_reel_candidates(
 
     res = (
         supabase.table("scraped_reels")
-        .select(
-            "id, post_url, caption, likes, comments, views, posted_at, "
-            "source, similarity_score, is_outlier, outlier_likes_ratio, competitor_id, "
-            "thumbnail_url, format"
-        )
+        .select(CANDIDATE_REEL_COLUMNS)
         .eq("client_id", client_id)
         .order("similarity_score", desc=True)
         .limit(200)
@@ -134,7 +148,7 @@ def list_onboarding_reel_candidates(
         rid = str(reel.get("id") or "")
         out.append(
             {
-                "reel": reel,
+                "reel": shape_candidate_reel(reel),
                 "analysis": analysis,
                 "score": round(score, 3),
                 "already_voted": feedback.get(rid),

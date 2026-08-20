@@ -202,17 +202,79 @@ def keyword_posts_search_input(
     return body
 
 
+def _sasky_per_keyword_limit(max_items_total: int, n_keywords: int) -> int:
+    """Equal share of a shared Sasky ``limit`` so one keyword cannot eat the whole budget."""
+    return max(10, int(max_items_total) // max(int(n_keywords), 1))
+
+
+def _run_keyword_post_search_per_keyword(
+    token: str,
+    keywords: List[str],
+    *,
+    max_items_total: int,
+    date: Optional[str],
+) -> list:
+    out: List[dict] = []
+    per = _sasky_per_keyword_limit(max_items_total, len(keywords))
+    for i, kw in enumerate(keywords):
+        try:
+            single_body = keyword_posts_search_input([kw], per, date=date)
+            out.extend(run_actor(token, KEYWORD_POSTS_ACTOR, single_body) or [])
+        except ApifyUsageLimitError:
+            raise
+        except Exception:
+            logger.warning("Sasky posts keyword search failed for %r", kw, exc_info=True)
+        if i + 1 < len(keywords):
+            time.sleep(1)
+    return out
+
+
+def _run_keyword_reel_search_per_keyword(
+    token: str,
+    keywords: List[str],
+    *,
+    max_items_total: int,
+    date: Optional[str],
+) -> list:
+    out: List[dict] = []
+    per = _sasky_per_keyword_limit(max_items_total, len(keywords))
+    for i, kw in enumerate(keywords):
+        try:
+            out.extend(
+                run_keyword_reel_search(token, kw, max_items=per, date=date) or []
+            )
+        except ApifyUsageLimitError:
+            raise
+        except Exception:
+            logger.warning("Sasky keyword search failed for %r", kw, exc_info=True)
+        if i + 1 < len(keywords):
+            time.sleep(1)
+    return out
+
+
 def run_keyword_post_search_batch(
     token: str,
     keywords: List[str],
     *,
     max_items_total: int = 80,
     date: str = "last-1-week",
+    split_by_keyword: bool = False,
 ) -> list:
-    """One Sasky posts URL run with all keywords; on failure, sequential single-keyword runs."""
+    """Sasky posts URL search.
+
+    Default: one run with all keywords (Sasky ``limit`` is shared — first keyword
+    can starve the rest). ``split_by_keyword=True`` runs one actor call per term
+    with an equal share of ``max_items_total``. Combined-run failure still falls
+    back to per-keyword search.
+    """
     cleaned = [k.strip() for k in keywords if k and str(k).strip()]
     if not cleaned:
         return []
+
+    if split_by_keyword and len(cleaned) > 1:
+        return _run_keyword_post_search_per_keyword(
+            token, cleaned, max_items_total=max_items_total, date=date
+        )
 
     body = keyword_posts_search_input(cleaned, max_items_total, date=date)
 
@@ -226,18 +288,9 @@ def run_keyword_post_search_batch(
             exc_info=True,
         )
 
-    out: List[dict] = []
-    per = max(10, max_items_total // max(len(cleaned), 1))
-    for kw in cleaned:
-        try:
-            single_body = keyword_posts_search_input([kw], per, date=date)
-            out.extend(run_actor(token, KEYWORD_POSTS_ACTOR, single_body) or [])
-        except ApifyUsageLimitError:
-            raise
-        except Exception:
-            logger.warning("Sasky posts keyword search failed for %r", kw, exc_info=True)
-        time.sleep(1)
-    return out
+    return _run_keyword_post_search_per_keyword(
+        token, cleaned, max_items_total=max_items_total, date=date
+    )
 
 
 def run_keyword_reel_search_batch(
@@ -246,11 +299,22 @@ def run_keyword_reel_search_batch(
     *,
     max_items_total: int = 80,
     date: str = "last-1-week",
+    split_by_keyword: bool = False,
 ) -> list:
-    """One Sasky run with all keywords; on failure, sequential single-keyword runs (same input schema)."""
+    """Sasky reel URL search.
+
+    Default: one run with all keywords (shared ``limit``). Onboarding should pass
+    ``split_by_keyword=True`` so each niche term gets its own budget. Combined-run
+    failure still falls back to per-keyword search.
+    """
     cleaned = [k.strip() for k in keywords if k and str(k).strip()]
     if not cleaned:
         return []
+
+    if split_by_keyword and len(cleaned) > 1:
+        return _run_keyword_reel_search_per_keyword(
+            token, cleaned, max_items_total=max_items_total, date=date
+        )
 
     body: dict[str, Any] = {
         "keywords": cleaned,
@@ -269,19 +333,9 @@ def run_keyword_reel_search_batch(
             exc_info=True,
         )
 
-    out: List[dict] = []
-    per = max(10, max_items_total // max(len(cleaned), 1))
-    for kw in cleaned:
-        try:
-            out.extend(
-                run_keyword_reel_search(token, kw, max_items=per, date=date) or []
-            )
-        except ApifyUsageLimitError:
-            raise
-        except Exception:
-            logger.warning("Sasky keyword search failed for %r", kw, exc_info=True)
-        time.sleep(1)
-    return out
+    return _run_keyword_reel_search_per_keyword(
+        token, cleaned, max_items_total=max_items_total, date=date
+    )
 
 
 def enrich_reel_urls_direct(
