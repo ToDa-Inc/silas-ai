@@ -5,8 +5,10 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from services.google_cse_instagram_reels import (
+    apify_google_search_instagram_reel_items,
     canonical_reel_from_cse_link,
     cse_items_from_response,
     google_cse_search_instagram_reel_items,
@@ -148,7 +150,7 @@ class TestMergeGoogleCseIfEnabled(unittest.TestCase):
         self.assertEqual(meta.get("skipped"), "not_requested")
 
     def test_missing_credentials_skip(self) -> None:
-        settings = SimpleNamespace(google_cse_api_key="", google_cse_cx="")
+        settings = SimpleNamespace(google_cse_api_key="", google_cse_cx="", apify_api_token="")
         meta = merge_google_cse_urls_if_enabled(
             {},
             settings=settings,
@@ -162,6 +164,48 @@ class TestMergeGoogleCseIfEnabled(unittest.TestCase):
         )
         self.assertFalse(meta["used"])
         self.assertEqual(meta.get("skipped"), "missing_credentials")
+
+    def test_apify_google_search_fallback_when_cse_fails(self) -> None:
+        raw: dict = {}
+        settings = SimpleNamespace(
+            google_cse_api_key="blocked_key",
+            google_cse_cx="some_cx",
+            apify_api_token="apify_tok_123",
+        )
+
+        def mock_cse_search(**_kwargs):
+            # Simulates 403 / 0 items from Google CSE
+            return [], {"errors": [{"keyword": "chef", "error": "http_403"}]}
+
+        mock_apify_runner = lambda token, actor, inp: [
+            {
+                "searchQuery": {"term": "toxischer Chef site:instagram.com/reel"},
+                "organicResults": [
+                    {"url": "https://www.instagram.com/reel/ApifyGoogleHit1/", "title": "Hit 1"}
+                ],
+            }
+        ]
+
+        with patch(
+            "services.google_cse_instagram_reels.apify_google_search_instagram_reel_items",
+            side_effect=lambda **kw: apify_google_search_instagram_reel_items(
+                run_actor_fn=mock_apify_runner, **kw
+            ),
+        ):
+            meta = merge_google_cse_urls_if_enabled(
+                raw,
+                settings=settings,
+                payload=onboarding_keyword_similarity_payload(),
+                keywords=["toxischer Chef"],
+                client_handle="me",
+                banned_handles=set(),
+                banned_scs=set(),
+                dismissed_scs=set(),
+                search_fn=mock_cse_search,
+            )
+            self.assertTrue(meta["used"])
+            self.assertIn("ApifyGoogleHit1", raw)
+            self.assertEqual(raw["ApifyGoogleHit1"]["discovery"], "google_search")
 
 
 class TestDailyTickSource(unittest.TestCase):

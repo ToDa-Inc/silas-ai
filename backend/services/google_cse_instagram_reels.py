@@ -103,6 +103,78 @@ def cse_items_from_response(
     return out
 
 
+def apify_google_search_instagram_reel_items(
+    *,
+    apify_token: str,
+    keywords: List[str],
+    per_keyword: int = PER_KEYWORD_HITS,
+    max_total: int = MAX_TOTAL_URLS,
+    run_actor_fn: Optional[Callable[..., List[Dict[str, Any]]]] = None,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Search Google via Apify google-search-scraper actor for Instagram reels."""
+    from services.apify import run_actor
+
+    runner = run_actor_fn or run_actor
+    seen: Set[str] = set()
+    items: List[Dict[str, Any]] = []
+    clean_kws = [k.strip() for k in keywords if (k or "").strip()]
+    if not clean_kws or not apify_token:
+        return [], {"queries": 0, "items": 0, "unique_short_codes": 0, "provider": "apify_google"}
+
+    queries_str = "\n".join([f"{k} site:instagram.com/reel" for k in clean_kws])
+    input_data = {
+        "queries": queries_str,
+        "maxPagesPerQuery": 1,
+        "resultsPerPage": max(1, min(int(per_keyword), 20)),
+        "languageCode": "de",
+        "countryCode": "de",
+        "csvFriendlyOutput": False,
+    }
+    try:
+        raw_batches = runner(apify_token, "apify~google-search-scraper", input_data)
+    except Exception as e:
+        logger.warning("apify google search actor failed: %s", e)
+        return [], {
+            "queries": len(clean_kws),
+            "items": 0,
+            "unique_short_codes": 0,
+            "provider": "apify_google",
+            "error": str(e)[:300],
+        }
+
+    for batch in raw_batches or []:
+        if not isinstance(batch, dict):
+            continue
+        q_term = (batch.get("searchQuery") or {}).get("term", "")
+        kw = q_term.replace(" site:instagram.com/reel", "").strip() if q_term else clean_kws[0]
+        organic = batch.get("organicResults") or []
+        for res in organic:
+            if len(seen) >= max_total:
+                break
+            if not isinstance(res, dict):
+                continue
+            raw_url = str(res.get("url") or "")
+            url, sc, uname = canonical_reel_from_cse_link(raw_url)
+            if not sc or sc in seen:
+                continue
+            seen.add(sc)
+            items.append(
+                {
+                    "reel_url": url,
+                    "username": uname,
+                    "keyword": kw,
+                    "discovery": "google_search",
+                }
+            )
+
+    return items, {
+        "queries": len(clean_kws),
+        "items": len(items),
+        "unique_short_codes": len(seen),
+        "provider": "apify_google",
+    }
+
+
 def _http_get_json(url: str, timeout: float = _HTTP_TIMEOUT_S) -> Dict[str, Any]:
     req = urllib.request.Request(url, headers={"User-Agent": "SilasAI/keyword-cse"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -191,21 +263,50 @@ def merge_google_cse_urls_if_enabled(
         Callable[..., Tuple[List[Dict[str, Any]], Dict[str, Any]]]
     ] = None,
 ) -> Dict[str, Any]:
-    """Fan Google CSE URLs into ``raw_by_sc`` when the payload asks and keys exist."""
+    """Fan Google Search/CSE URLs into ``raw_by_sc`` when the payload asks and keys exist."""
     if not payload_includes_google_cse(payload):
         return {"used": False, "skipped": "not_requested"}
-    if not google_cse_configured(settings):
-        logger.info("google CSE skipped — GOOGLE_CSE_API_KEY / GOOGLE_CSE_CX unset")
+
+    apify_token = str(getattr(settings, "apify_api_token", "") or "").strip()
+    cse_configured = google_cse_configured(settings)
+
+    if not cse_configured and not apify_token:
+        logger.info("google search skipped — no GOOGLE_CSE or APIFY credentials")
         return {"used": False, "skipped": "missing_credentials"}
 
-    api_key = str(settings.google_cse_api_key).strip()
-    cse_cx = str(settings.google_cse_cx).strip()
-    fn = search_fn or google_cse_search_instagram_reel_items
-    try:
-        items, meta = fn(api_key=api_key, cse_cx=cse_cx, keywords=keywords)
-    except Exception as e:
-        logger.exception("google CSE keyword fan-in failed")
-        return {"used": False, "error": str(e)[:400]}
+    items: List[Dict[str, Any]] = []
+    meta: Dict[str, Any] = {}
+
+    if cse_configured:
+        api_key = str(settings.google_cse_api_key).strip()
+        cse_cx = str(settings.google_cse_cx).strip()
+        fn = search_fn or google_cse_search_instagram_reel_items
+        try:
+            items, meta = fn(api_key=api_key, cse_cx=cse_cx, keywords=keywords)
+        except Exception as e:
+            logger.warning("google CSE search failed: %s", e)
+            meta = {"error": str(e)[:300]}
+    elif search_fn is not None:
+        try:
+            items, meta = search_fn(api_key="", cse_cx="", keywords=keywords)
+        except Exception as e:
+            logger.exception("custom search_fn failed")
+            return {"used": False, "error": str(e)[:400]}
+
+    # Fallback to Apify Google Search if Google CSE produced 0 items and Apify token exists
+    if not items and apify_token:
+        try:
+            apify_items, apify_meta = apify_google_search_instagram_reel_items(
+                apify_token=apify_token, keywords=keywords
+            )
+            if apify_items:
+                items = apify_items
+                meta = apify_meta
+        except Exception as e:
+            logger.warning("apify google search fallback failed: %s", e)
+
+    if not items:
+        return {"used": False, "skipped": "no_results_or_auth_blocked", "meta": meta}
 
     merge_keyword_discovery_items_into_raw_by_sc(
         items,

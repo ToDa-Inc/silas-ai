@@ -17,9 +17,9 @@ CANDIDATE_SOURCES = frozenset(
 
 # Fields the vote UI reads (handle, thumb, niche %). Ranking `score` stays separate.
 CANDIDATE_REEL_COLUMNS = (
-    "id, shortcode, post_url, caption, likes, comments, views, posted_at, "
+    "id, post_url, caption, likes, comments, views, posted_at, "
     "source, similarity_score, is_outlier, outlier_likes_ratio, competitor_id, "
-    "account_username, thumbnail_url, video_url, format"
+    "account_username, thumbnail_url, format"
 )
 
 

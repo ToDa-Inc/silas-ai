@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { VideoSpec } from "./video-spec.ts";
+import type { VideoSpec } from "./video-spec";
 import {
   buildLayerRows,
   computeLayerTimingChange,
   createTextLayer,
   deleteTextLayer,
   editTextLayer,
-} from "./video-spec-layer-timeline.ts";
+} from "./video-spec-layer-timeline";
 
 function baseSpec(): VideoSpec {
   return {
@@ -16,7 +16,7 @@ function baseSpec(): VideoSpec {
     themeId: "bold-modern",
     appearance: {},
     brand: { primary: "#fff", accent: null },
-    background: { url: "https://example.com/bg.mp4", kind: "video", focalPoint: "center", durationSec: 12 },
+    background: { url: "https://example.com/bg.mp4", kind: "video", focalPoint: "center", trimStartSec: 0, durationSec: 12 },
     hook: { text: "Intro hook", durationSec: 2 },
     blocks: [
       { id: "b1", text: "First beat", isCTA: false, startSec: 2, endSec: 4, animation: "fade" },

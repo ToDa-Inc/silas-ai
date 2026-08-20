@@ -16,12 +16,13 @@ def test_candidate_select_includes_username_and_media():
     for required in (
         "account_username",
         "thumbnail_url",
-        "video_url",
         "post_url",
         "similarity_score",
         "outlier_likes_ratio",
     ):
         assert required in cols, f"missing {required} in candidate select"
+    assert "shortcode" not in cols
+    assert "video_url" not in cols
 
 
 def test_shape_maps_outlier_ratio_and_strips_username():

@@ -131,7 +131,7 @@ class CarouselTemplatePromptTest(unittest.TestCase):
 
         with patch("services.content_generation.chat_json_completion", side_effect=fake_chat_json_completion):
             slides = run_carousel_slide_texts(
-                type("Settings", (), {"openrouter_api_key": "key", "openrouter_model": "model"})(),
+                type("Settings", (), {"openrouter_api_key": "key", "openrouter_model": "model", "openrouter_fast_model": "model", "openrouter_model_fallback": "model"})(),
                 client_row=client_row,
                 chosen_angle={
                     "title": "Meeting confidence",

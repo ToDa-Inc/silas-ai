@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DEFAULT_COVER_EDIT, coverPayload } from "./cover-edit.ts";
+import { DEFAULT_COVER_EDIT, coverPayload } from "./cover-edit";
 
 test("coverPayload uses video editor control fields instead of legacy cover chips", () => {
   const payload = coverPayload({

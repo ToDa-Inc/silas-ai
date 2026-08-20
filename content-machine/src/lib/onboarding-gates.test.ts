@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { dashboardPathAllowedDuringOnboarding } from "./onboarding-gates.ts";
+import { dashboardPathAllowedDuringOnboarding } from "./onboarding-gates";
 
 test("media library is reachable during incomplete onboarding", () => {
   assert.equal(dashboardPathAllowedDuringOnboarding("/media"), true);
