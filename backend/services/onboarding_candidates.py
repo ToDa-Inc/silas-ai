@@ -155,6 +155,15 @@ def list_onboarding_reel_candidates(
             }
         )
 
+    # Sort final candidates by views descending so users see highest-viewed reels first
+    out.sort(
+        key=lambda c: (
+            float((c.get("reel") or {}).get("views") or 0),
+            float((c.get("reel") or {}).get("similarity_score") or 0),
+        ),
+        reverse=True,
+    )
+
     if len([c for c in out if c.get("analysis")]) < min_with_analysis and len(out) < limit:
         return out
     return out

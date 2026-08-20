@@ -275,9 +275,17 @@ export function OnboardingWizard({
   }, [currentStep, clientSlug, orgSlug, status?.voice_transcript]);
 
   const applyCandidates = useCallback((data: OnboardingReelCandidate[]) => {
-    setCandidates(data);
+    const sorted = [...data].sort((a, b) => {
+      const viewsA = Number(a.reel?.views ?? 0);
+      const viewsB = Number(b.reel?.views ?? 0);
+      if (viewsB !== viewsA) return viewsB - viewsA;
+      const simA = Number(a.reel?.similarity_score ?? 0);
+      const simB = Number(b.reel?.similarity_score ?? 0);
+      return simB - simA;
+    });
+    setCandidates(sorted);
     const v: Record<string, "yes" | "no"> = {};
-    for (const c of data) {
+    for (const c of sorted) {
       const id = c.reel?.id;
       if (id && c.already_voted) v[id] = c.already_voted as "yes" | "no";
     }
