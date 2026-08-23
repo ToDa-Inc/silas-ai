@@ -46,6 +46,39 @@ async function getPreferredClientSlugFromSession(): Promise<string | null> {
   return preferredClientSlugFromSession;
 }
 
+/**
+ * Server-role fallback for `profiles.api_key` when the anon-key browser read
+ * comes back empty — e.g. RLS not (yet) granting the row to its owner, or the
+ * profile row lagging the workspace-creation write. Without this, the very
+ * first authenticated action in a session can silently go out with no
+ * `X-Api-Key` header and the backend replies "Missing API key". One in-flight
+ * request is shared the same way as `getPreferredClientSlugFromSession`.
+ */
+let apiKeyFromServerFallback: Promise<string | null> | null = null;
+
+async function getApiKeyFromServerFallback(): Promise<string | null> {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  if (apiKeyFromServerFallback) {
+    return apiKeyFromServerFallback;
+  }
+  apiKeyFromServerFallback = (async () => {
+    try {
+      const r = await fetch("/api/session/api-key", { method: "GET", cache: "no-store" });
+      if (!r.ok) return null;
+      const j = (await r.json()) as { api_key?: string | null };
+      const k = (j.api_key ?? "").trim();
+      return k || null;
+    } catch {
+      return null;
+    } finally {
+      apiKeyFromServerFallback = null;
+    }
+  })();
+  return apiKeyFromServerFallback;
+}
+
 // ---------------------------------------------------------------------------
 // Session-scoped cache for clientApiContext.
 // ---------------------------------------------------------------------------
@@ -106,8 +139,15 @@ async function _resolveClientApiContext(opts?: ClientApiHeaderOptions): Promise<
       .select("api_key")
       .eq("id", user.id)
       .maybeSingle();
-    if (profile?.api_key) {
-      h["X-Api-Key"] = profile.api_key;
+    let apiKey =
+      typeof profile?.api_key === "string" && profile.api_key.trim()
+        ? profile.api_key.trim()
+        : null;
+    if (!apiKey) {
+      apiKey = await getApiKeyFromServerFallback();
+    }
+    if (apiKey) {
+      h["X-Api-Key"] = apiKey;
     }
   }
   return { headers: h, clientSlug, orgSlug };
