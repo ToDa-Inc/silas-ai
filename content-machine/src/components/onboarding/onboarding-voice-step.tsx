@@ -80,6 +80,7 @@ export function OnboardingVoiceStep({
   const [mode, setMode] = useState<"voice" | "type">("voice");
   const [answers, setAnswers] = useState<Record<string, string>>(emptyAnswers());
   const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [forceRecorder, setForceRecorder] = useState(false);
   const hydratedAnswersFpRef = useRef<string>("");
 
@@ -125,24 +126,34 @@ export function OnboardingVoiceStep({
   }, [voiceStatus, refresh]);
 
   async function handleUpload(blob: Blob, format: string) {
+    setActionError(null);
     onError(null);
     setBusy(true);
     try {
       const r = await uploadOnboardingVoice(clientSlug, orgSlug, blob, format, "auto");
       if (!r.ok) throw new Error(r.error);
       await refresh();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : t("voiceUploadFailed");
+      setActionError(msg);
+      onError(msg);
     } finally {
       setBusy(false);
     }
   }
 
   async function handleSubmitText(text: string) {
+    setActionError(null);
     onError(null);
     setBusy(true);
     try {
       const r = await submitOnboardingVoiceText(clientSlug, orgSlug, text);
       if (!r.ok) throw new Error(r.error);
       await refresh();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : t("voiceUploadFailed");
+      setActionError(msg);
+      onError(msg);
     } finally {
       setBusy(false);
     }
@@ -153,15 +164,22 @@ export function OnboardingVoiceStep({
       Object.entries(submitAnswers).filter(([, v]) => v.trim()),
     );
     if (Object.keys(filled).length === 0) {
-      onError(t("voiceNeedOneAnswer"));
+      const msg = t("voiceNeedOneAnswer");
+      setActionError(msg);
+      onError(msg);
       return;
     }
+    setActionError(null);
     onError(null);
     setBusy(true);
     try {
       const r = await startOnboardingBrainGenerate(clientSlug, orgSlug, filled);
       if (!r.ok) throw new Error(r.error);
       await refresh();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : t("voiceSomethingWrong");
+      setActionError(msg);
+      onError(msg);
     } finally {
       setBusy(false);
     }
@@ -187,17 +205,8 @@ export function OnboardingVoiceStep({
   const transcribeFailed = voiceStatus === "failed" && !canReview;
 
   let body: React.ReactNode;
-  if (mode === "type") {
-    body = (
-      <div className="space-y-4">
-        <p className="text-xs text-zinc-500">{t("voiceTypeHint")}</p>
-        <OnboardingVoiceReview answers={answers} onChange={setAnswers} disabled={busy} language={language} />
-        <OnboardingPrimaryButton busy={busy} onClick={() => void handleGenerate(answers)}>
-          {t("voiceBuildBrain")}
-        </OnboardingPrimaryButton>
-      </div>
-    );
-  } else if (showTranscribing || showGenerating) {
+  // In-flight jobs always win — "Type instead" used to hide transcribing/generating UI.
+  if (showTranscribing || showGenerating) {
     body = (
       <div className="flex flex-col items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] p-10 text-center">
         <Loader2 className="h-8 w-8 animate-spin text-amber-300" />
@@ -223,6 +232,7 @@ export function OnboardingVoiceStep({
         <button
           type="button"
           onClick={() => {
+            setActionError(null);
             onError(null);
             hydratedAnswersFpRef.current = "";
             setForceRecorder(true);
@@ -233,6 +243,16 @@ export function OnboardingVoiceStep({
         >
           {t("voiceRecordAgain")}
         </button>
+      </div>
+    );
+  } else if (mode === "type") {
+    body = (
+      <div className="space-y-4">
+        <p className="text-xs text-zinc-500">{t("voiceTypeHint")}</p>
+        <OnboardingVoiceReview answers={answers} onChange={setAnswers} disabled={busy} language={language} />
+        <OnboardingPrimaryButton busy={busy} onClick={() => void handleGenerate(answers)}>
+          {busy ? t("voiceBuildingDocs") : t("voiceBuildBrain")}
+        </OnboardingPrimaryButton>
       </div>
     );
   } else {
@@ -275,6 +295,7 @@ export function OnboardingVoiceStep({
           <button
             type="button"
             onClick={() => {
+              setActionError(null);
               onError(null);
               setMode("type");
             }}
@@ -282,10 +303,11 @@ export function OnboardingVoiceStep({
           >
             {t("voiceTypeInstead")}
           </button>
-        ) : mode === "type" ? (
+        ) : mode === "type" && !showTranscribing && !showGenerating ? (
           <button
             type="button"
             onClick={() => {
+              setActionError(null);
               onError(null);
               setMode("voice");
             }}
@@ -294,11 +316,12 @@ export function OnboardingVoiceStep({
             {t("voiceBackToRecording")}
           </button>
         ) : null}
-        {generateFailed ? (
+        {actionError ? <OnboardingError message={actionError} /> : null}
+        {!actionError && generateFailed ? (
           <OnboardingError
             message={(voice as VoiceTranscriptState).generate_error || voice.error || t("voiceGenerateFailed")}
           />
-        ) : transcribeFailed ? (
+        ) : !actionError && transcribeFailed ? (
           <OnboardingError message={voice.error || t("voiceProcessingFailed")} />
         ) : null}
       </OnboardingQuestionScreen>

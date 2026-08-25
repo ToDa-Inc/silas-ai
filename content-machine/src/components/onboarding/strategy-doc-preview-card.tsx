@@ -1,7 +1,8 @@
 "use client";
 
 import { Lock } from "lucide-react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
+import { localizeStrategyDocHeadings } from "@/lib/localize-strategy-doc-headings";
 import { MarkdownLite } from "@/lib/markdown-lite";
 import { cn } from "@/lib/cn";
 
@@ -13,6 +14,8 @@ type Props = {
 
 export function StrategyDocPreviewCard({ label, value, locked }: Props) {
   const t = useTranslations("onboarding");
+  const locale = useLocale();
+  const displayValue = localizeStrategyDocHeadings(value, locale);
 
   return (
     <article className="relative overflow-hidden rounded-2xl border border-white/8 bg-gradient-to-b from-white/[0.04] to-white/[0.015] shadow-sm transition-all duration-300 hover:border-amber-300/25 hover:from-white/[0.05]">
@@ -30,7 +33,7 @@ export function StrategyDocPreviewCard({ label, value, locked }: Props) {
             locked ? "max-h-[220px] overflow-hidden select-none" : "max-h-[360px] overflow-y-auto pr-1",
           )}
         >
-          <MarkdownLite content={value} />
+          <MarkdownLite content={displayValue} />
 
           {locked ? (
             <>

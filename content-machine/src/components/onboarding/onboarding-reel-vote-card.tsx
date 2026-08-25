@@ -1,6 +1,7 @@
 "use client";
 
 import { ThumbsDown, ThumbsUp } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { ReelThumbnail } from "@/components/reel-thumbnail";
 import { cn } from "@/lib/cn";
 import type { ScrapedReelRow } from "@/lib/api";
@@ -14,6 +15,8 @@ type Props = {
 };
 
 export function OnboardingReelVoteCard({ row, verdict, onVote, dimmed }: Props) {
+  const t = useTranslations("onboarding");
+  const tc = useTranslations("common");
   const user = row.account_username?.trim() || null;
   const match = formatNicheMatchPercent(row.similarity_score);
 
@@ -41,23 +44,23 @@ export function OnboardingReelVoteCard({ row, verdict, onVote, dimmed }: Props) 
             <span className="absolute -right-1 -top-1 rounded-md bg-amber-500 px-1.5 py-0.5 text-[9px] font-bold text-amber-950">
               {row.outlier_ratio != null
                 ? `${Number(row.outlier_ratio).toFixed(1)}×`
-                : "Outlier"}
+                : t("outlier")}
             </span>
           ) : null}
         </div>
         <div className="min-w-0 flex-1">
           <p className="truncate text-xs font-semibold text-app-fg">
-            {user ? `@${user}` : "Unknown account"}
+            {user ? `@${user}` : t("unknownAccount")}
           </p>
           <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-app-fg-muted">
-            {row.caption?.trim() || row.hook_text?.trim() || "No caption"}
+            {row.caption?.trim() || row.hook_text?.trim() || t("noCaption")}
           </p>
           <p className="mt-2 text-[10px] font-medium text-app-fg-subtle">
-            {match ?? "Match not scored"}
-            {row.views != null ? ` · ${formatCompact(row.views)} views` : ""}
+            {match ?? t("matchNotScored")}
+            {row.views != null ? ` · ${t("viewsCount", { count: formatCompact(row.views) })}` : ""}
           </p>
           <p className="mt-0.5 text-[9px] leading-snug text-app-fg-subtle/80">
-            How closely this reel fits your niche and goals — higher is a better fit.
+            {t("nicheFitHint")}
           </p>
         </div>
       </div>
@@ -73,7 +76,7 @@ export function OnboardingReelVoteCard({ row, verdict, onVote, dimmed }: Props) 
           )}
         >
           <ThumbsUp className="h-3.5 w-3.5" />
-          Yes
+          {tc("yes")}
         </button>
         <button
           type="button"
@@ -86,7 +89,7 @@ export function OnboardingReelVoteCard({ row, verdict, onVote, dimmed }: Props) 
           )}
         >
           <ThumbsDown className="h-3.5 w-3.5" />
-          No
+          {tc("no")}
         </button>
       </div>
     </article>

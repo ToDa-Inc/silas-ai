@@ -41,7 +41,7 @@ import {
 } from "@/lib/onboarding-ui";
 import { useStepHeadings } from "@/lib/use-onboarding-ui";
 import { useOnboardingLang } from "@/lib/use-onboarding-lang";
-import { useLocale } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { cn } from "@/lib/cn";
 
 type Props = {
@@ -100,6 +100,7 @@ export function OnboardingWizard({
 }: Props) {
   const stepHeadings = useStepHeadings();
   const appLocale = useLocale();
+  const t = useTranslations("onboarding");
   const defaultContentLang = useOnboardingLang();
   const router = useRouter();
   const [status, setStatus] = useState<OnboardingStatusRow | null>(initialStatus);
@@ -332,7 +333,7 @@ export function OnboardingWizard({
   async function submitWorkspace() {
     setError(null);
     if (!clientName.trim()) {
-      setError("Creator / brand name is required.");
+      setError(t("creatorNameRequired"));
       return;
     }
     setBusy(true);
@@ -434,12 +435,12 @@ export function OnboardingWizard({
       const v = value.trim();
       if (v) parts.push(`# ${heading}\n${v}`);
     };
-    push("Transcript / notes", sourceText);
-    push("Offer", srcOffer);
-    push("Ideal client — pains & desires", srcIcp);
-    push("Story / origin", srcStory);
-    push("Positioning & differentiators", srcPositioning);
-    push("Tone & phrases", srcTone);
+    push(t("sourceHeadingNotes"), sourceText);
+    push(t("sourceHeadingOffer"), srcOffer);
+    push(t("sourceHeadingIcp"), srcIcp);
+    push(t("sourceHeadingStory"), srcStory);
+    push(t("sourceHeadingPositioning"), srcPositioning);
+    push(t("sourceHeadingTone"), srcTone);
     return parts.join("\n\n");
   }
 
@@ -450,9 +451,7 @@ export function OnboardingWizard({
       return;
     }
     if (combined.length < 80) {
-      setError(
-        "Add a bit more detail (80+ characters total), or go back and clear fields to skip for now.",
-      );
+      setError(t("sourceTooShort"));
       return;
     }
     setBusy(true);
@@ -545,8 +544,8 @@ export function OnboardingWizard({
     if (items.length < requiredVotes) {
       setError(
         requiredVotes === 1
-          ? "Vote on the candidate reel (Yes or No) before continuing."
-          : `Vote on at least ${requiredVotes} candidate reels (Yes or No).`,
+          ? t("voteBeforeContinueOne")
+          : t("voteBeforeContinueMany", { count: requiredVotes }),
       );
       return;
     }
@@ -572,18 +571,14 @@ export function OnboardingWizard({
         if (next.ok && next.data.length > 0) {
           setPoolExhausted(false);
           applyCandidates(next.data);
-          setTasteNotice(
-            "None of those felt right — here are more options. Mark at least one Yes when you see a fit.",
-          );
+          setTasteNotice(t("noneFeltRight"));
           return;
         }
         // No replacements: keep / restore rejected cards so a vote can be flipped.
         setCandidates(rejectedBatch);
         setVotes(rejectedVotes);
         setPoolExhausted(true);
-        setTasteNotice(
-          "No more reels in the pool. Flip at least one to Yes, or find more opportunities.",
-        );
+        setTasteNotice(t("poolEmptyFlipYes"));
         return;
       }
 
@@ -595,7 +590,7 @@ export function OnboardingWizard({
 
   async function startFirstContent() {
     if (!selectedReelId) {
-      setError("Pick one reel you marked Yes.");
+      setError(t("pickOneYesReel"));
       return;
     }
     setBusy(true);
@@ -668,25 +663,25 @@ export function OnboardingWizard({
     audience:
       quizAudience.trim() ||
       String(status?.quiz_answers?.target_audience || "").trim() ||
-      "Your ideal audience will be shaped from your answers and source material.",
+      t("previewAudienceFallback"),
     goals:
       splitList(quizGoals).join(", ") ||
       ((status?.quiz_answers?.content_goals as string[] | undefined)?.join(", ") ?? "") ||
-      "Your first content angles will appear here.",
+      t("previewGoalsFallback"),
     voice:
       quizVoice.trim() ||
       String(status?.quiz_answers?.brand_voice || "").trim() ||
-      "Silas will infer tone from your examples and notes.",
+      t("previewVoiceFallback"),
     offer:
       quizOffers.trim() ||
       String(status?.quiz_answers?.offers || "").trim() ||
-      "Add what you sell or promote so the AI can aim the content.",
+      t("previewOfferFallback"),
   };
 
   const documentPreviews = {
     icp: sectionText("icp", brainPreview.audience),
     brand_map: sectionText("brand_map", brainPreview.offer),
-    story_board: sectionText("story_board", "Your origin stories and key anecdotes will appear here."),
+    story_board: sectionText("story_board", t("previewStoryFallback")),
     communication_guideline: sectionText(
       "communication_guideline",
       brainPreview.voice,
@@ -713,16 +708,16 @@ export function OnboardingWizard({
   const igPrefillBanner = igPrefillLoading ? (
     <p className="mb-4 flex items-center gap-2 text-xs font-medium text-amber-300/90">
       <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-      Reading your Instagram…
+      {t("readingInstagram")}
     </p>
   ) : null;
 
   const workspaceQuestions: OnbQuestion[] = [
     {
-      question: "What should we call your workspace?",
-      helper: "This is your home base in Silas — name it after your brand, studio, or yourself.",
-      example: "e.g. Toni Mora Studio",
-      validate: () => (orgName.trim() ? null : "Workspace name is required."),
+      question: t("qWorkspaceName"),
+      helper: t("qWorkspaceNameHelper"),
+      example: t("qWorkspaceNameExample"),
+      validate: () => (orgName.trim() ? null : t("workspaceNameRequired")),
       node: (
         <input
           value={orgName}
@@ -734,10 +729,10 @@ export function OnboardingWizard({
       ),
     },
     {
-      question: "What's the creator or brand name?",
-      helper: "The creator or personal brand you'll be making content for.",
-      example: "e.g. Toni Mora",
-      validate: () => (clientName.trim() ? null : "Creator / brand name is required."),
+      question: t("qCreatorName"),
+      helper: t("qCreatorNameHelper"),
+      example: t("qCreatorNameExample"),
+      validate: () => (clientName.trim() ? null : t("creatorNameRequired")),
       node: (
         <input
           value={clientName}
@@ -749,9 +744,9 @@ export function OnboardingWizard({
       ),
     },
     {
-      question: "What's the Instagram handle?",
-      helper: "We use it to analyze your reels and others in your niche. You can add it later.",
-      example: "e.g. @tonimora",
+      question: t("qInstagram"),
+      helper: t("qInstagramHelper"),
+      example: t("qInstagramExample"),
       optional: true,
       node: (
         <input
@@ -764,8 +759,8 @@ export function OnboardingWizard({
       ),
     },
     {
-      question: "Which language should we create in?",
-      helper: "The main language your content will be generated in.",
+      question: t("qLanguage"),
+      helper: t("qLanguageHelper"),
       node: (
         <select
           value={language}
@@ -780,34 +775,29 @@ export function OnboardingWizard({
     },
   ];
 
-  const igNote = (key: string) =>
-    autofilledKeys.has(key) ? " ✨ Pre-filled from your Instagram — edit freely." : "";
+  const igNote = (key: string) => (autofilledKeys.has(key) ? t("igPrefillNote") : "");
 
   const quizQuestions: OnbQuestion[] = [
     {
-      question: "Who's your ideal audience?",
-      helper:
-        "Describe the follower or client you want to reach — who they are and what they struggle with." +
-        igNote("audience"),
-      example:
-        "e.g. Busy moms in their 30s who want quick healthy meals without spending hours meal prepping",
-      validate: () => (quizAudience.trim() ? null : "Tell us who you want to reach."),
+      question: t("qAudience"),
+      helper: t("qAudienceHelper") + igNote("audience"),
+      example: t("qAudienceExample"),
+      validate: () => (quizAudience.trim() ? null : t("audienceRequired")),
       node: (
         <textarea
           value={quizAudience}
           onChange={(e) => setQuizAudience(e.target.value)}
           rows={3}
           className={qInputClass}
-          placeholder="Describe your ideal audience…"
+          placeholder={t("qAudiencePlaceholder")}
           autoFocus
         />
       ),
     },
     {
-      question: "What are your content goals?",
-      helper:
-        "What do you want your content to achieve? Separate several with commas." + igNote("goals"),
-      example: "e.g. leads, brand authority, sell my course",
+      question: t("qGoals"),
+      helper: t("qGoalsHelper") + igNote("goals"),
+      example: t("qGoalsExample"),
       optional: true,
       node: (
         <input
@@ -820,9 +810,9 @@ export function OnboardingWizard({
       ),
     },
     {
-      question: "How would you describe your brand voice?",
-      helper: "The tone and style you want to communicate with." + igNote("voice"),
-      example: "e.g. friendly and direct, with humor but data-backed",
+      question: t("qVoice"),
+      helper: t("qVoiceHelper") + igNote("voice"),
+      example: t("qVoiceExample"),
       optional: true,
       node: (
         <input
@@ -835,11 +825,9 @@ export function OnboardingWizard({
       ),
     },
     {
-      question: "What do you sell or promote?",
-      helper:
-        "Your main product, service, or offer — what you want your content to drive people toward." +
-        igNote("offer"),
-      example: "e.g. A 12-week fitness coaching program, $497/month",
+      question: t("qOffer"),
+      helper: t("qOfferHelper") + igNote("offer"),
+      example: t("qOfferExample"),
       optional: true,
       node: (
         <textarea
@@ -847,16 +835,15 @@ export function OnboardingWizard({
           onChange={(e) => setQuizOffers(e.target.value)}
           rows={3}
           className={qInputClass}
-          placeholder="What you sell, price range, or main call-to-action…"
+          placeholder={t("qOfferPlaceholder")}
           autoFocus
         />
       ),
     },
     {
-      question: "Any creators you treat as competitors or references?",
-      helper:
-        "Instagram accounts in your niche you admire or use as a reference. Separate several with commas.",
-      example: "e.g. @creator1, @creator2",
+      question: t("qCompetitors"),
+      helper: t("qCompetitorsHelper"),
+      example: t("qCompetitorsExample"),
       optional: true,
       node: (
         <input
@@ -871,9 +858,8 @@ export function OnboardingWizard({
   ];
 
   const sourcePasteQuestion: OnbQuestion = {
-    question: "Paste your material",
-    helper:
-      "A sales-call transcript, onboarding doc, or positioning notes — we'll extract your offer, audience, story, positioning and tone from it.",
+    question: t("qPasteMaterial"),
+    helper: t("qPasteMaterialHelper"),
     optional: true,
     node: (
       <textarea
@@ -881,7 +867,7 @@ export function OnboardingWizard({
         onChange={(e) => setSourceText(e.target.value)}
         rows={10}
         className={qInputClass}
-        placeholder="Paste your transcript, call notes, or brief here…"
+        placeholder={t("qPasteMaterialPlaceholder")}
         autoFocus
       />
     ),
@@ -889,12 +875,9 @@ export function OnboardingWizard({
 
   const sourceDiscoveryQuestions: OnbQuestion[] = [
     {
-      question: "What do you sell, and to whom?",
-      helper:
-        "Your main offer: what it is, the price range, the core promise, and the objections people usually raise." +
-        igNote("offer"),
-      example:
-        "e.g. A 12-week group program for B2B founders, ~$3k. Promise: a predictable inbound pipeline. Common objection: “I don't have time to post.”",
+      question: t("qSellToWhom"),
+      helper: t("qSellToWhomHelper") + igNote("offer"),
+      example: t("qSellToWhomExample"),
       optional: true,
       node: (
         <textarea
@@ -902,18 +885,15 @@ export function OnboardingWizard({
           onChange={(e) => setSrcOffer(e.target.value)}
           rows={4}
           className={qInputClass}
-          placeholder="What you sell, price, promise, common objections…"
+          placeholder={t("qSellToWhomPlaceholder")}
           autoFocus
         />
       ),
     },
     {
-      question: "What does your ideal client struggle with — and what do they want?",
-      helper:
-        "Go deeper than the niche: the concrete frustrations they feel today and the outcome they're dreaming of." +
-        igNote("icp"),
-      example:
-        "e.g. Frustrated: posting for months with no leads. Wants: to be seen as the go-to expert and book calls every week.",
+      question: t("qIdealStruggle"),
+      helper: t("qIdealStruggleHelper") + igNote("icp"),
+      example: t("qIdealStruggleExample"),
       optional: true,
       node: (
         <textarea
@@ -921,18 +901,15 @@ export function OnboardingWizard({
           onChange={(e) => setSrcIcp(e.target.value)}
           rows={4}
           className={qInputClass}
-          placeholder="Their pains today and the outcome they want…"
+          placeholder={t("qIdealStrugglePlaceholder")}
           autoFocus
         />
       ),
     },
     {
-      question: "What's your story or origin?",
-      helper:
-        "How you started, a turning point, or real anecdotes and examples — only what's actually true." +
-        igNote("story"),
-      example:
-        "e.g. Left a corporate sales job after burning out, rebuilt a pipeline from zero in 90 days, now teach the same system.",
+      question: t("qOriginStory"),
+      helper: t("qOriginStoryHelper") + igNote("story"),
+      example: t("qOriginStoryExample"),
       optional: true,
       node: (
         <textarea
@@ -940,18 +917,15 @@ export function OnboardingWizard({
           onChange={(e) => setSrcStory(e.target.value)}
           rows={4}
           className={qInputClass}
-          placeholder="How it started, turning points, real examples…"
+          placeholder={t("qOriginStoryPlaceholder")}
           autoFocus
         />
       ),
     },
     {
-      question: "Why you, and not someone else?",
-      helper:
-        "Your positioning and what makes you different — values, method, or a point of view your competitors don't have." +
-        igNote("positioning"),
-      example:
-        "e.g. The only one combining cold outreach with organic content. Data-driven, no fluff, no “hustle culture”.",
+      question: t("qWhyYou"),
+      helper: t("qWhyYouHelper") + igNote("positioning"),
+      example: t("qWhyYouExample"),
       optional: true,
       node: (
         <textarea
@@ -959,18 +933,15 @@ export function OnboardingWizard({
           onChange={(e) => setSrcPositioning(e.target.value)}
           rows={4}
           className={qInputClass}
-          placeholder="Your edge, values, method, point of view…"
+          placeholder={t("qWhyYouPlaceholder")}
           autoFocus
         />
       ),
     },
     {
-      question: "How should your content sound?",
-      helper:
-        "The tone, plus any words or phrases you love to use — and ones you want to avoid." +
-        igNote("tone"),
-      example:
-        "e.g. Confident and warm. Use “pipeline”, “system”. Avoid “guru”, “crush it”, and emojis in every line.",
+      question: t("qContentSound"),
+      helper: t("qContentSoundHelper") + igNote("tone"),
+      example: t("qContentSoundExample"),
       optional: true,
       node: (
         <textarea
@@ -978,7 +949,7 @@ export function OnboardingWizard({
           onChange={(e) => setSrcTone(e.target.value)}
           rows={4}
           className={qInputClass}
-          placeholder="Tone, words to use, words to avoid…"
+          placeholder={t("qContentSoundPlaceholder")}
           autoFocus
         />
       ),
@@ -991,10 +962,10 @@ export function OnboardingWizard({
   > = {
     workspace: {
       questions: workspaceQuestions,
-      submitLabel: "Create workspace",
+      submitLabel: t("createWorkspace"),
       onSubmit: submitWorkspace,
     },
-    quiz: { questions: quizQuestions, submitLabel: "Continue", onSubmit: saveQuiz },
+    quiz: { questions: quizQuestions, submitLabel: t("continue"), onSubmit: saveQuiz },
   };
 
   if (currentStep === "quiz") {
@@ -1091,8 +1062,8 @@ export function OnboardingWizard({
             total={1}
             hideActions
             hideProgress
-            question="How do you want to set up your strategy?"
-            helper="Either answer a few quick questions, or paste material you already have — either way we turn it into your strategy."
+            question={t("sourceModeQuestion")}
+            helper={t("sourceModeHelper")}
             error={error}
             onContinue={() => {}}
           >
@@ -1107,13 +1078,13 @@ export function OnboardingWizard({
                 className="flex flex-col gap-1 rounded-xl border border-amber-400/40 bg-amber-400/[0.06] p-4 text-left transition hover:border-amber-400/70 hover:bg-amber-400/10"
               >
                 <span className="flex items-center gap-2">
-                  <span className="text-sm font-bold text-white">Answer a few questions</span>
+                  <span className="text-sm font-bold text-white">{t("sourceModeQuestions")}</span>
                   <span className="rounded-full bg-amber-400/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-300">
-                    Recommended
+                    {t("sourceModeRecommended")}
                   </span>
                 </span>
                 <span className="text-xs leading-relaxed text-zinc-500">
-                  ~5 quick questions to map your project. We draft your strategy from your answers.
+                  {t("sourceModeQuestionsHint")}
                 </span>
               </button>
               <button
@@ -1125,9 +1096,9 @@ export function OnboardingWizard({
                 }}
                 className="flex flex-col gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-4 text-left transition hover:border-amber-400/50 hover:bg-white/[0.06]"
               >
-                <span className="text-sm font-bold text-white">Paste my material</span>
+                <span className="text-sm font-bold text-white">{t("sourceModePaste")}</span>
                 <span className="text-xs leading-relaxed text-zinc-500">
-                  Transcript, sales call, or a doc — we extract everything from it.
+                  {t("sourceModePasteHint")}
                 </span>
               </button>
             </div>
@@ -1178,7 +1149,7 @@ export function OnboardingWizard({
           canBack
           isLast={isLast}
           busy={busy}
-          submitLabel="Build my strategy"
+          submitLabel={t("buildMyStrategy")}
           onBack={() => {
             setError(null);
             if (safeIdx > 0) setQIdx((i) => Math.max(0, i - 1));
@@ -1206,26 +1177,26 @@ export function OnboardingWizard({
                   <Brain className="h-5 w-5 text-amber-300" aria-hidden />
                 </div>
                 <div>
-                  <p className="text-lg font-black text-white">Silas has enough to start.</p>
+                  <p className="text-lg font-black text-white">{t("silasHasEnough")}</p>
                   <p className="mt-2 text-sm leading-relaxed text-zinc-300">
-                    This is the lightweight version of your Creator Brain. The full editor is still available below, but the onboarding goal is to get you to a useful first content opportunity quickly.
+                    {t("silasHasEnoughHint")}
                   </p>
                 </div>
               </div>
             </div>
             <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
-              <p className="text-sm font-bold text-white">What happens next</p>
+              <p className="text-sm font-bold text-white">{t("whatHappensNext")}</p>
               <p className="mt-2 text-sm leading-relaxed text-zinc-400">
-                We&apos;ll compile this into discovery inputs, look for similar creators, score outlier reels, and ask you to approve what actually feels on-brand.
+                {t("whatHappensNextHint")}
               </p>
             </div>
           </div>
           <div className="grid gap-4 md:grid-cols-2">
-            <StrategyDocPreviewCard label="ICP" value={documentPreviews.icp} locked={contextLocked} />
-            <StrategyDocPreviewCard label="Brand Map" value={documentPreviews.brand_map} locked={contextLocked} />
-            <StrategyDocPreviewCard label="Storyboard" value={documentPreviews.story_board} locked={contextLocked} />
+            <StrategyDocPreviewCard label={t("docIcp")} value={documentPreviews.icp} locked={contextLocked} />
+            <StrategyDocPreviewCard label={t("docBrandMap")} value={documentPreviews.brand_map} locked={contextLocked} />
+            <StrategyDocPreviewCard label={t("docStoryboard")} value={documentPreviews.story_board} locked={contextLocked} />
             <StrategyDocPreviewCard
-              label="Communication Guideline"
+              label={t("docCommGuideline")}
               value={documentPreviews.communication_guideline}
               locked={contextLocked}
             />
@@ -1235,7 +1206,7 @@ export function OnboardingWizard({
             onClick={() => setShowFullBrainEditor((v) => !v)}
             className="text-sm font-bold text-amber-300 hover:text-amber-200"
           >
-            {showFullBrainEditor ? "Hide full brain editor" : "Review full brain editor"}
+            {showFullBrainEditor ? t("hideFullBrainEditor") : t("reviewFullBrainEditor")}
           </button>
           {showFullBrainEditor ? (
             <ContextEditor
@@ -1249,7 +1220,7 @@ export function OnboardingWizard({
             busy={busy}
             onClick={() => void advance({ complete_step: "strategy_docs", current_step: "pipeline" })}
           >
-            Start finding content opportunities
+            {t("startFindingOpportunities")}
           </OnboardingPrimaryButton>
         </div>
       )}
@@ -1257,9 +1228,9 @@ export function OnboardingWizard({
       {currentStep === "pipeline" && (
         <div className="space-y-5">
           <div className="rounded-3xl border border-white/5 bg-white/[0.02] p-6 text-center shadow-lg">
-            <p className="text-xl font-black text-white">Silas is scanning your niche…</p>
+            <p className="text-xl font-black text-white">{t("silasScanning")}</p>
             <p className="mx-auto mt-2 max-w-lg text-sm leading-relaxed text-zinc-400">
-              We compile your Creator Brain, find adjacent creators, and pull a small set of trending niche reels so you can teach taste — not scrape your whole Instagram history.
+              {t("silasScanningHint")}
             </p>
           </div>
 
@@ -1267,15 +1238,15 @@ export function OnboardingWizard({
               phase list — and discovery also starts itself automatically. */}
           {pipelineComplete ? (
             <OnboardingPrimaryButton onClick={() => void advance({ current_step: "reel_review" })}>
-              Show me the best opportunities
+              {t("showBestOpportunities")}
             </OnboardingPrimaryButton>
           ) : pipelineFailed ? (
             <OnboardingPrimaryButton busy={busy} onClick={() => void runPipeline()}>
-              Retry discovery
+              {t("retryDiscovery")}
             </OnboardingPrimaryButton>
           ) : !pipelinePhase ? (
             <OnboardingPrimaryButton busy={busy} onClick={() => void runPipeline()}>
-              Start AI discovery
+              {t("startAiDiscovery")}
             </OnboardingPrimaryButton>
           ) : null}
 
@@ -1289,14 +1260,13 @@ export function OnboardingWizard({
       {currentStep === "reel_review" && (
         <div className="space-y-4">
           <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
-            <p className="text-sm font-bold text-white">Your job: teach taste, not strategy.</p>
+            <p className="text-sm font-bold text-white">{t("teachTasteTitle")}</p>
             <p className="mt-2 text-sm leading-relaxed text-zinc-400">
-              Mark what feels useful and on-brand. You need at least one Yes to create your first
-              post.{" "}
+              {t("teachTasteHint")}{" "}
               {candidates.length > 0
                 ? requiredVotes === 1
-                  ? "Vote on this reel to continue."
-                  : `Vote on at least ${requiredVotes} reels, including one Yes.`
+                  ? t("voteThisReel")
+                  : t("voteAtLeastReels", { count: requiredVotes })
                 : null}
             </p>
           </div>
@@ -1309,13 +1279,12 @@ export function OnboardingWizard({
             <ReelCandidatesSkeleton />
           ) : candidates.length === 0 ? (
             <div className="space-y-4 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-8 text-center">
-              <p className="text-sm text-zinc-300">No more candidate reels right now.</p>
+              <p className="text-sm text-zinc-300">{t("noMoreCandidates")}</p>
               <p className="text-xs leading-relaxed text-zinc-500">
-                Disliked reels are hidden from new batches. Scan your niche again for fresh
-                options.
+                {t("noMoreCandidatesHint")}
               </p>
               <OnboardingPrimaryButton busy={busy} onClick={() => void runPipeline({ broaden: true })}>
-                Find more opportunities
+                {t("findMoreOpportunities")}
               </OnboardingPrimaryButton>
             </div>
           ) : (
@@ -1337,18 +1306,18 @@ export function OnboardingWizard({
                 })}
               </div>
               <p className="text-center text-xs font-semibold text-zinc-400">
-                {votedCount}/{requiredVotes} minimum taste votes
-                {yesReels.length === 0 ? " · need ≥1 Yes" : ""}
+                {t("tasteVotesProgress", { voted: votedCount, required: requiredVotes })}
+                {yesReels.length === 0 ? t("needOneYes") : ""}
               </p>
               <OnboardingPrimaryButton busy={busy} onClick={() => void submitVotes()}>
-                Save my choices and continue
+                {busy ? t("savingChoices") : t("saveChoicesContinue")}
               </OnboardingPrimaryButton>
               {poolExhausted && yesReels.length === 0 ? (
                 <OnboardingPrimaryButton
                   busy={busy}
                   onClick={() => void runPipeline({ broaden: true })}
                 >
-                  Find more with broader keywords
+                  {t("findMoreBroader")}
                 </OnboardingPrimaryButton>
               ) : null}
             </>
@@ -1359,21 +1328,21 @@ export function OnboardingWizard({
       {currentStep === "first_content" && (
         <div className="space-y-4">
           <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
-            <p className="text-sm font-bold text-white">Choose the seed for your first post.</p>
+            <p className="text-sm font-bold text-white">{t("chooseSeedTitle")}</p>
             <p className="mt-2 text-sm leading-relaxed text-zinc-400">
-              Pick the YES opportunity you&apos;d be proud to adapt. Silas will use the reel as structure, not as a copy-paste template.
+              {t("chooseSeedHint")}
             </p>
           </div>
           {yesReels.length === 0 ? (
             <div className="space-y-4 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-8 text-center">
               <p className="text-sm text-zinc-300">
-                No Yes picks yet — you need one approved reel to generate your first post.
+                {t("noYesPicks")}
               </p>
               <OnboardingPrimaryButton
                 busy={busy}
                 onClick={() => void advance({ current_step: "reel_review" })}
               >
-                Back to taste voting
+                {t("backToTasteVoting")}
               </OnboardingPrimaryButton>
             </div>
           ) : (
@@ -1397,7 +1366,7 @@ export function OnboardingWizard({
                 disabled={!selectedReelId}
                 onClick={() => void startFirstContent()}
               >
-                Generate my first post
+                {t("generateFirstPost")}
               </OnboardingPrimaryButton>
             </>
           )}
@@ -1422,10 +1391,10 @@ export function OnboardingWizard({
               <Sparkles className="h-6 w-6 text-emerald-300" />
             </div>
             <p className="mt-3 text-xl font-black text-white">
-              You&apos;re set up. Your first post is ready to review.
+              {t("youreSetUp")}
             </p>
             <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-zinc-300">
-              Home now shows posts picked for your niche — adapt, export, and keep going from there.
+              {t("homeShowsPosts")}
             </p>
           </div>
           {actionPlan && Array.isArray((actionPlan as { days?: unknown }).days) ? (
@@ -1450,11 +1419,11 @@ export function OnboardingWizard({
           ) : (
             <div className="flex items-center justify-center gap-2 py-8 text-sm text-app-fg-muted">
               <Loader2 className="h-4 w-4 animate-spin" />
-              Building your 7-day plan...
+              {t("buildingSevenDayPlan")}
             </div>
           )}
           <OnboardingPrimaryButton onClick={() => void finishTour()}>
-            Open my studio
+            {t("openMyStudio")}
           </OnboardingPrimaryButton>
         </div>
       )}

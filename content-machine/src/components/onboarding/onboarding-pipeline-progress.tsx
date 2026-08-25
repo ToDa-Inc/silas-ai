@@ -1,6 +1,7 @@
 "use client";
 
 import { Check, Loader2, X } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/cn";
 import {
   pipelinePhaseStatus,
@@ -43,6 +44,7 @@ function PhaseIcon({ status }: { status: "done" | "active" | "pending" | "failed
 }
 
 export function OnboardingPipelineProgress({ phase, lastError }: Props) {
+  const t = useTranslations("onboarding");
   const pipelinePhases = usePipelinePhases();
   const current = phase === "complete" ? "complete" : phase;
   const failed = current === "failed";
@@ -92,19 +94,19 @@ export function OnboardingPipelineProgress({ phase, lastError }: Props) {
       {current === "complete" ? (
         <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 text-sm font-semibold text-emerald-300 flex items-center gap-2 mt-4">
           <Check className="h-4 w-4 stroke-[3]" />
-          Discovery complete — ready to review candidate reels.
+          {t("discoveryComplete")}
         </div>
       ) : null}
 
       {failed && lastError ? (
         <div className="rounded-2xl border border-red-500/25 bg-red-500/10 px-4 py-3 text-xs text-red-200 leading-relaxed mt-4">
-          Some steps had issues: {lastError}
+          {t("pipelineStepsHadIssues", { error: lastError })}
         </div>
       ) : null}
 
       {current && current !== "complete" && current !== "failed" && current !== "queued" ? (
         <p className="text-center text-xs text-zinc-500 mt-4">
-          Usually 5–15 minutes. You can keep this tab open.
+          {t("pipelineUsuallyTakes")}
         </p>
       ) : null}
     </div>

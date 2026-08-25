@@ -168,5 +168,6 @@ def build_transcript_from_answers(answers: Dict[str, str], *, lang: OnboardingLa
         ans = (answers.get(qid) or "").strip()
         if not ans:
             continue
-        parts.append(f"# Question {qid}: {question_text(q, lang)}\n{ans}")
+        heading = "Frage" if lang == "de" else "Question"
+        parts.append(f"# {heading} {qid}: {question_text(q, lang)}\n{ans}")
     return "\n\n".join(parts).strip()

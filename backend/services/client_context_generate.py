@@ -33,7 +33,7 @@ SECTION_DESCRIPTIONS = {
     ),
 }
 
-GENERATE_SYSTEM = """You are a senior content strategist. From the onboarding call transcript below, write five plain-text documents for reuse in AI content generation. Write in the same language as the transcript when obvious; otherwise use the client's language from context.
+GENERATE_SYSTEM = """You are a senior content strategist. From the onboarding call transcript below, write five plain-text documents for reuse in AI content generation. Write in the same language as the transcript when obvious; otherwise use the client's language from context. If that language is German, translate ALL section headings too (never leave English titles like "Additional Observations").
 
 Output MUST be a single JSON object with exactly these string keys (no markdown fences):
 - icp — Ideal client: who they serve, demographics, psychographics, pains, desires.
