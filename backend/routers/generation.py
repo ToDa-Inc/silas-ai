@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Annotated, Any, Dict, List, Optional
 
@@ -1690,6 +1691,19 @@ def _public_render_url(supabase_url: str, bucket: str, path: str) -> str:
     return f"{supabase_url.rstrip('/')}/storage/v1/object/public/{bucket}/{path}"
 
 
+def _cache_busted_render_url(supabase_url: str, bucket: str, path: str) -> str:
+    return f"{_public_render_url(supabase_url, bucket, path)}?v={int(time.time())}"
+
+
+def _cover_text_from_script(script: Any) -> str:
+    for raw in str(script or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        return line[:500]
+    return ""
+
+
 @router.post("/clients/{slug}/generate/sessions/{session_id}/generate-thumbnail")
 def generation_generate_thumbnail(
     slug: str,
@@ -1734,9 +1748,12 @@ def generation_generate_thumbnail(
             pass
 
     if not text:
+        text = _cover_text_from_script(row.get("script"))
+
+    if not text:
         raise HTTPException(
             status_code=400,
-            detail="Session has no hooks or angles — pass hook_text in the request body.",
+            detail="Session has no hooks, angles, or script — pass hook_text in the request body.",
         )
 
     try:
@@ -1765,7 +1782,7 @@ def generation_generate_thumbnail(
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Storage upload failed: {e}") from e
 
-    url = _public_render_url(settings.supabase_url, RENDERS_BUCKET, path)
+    url = _cache_busted_render_url(settings.supabase_url, RENDERS_BUCKET, path)
 
     # Persist so the Media page can list covers without extra endpoints
     try:
@@ -1829,7 +1846,7 @@ def generation_compose_thumbnail(
         )
 
     try:
-        with httpx.Client(timeout=30) as client:
+        with httpx.Client(timeout=30, follow_redirects=True) as client:
             r = client.get(file_url)
             r.raise_for_status()
             src_bytes = r.content
@@ -1863,7 +1880,7 @@ def generation_compose_thumbnail(
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Storage upload failed: {e}") from e
 
-    url = _public_render_url(settings.supabase_url, RENDERS_BUCKET, path)
+    url = _cache_busted_render_url(settings.supabase_url, RENDERS_BUCKET, path)
     try:
         supabase.table("generation_sessions").update({"thumbnail_url": url}).eq("id", session_id).execute()
     except Exception:

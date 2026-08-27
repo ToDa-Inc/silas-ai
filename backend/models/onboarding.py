@@ -98,5 +98,5 @@ class FirstContentStartBody(BaseModel):
     scraped_reel_id: str = Field(..., min_length=1)
     format_key: Optional[str] = Field(
         None,
-        description="text_overlay | b_roll_reel | talking_head | carousel; default from analysis",
+        description="text_overlay | b_roll_reel | talking_head | carousel; onboarding defaults to talking_head",
     )

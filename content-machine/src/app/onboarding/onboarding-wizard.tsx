@@ -595,7 +595,12 @@ export function OnboardingWizard({
     }
     setBusy(true);
     try {
-      const r = await startOnboardingFirstContent(clientSlug, orgSlug, selectedReelId);
+      const r = await startOnboardingFirstContent(
+        clientSlug,
+        orgSlug,
+        selectedReelId,
+        "talking_head",
+      );
       if (!r.ok) {
         setError(r.error);
         return;

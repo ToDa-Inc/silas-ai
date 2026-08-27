@@ -753,7 +753,9 @@ def start_first_content(
     gen_body = GenerationStartBody(
         source_type="url_adapt",
         url=post_url,
-        format_key=body.format_key,
+        # First win is always a talking-head script: no B-roll upload, no Remotion export.
+        # Overlay/carousel stay available later in the full studio.
+        format_key=body.format_key or "talking_head",
         # Onboarding drops the user straight into the editor with no angle-picker UI, so
         # skip angle generation/selection entirely and package a script immediately —
         # otherwise the session lands on "angles_ready" with an empty script and the

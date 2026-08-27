@@ -30,6 +30,40 @@ _FLUX_TURBO_PATH = "/v1/ai/text-to-image/flux-2-turbo"
 _POLL_INTERVAL_S = 3.0
 _POLL_MAX_WAIT_S = 120.0
 
+
+def _freepik_task_id(payload: Any) -> str:
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, dict):
+        raise RuntimeError(f"Freepik submit returned unexpected body: {str(payload)[:400]}")
+    tid = str(data.get("task_id") or data.get("id") or "").strip()
+    if not tid:
+        raise RuntimeError(f"Freepik submit missing task_id: {str(payload)[:400]}")
+    return tid
+
+
+def _looks_like_image_bytes(content: bytes) -> bool:
+    return (
+        content[:8] == b"\x89PNG\r\n\x1a\n"
+        or content[:3] == b"\xff\xd8\xff"
+        or content[:4] == b"RIFF"
+        or content[:4] == b"GIF8"
+    )
+
+
+def _download_image_bytes(url: str) -> bytes:
+    """Freepik ``generated`` URLs often 302 to a CDN; httpx does not follow by default."""
+    with httpx.Client(timeout=60, follow_redirects=True) as client:
+        dl = client.get(url)
+        dl.raise_for_status()
+        content = dl.content
+        status = dl.status_code
+    if not _looks_like_image_bytes(content):
+        raise RuntimeError(
+            f"Freepik image download did not return image bytes (status={status}, "
+            f"len={len(content)}, prefix={content[:24]!r})"
+        )
+    return content
+
 # Instagram feed carousel slides — 4:5 portrait (matches export + UI)
 CAROUSEL_SLIDE_W = 1080
 CAROUSEL_SLIDE_H = 1350
@@ -424,7 +458,7 @@ def generate_freepik_washed_background_png(
             },
         )
         r.raise_for_status()
-        task_id: str = r.json()["data"]["task_id"]
+        task_id = _freepik_task_id(r.json())
 
     deadline = time.monotonic() + _POLL_MAX_WAIT_S
     image_url = ""
@@ -449,10 +483,7 @@ def generate_freepik_washed_background_png(
     if not image_url:
         raise RuntimeError("Freepik generation timed out after 120 s")
 
-    with httpx.Client(timeout=60) as client:
-        dl = client.get(image_url)
-        dl.raise_for_status()
-        bg_bytes = dl.content
+    bg_bytes = _download_image_bytes(image_url)
 
     bg = Image.open(io.BytesIO(bg_bytes))
     if wash:
@@ -653,7 +684,7 @@ def generate_thumbnail_freepik_pillow(
             },
         )
         r.raise_for_status()
-        task_id: str = r.json()["data"]["task_id"]
+        task_id = _freepik_task_id(r.json())
 
     # 2. Poll until COMPLETED or FAILED
     deadline = time.monotonic() + _POLL_MAX_WAIT_S
@@ -680,10 +711,7 @@ def generate_thumbnail_freepik_pillow(
         raise RuntimeError("Freepik generation timed out after 120 s")
 
     # 3. Download background
-    with httpx.Client(timeout=60) as client:
-        dl = client.get(image_url)
-        dl.raise_for_status()
-        bg_bytes = dl.content
+    bg_bytes = _download_image_bytes(image_url)
 
     # 4. Optional wash + overlay text with Pillow
     bg = Image.open(io.BytesIO(bg_bytes))

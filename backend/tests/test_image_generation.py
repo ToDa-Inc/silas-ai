@@ -4,7 +4,13 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from services.image_generation import compose_carousel_final_png, generate_slide_image
+from services.image_generation import (
+    _download_image_bytes,
+    _freepik_task_id,
+    _looks_like_image_bytes,
+    compose_carousel_final_png,
+    generate_slide_image,
+)
 
 
 class GenerateSlideImageTest(unittest.TestCase):
@@ -68,6 +74,52 @@ class GenerateSlideImageTest(unittest.TestCase):
 
         rendered = Image.open(BytesIO(out))
         self.assertEqual(rendered.size, (1080, 1350))
+
+
+class FreepikDownloadHelpersTest(unittest.TestCase):
+    def test_task_id_from_data(self):
+        self.assertEqual(_freepik_task_id({"data": {"task_id": "abc"}}), "abc")
+        self.assertEqual(_freepik_task_id({"data": {"id": "xyz"}}), "xyz")
+
+    def test_task_id_rejects_empty(self):
+        with self.assertRaises(RuntimeError):
+            _freepik_task_id({"data": {}})
+        with self.assertRaises(RuntimeError):
+            _freepik_task_id({"message": "nope"})
+
+    def test_image_magic_bytes(self):
+        self.assertTrue(_looks_like_image_bytes(b"\x89PNG\r\n\x1a\nxxxx"))
+        self.assertTrue(_looks_like_image_bytes(b"\xff\xd8\xff\x00"))
+        self.assertFalse(_looks_like_image_bytes(b"<html>redirect</html>"))
+        self.assertFalse(_looks_like_image_bytes(b""))
+
+    def test_download_uses_follow_redirects(self):
+        png = b"\x89PNG\r\n\x1a\n" + b"x" * 40
+
+        class FakeResp:
+            status_code = 200
+            content = png
+
+            def raise_for_status(self) -> None:
+                return None
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                self.kwargs = kwargs
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def get(self, url):
+                assert self.kwargs.get("follow_redirects") is True
+                return FakeResp()
+
+        with patch("services.image_generation.httpx.Client", FakeClient):
+            out = _download_image_bytes("https://example.com/go")
+        self.assertEqual(out, png)
 
 
 if __name__ == "__main__":

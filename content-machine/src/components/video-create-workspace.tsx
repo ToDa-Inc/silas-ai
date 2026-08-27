@@ -334,7 +334,7 @@ export type VideoCreateWorkspaceProps = {
   sessionId: string;
   /** Allows the parent to react to state changes (e.g. show a toast or refresh sessions). */
   onSessionUpdated?: (s: GenerationSession) => void;
-  /** First-run onboarding: hide advanced panels and show export-ready CTA. */
+  /** First-run onboarding: hide advanced panels. Talking-head continues without a Remotion export. */
   guidedMode?: boolean;
   onGuidedComplete?: () => void;
   /** Home studio overlay: wider layout and relaxed scroll clipping. */
@@ -385,6 +385,7 @@ export function VideoCreateWorkspace({
   const [deletingClipId, setDeletingClipId] = useState<string | null>(null);
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
   const [thumbnailBusy, setThumbnailBusy] = useState(false);
+  const [thumbnailError, setThumbnailError] = useState<string | null>(null);
   const [coverText, setCoverText] = useState("");
   const [coverMode, setCoverMode] = useState<CoverMode>("ai");
   const [coverImageId, setCoverImageId] = useState("");
@@ -2190,11 +2191,19 @@ export function VideoCreateWorkspace({
     const cs = clientSlug.trim();
     const os = orgSlug.trim();
     if (!session || !cs || !os) return;
-    const text = coverText.trim() || undefined;
+    const text =
+      coverText.trim() ||
+      scriptDraft
+        .split("\n")
+        .map((line) => line.replace(/^#+\s*/, "").trim())
+        .find(Boolean) ||
+      undefined;
     setThumbnailBusy(true);
+    setThumbnailError(null);
     try {
       const res = await generationGenerateThumbnail(cs, os, session.id, text, coverPayload(coverEdit));
       if (!res.ok) {
+        setThumbnailError(res.error);
         show(res.error, "error");
         return;
       }
@@ -2202,7 +2211,7 @@ export function VideoCreateWorkspace({
     } finally {
       setThumbnailBusy(false);
     }
-  }, [clientSlug, orgSlug, session, coverText, coverEdit, show]);
+  }, [clientSlug, orgSlug, session, coverText, coverEdit, scriptDraft, show]);
 
   const onComposeCoverFromImage = useCallback(async () => {
     const cs = clientSlug.trim();
@@ -2210,9 +2219,11 @@ export function VideoCreateWorkspace({
     if (!session || !cs || !os || !coverImageId) return;
     const text = coverText.trim() || undefined;
     setThumbnailBusy(true);
+    setThumbnailError(null);
     try {
       const res = await generationComposeThumbnail(cs, os, session.id, coverImageId, text, coverPayload(coverEdit));
       if (!res.ok) {
+        setThumbnailError(res.error);
         show(res.error, "error");
         return;
       }
@@ -2777,6 +2788,10 @@ export function VideoCreateWorkspace({
         onRegenSection={onRegenSection}
         copyText={copyText}
         embedded={embedded}
+        showAiContext={!guidedMode}
+        guidedMode={guidedMode}
+        onGuidedComplete={onGuidedComplete}
+        generateError={thumbnailError}
         hooks={hooks}
         coverOptions={coverOptions}
         coverRegenBusy={coverRegenBusy}
@@ -2997,7 +3012,7 @@ export function VideoCreateWorkspace({
                         if (!id) return;
                         void onPatchCarouselTemplate(id, { clearSlides: true });
                       }}
-                      className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-amber-500 px-4 py-2 text-xs font-bold text-zinc-950 shadow-sm hover:opacity-95 disabled:opacity-50 sm:flex-none"
+                      className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-amber-500 px-4 py-2 text-xs font-bold text-black shadow-sm hover:opacity-95 disabled:opacity-50 sm:flex-none"
                     >
                       {carouselTemplateBusy ? (
                         <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
@@ -3135,14 +3150,14 @@ export function VideoCreateWorkspace({
       {guidedMode ? (
         <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
           <p className="font-semibold text-amber-900 dark:text-amber-100">First-run editor</p>
-          <p className="mt-1 text-xs text-amber-800/90 dark:text-amber-200/80">
+          <p className="mt-1 text-xs text-amber-950 dark:text-amber-50">
             Refine copy → background → render → cover → caption. When your export is ready, continue onboarding.
           </p>
           {(session.rendered_video_url || step3Done) && onGuidedComplete ? (
             <button
               type="button"
               onClick={onGuidedComplete}
-              className="mt-3 rounded-lg bg-amber-500 px-4 py-2 text-xs font-bold text-zinc-950"
+              className="mt-3 rounded-lg bg-amber-500 px-4 py-2 text-xs font-bold text-black"
             >
               Export ready — continue
             </button>
@@ -4234,6 +4249,7 @@ export function VideoCreateWorkspace({
         onSelectImage={setCoverImageId}
         onGenerateAi={onGenerateThumbnail}
         onComposeFromImage={onComposeCoverFromImage}
+        generateError={thumbnailError}
         step={1}
         embedded={embedded}
       />

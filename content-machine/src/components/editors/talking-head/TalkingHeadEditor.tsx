@@ -4,9 +4,9 @@
  * Talking-head doesn't go through the Remotion render pipeline — the user
  * films themself reading the script. So this editor only surfaces:
  *   1. Editable script (with regenerate + copy)
- *   2. Cover (reuses the shared CoverEditor)
+ *   2. Cover (shared CoverEditor; hidden in onboarding guided mode)
  *   3. Caption
- *   4. "What the AI is working with" (alternate hooks)
+ *   4. "What the AI is working with" (alternate hooks; hidden in guided mode)
  *
  * Pure presentational component. The host workspace still owns `scriptDraft`,
  * autosave, and the regen/copy callbacks — the `useTalkingHeadEditor` hook
@@ -14,6 +14,7 @@
  */
 
 import { Copy, Video } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import { SaveStatusPill } from "@/components/editor-ui";
 import type { ClientImageRow, GenerationSession } from "@/lib/api-client";
@@ -58,6 +59,11 @@ type Props = {
   hashtags: string[];
   captionFull: string;
   embedded?: boolean;
+  showCover?: boolean;
+  showAiContext?: boolean;
+  guidedMode?: boolean;
+  onGuidedComplete?: () => void;
+  generateError?: string | null;
 };
 
 export function TalkingHeadEditor({
@@ -92,12 +98,25 @@ export function TalkingHeadEditor({
   hashtags,
   captionFull,
   embedded = false,
+  showCover = true,
+  showAiContext = true,
+  guidedMode = false,
+  onGuidedComplete,
+  generateError = null,
 }: Props) {
+  const t = useTranslations("onboarding");
   const { expanded: studioExpanded } = useStudioShell();
   const scriptRows = Math.min(48, Math.max(14, scriptDraft.split("\n").length + 2));
 
   return (
     <div className="space-y-4">
+      {guidedMode && onGuidedComplete ? (
+        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
+          <p className="font-semibold text-amber-950 dark:text-amber-50">{t("talkingHeadGuidedTitle")}</p>
+          <p className="mt-1 text-xs text-amber-950 dark:text-amber-50">{t("talkingHeadGuidedHint")}</p>
+        </div>
+      ) : null}
+
       <div className="glass rounded-2xl border border-app-divider/80 p-5 md:p-6">
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <Video className="h-4 w-4 text-amber-500" />
@@ -139,29 +158,32 @@ export function TalkingHeadEditor({
         </div>
       </div>
 
-      <CoverEditor
-        hooks={hooks}
-        coverOptions={coverOptions}
-        coverRegenBusy={coverRegenBusy}
-        onRegenerateCovers={onRegenerateCovers}
-        images={images}
-        thumbnailUrl={thumbnailUrl}
-        thumbnailBusy={thumbnailBusy}
-        coverText={coverText}
-        selectedImageId={coverImageId}
-        selectedCoverTemplate={selectedCoverTemplate}
-        coverEdit={coverEdit}
-        coverSpecInFlight={coverSpecInFlight}
-        mode={coverMode}
-        onModeChange={onCoverModeChange}
-        onCoverTextChange={onCoverTextChange}
-        onCoverEditChange={onCoverEditChange}
-        onSelectImage={onSelectCoverImage}
-        onGenerateAi={onGenerateThumbnail}
-        onComposeFromImage={onComposeCoverFromImage}
-        step={2}
-        embedded={embedded}
-      />
+      {showCover ? (
+        <CoverEditor
+          hooks={hooks}
+          coverOptions={coverOptions}
+          coverRegenBusy={coverRegenBusy}
+          onRegenerateCovers={onRegenerateCovers}
+          images={images}
+          thumbnailUrl={thumbnailUrl}
+          thumbnailBusy={thumbnailBusy}
+          coverText={coverText}
+          selectedImageId={coverImageId}
+          selectedCoverTemplate={selectedCoverTemplate}
+          coverEdit={coverEdit}
+          coverSpecInFlight={coverSpecInFlight}
+          mode={coverMode}
+          onModeChange={onCoverModeChange}
+          onCoverTextChange={onCoverTextChange}
+          onCoverEditChange={onCoverEditChange}
+          onSelectImage={onSelectCoverImage}
+          onGenerateAi={onGenerateThumbnail}
+          onComposeFromImage={onComposeCoverFromImage}
+          generateError={generateError}
+          step={2}
+          embedded={embedded}
+        />
+      ) : null}
 
       <CaptionSection
         caption={captionBody}
@@ -177,11 +199,24 @@ export function TalkingHeadEditor({
         }
       />
 
-      <AiContextSection
-        hooks={hooks}
-        regenHooks={(fb) => onRegenSection("hooks", fb)}
-        busy={regenBusyScope === "hooks"}
-      />
+      {showAiContext ? (
+        <AiContextSection
+          hooks={hooks}
+          regenHooks={(fb) => onRegenSection("hooks", fb)}
+          busy={regenBusyScope === "hooks"}
+        />
+      ) : null}
+
+      {guidedMode && onGuidedComplete ? (
+        <button
+          type="button"
+          disabled={!scriptDraft.trim()}
+          onClick={onGuidedComplete}
+          className="flex w-full items-center justify-center rounded-xl bg-amber-400 px-4 py-3 text-sm font-bold text-black transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {t("talkingHeadGuidedContinue")}
+        </button>
+      ) : null}
     </div>
   );
 }

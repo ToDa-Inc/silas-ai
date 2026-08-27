@@ -36,6 +36,13 @@ def test_cover_wash_defaults_to_preserving_colour():
     assert ComposeThumbnailBody(client_image_id="img_123").wash is False
 
 
+def test_cover_text_skips_markdown_headings():
+    from routers.generation import _cover_text_from_script
+
+    assert _cover_text_from_script("## Hook\nHello world\n## Build-up") == "Hello world"
+    assert _cover_text_from_script("   ") == ""
+
+
 if __name__ == "__main__":
     test_compose_thumbnail_accepts_crop_and_text_style_options(_MonkeyPatch())
     test_cover_wash_defaults_to_preserving_colour()

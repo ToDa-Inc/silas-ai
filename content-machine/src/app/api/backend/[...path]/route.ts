@@ -15,6 +15,8 @@ import { Agent, fetch as undiciFetch } from "undici";
  * (especially behind Vercel → Railway).
  */
 export const runtime = "nodejs";
+/** Cover generate waits on Freepik (UI copy is 30–60s; backend poll cap is 120s). */
+export const maxDuration = 180;
 
 const BACKEND_PROXY_AGENT = new Agent({
   connectTimeout: 120_000,

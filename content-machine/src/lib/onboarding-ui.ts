@@ -82,7 +82,7 @@ export const ONBOARDING_CHAPTERS: OnboardingChapter[] = [
   {
     id: "first_win",
     label: "First win",
-    subtitle: "Pick, create, export",
+    subtitle: "Pick, script, continue",
     steps: ["reel_review", "first_content", "editor", "action_plan", "tour"],
   },
 ];
@@ -116,11 +116,11 @@ export const STEP_HEADINGS: Record<OnboardingStepKey, { title: string; descripti
   },
   first_content: {
     title: "Pick your first win",
-    description: "Choose the opportunity you want Silas to turn into your first export-ready content piece.",
+    description: "Choose the opportunity you want Silas to turn into your first talking-head script.",
   },
   editor: {
     title: "Create your first post",
-    description: "Refine the copy, visuals, cover, and caption. When the export is ready, your dashboard unlocks.",
+    description: "Edit the talking-head script and caption. Continue when you're happy with this first draft.",
   },
   action_plan: {
     title: "Your first week is mapped",

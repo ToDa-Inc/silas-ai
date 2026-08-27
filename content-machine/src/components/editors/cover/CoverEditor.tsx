@@ -90,6 +90,7 @@ type Props = {
   images: ClientImageRow[];
   thumbnailUrl: string | null;
   thumbnailBusy: boolean;
+  generateError?: string | null;
   coverText: string;
   selectedImageId: string;
   selectedCoverTemplate?: GenerationSession["selected_cover_template"] | null;
@@ -115,6 +116,7 @@ export function CoverEditor({
   images,
   thumbnailUrl,
   thumbnailBusy,
+  generateError = null,
   coverText,
   selectedImageId,
   selectedCoverTemplate,
@@ -355,6 +357,9 @@ export function CoverEditor({
                       </a>
                     ) : null}
                   </div>
+                  {generateError ? (
+                    <p className="text-xs leading-relaxed text-red-600 dark:text-red-400">{generateError}</p>
+                  ) : null}
                 </div>
               ) : null}
 

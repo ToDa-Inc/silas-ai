@@ -83,7 +83,8 @@ export function CoverTextLayerEditor({
   const [stageW, setStageW] = useState(REEL_COVER_STAGE_W);
   const [block, setBlock] = useState<ReturnType<typeof computeCoverTextBlockPreview> | null>(null);
   const thumbUrlRef = useRef(thumbnailUrl);
-  const [coverLivePreview, setCoverLivePreview] = useState(true);
+  const [coverLivePreview, setCoverLivePreview] = useState(!thumbnailUrl);
+  const skipLiveOnMount = useRef(true);
 
   useEffect(() => {
     if (thumbnailUrl !== thumbUrlRef.current) {
@@ -93,6 +94,10 @@ export function CoverTextLayerEditor({
   }, [thumbnailUrl]);
 
   useEffect(() => {
+    if (skipLiveOnMount.current) {
+      skipLiveOnMount.current = false;
+      return;
+    }
     setCoverLivePreview(true);
   }, [previewText, layout, templateId, wash, cropY, zoom, textTreatment]);
 
