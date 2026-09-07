@@ -41,6 +41,7 @@ import {
 } from "@/lib/onboarding-ui";
 import { useStepHeadings } from "@/lib/use-onboarding-ui";
 import { useOnboardingLang } from "@/lib/use-onboarding-lang";
+import { onboardingBypassClearHref } from "@/lib/onboarding-bypass";
 import { useLocale, useTranslations } from "next-intl";
 import { cn } from "@/lib/cn";
 
@@ -634,8 +635,7 @@ export function OnboardingWizard({
 
   async function finishTour() {
     await advance({ current_step: "done", complete_step: "tour", status: "completed" });
-    router.replace("/dashboard");
-    router.refresh();
+    router.replace(onboardingBypassClearHref("/dashboard?welcome=1"));
   }
 
   const yesReels = candidates.filter((c) => c.reel?.id && votes[c.reel.id] === "yes");

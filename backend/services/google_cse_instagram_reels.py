@@ -15,7 +15,10 @@ import urllib.request
 from typing import Any, Callable, Dict, List, Mapping, Optional, Set, Tuple
 
 from services.instagram_post_url import instagram_post_short_code
-from services.keyword_search_window import payload_includes_google_cse
+from services.keyword_search_window import (
+    payload_includes_google_cse,
+    resolve_google_date_restrict,
+)
 from services.keyword_similarity_discovery import merge_keyword_discovery_items_into_raw_by_sc
 
 logger = logging.getLogger(__name__)
@@ -42,6 +45,17 @@ _RESERVED_HANDLES = {
     "about",
     "legal",
 }
+
+
+_DATE_RESTRICT_RE = re.compile(r"^([dwmy])(\d+)$", re.IGNORECASE)
+
+
+def _tbs_from_date_restrict(date_restrict: str) -> str:
+    """Map CSE ``dateRestrict`` (``m3``) to google-search-scraper ``tbs`` (``qdr:m3``)."""
+    s = str(date_restrict or "").strip().lower()
+    if not _DATE_RESTRICT_RE.match(s):
+        return ""
+    return f"qdr:{s}"
 
 
 def google_cse_configured(settings: Any) -> bool:
@@ -109,6 +123,7 @@ def apify_google_search_instagram_reel_items(
     keywords: List[str],
     per_keyword: int = PER_KEYWORD_HITS,
     max_total: int = MAX_TOTAL_URLS,
+    date_restrict: str = "",
     run_actor_fn: Optional[Callable[..., List[Dict[str, Any]]]] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """Search Google via Apify google-search-scraper actor for Instagram reels."""
@@ -130,6 +145,9 @@ def apify_google_search_instagram_reel_items(
         "countryCode": "de",
         "csvFriendlyOutput": False,
     }
+    tbs = _tbs_from_date_restrict(date_restrict)
+    if tbs:
+        input_data["tbs"] = tbs
     try:
         raw_batches = runner(apify_token, "apify~google-search-scraper", input_data)
     except Exception as e:
@@ -172,6 +190,8 @@ def apify_google_search_instagram_reel_items(
         "items": len(items),
         "unique_short_codes": len(seen),
         "provider": "apify_google",
+        "date_restrict": str(date_restrict or ""),
+        "tbs": tbs,
     }
 
 
@@ -192,15 +212,21 @@ def google_cse_search_instagram_reel_items(
     keywords: List[str],
     per_keyword: int = PER_KEYWORD_HITS,
     max_total: int = MAX_TOTAL_URLS,
+    date_restrict: str = "",
     http_get_json: Optional[Callable[[str], Dict[str, Any]]] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    """Search ``{phrase} site:instagram.com/reel`` per keyword. Failures skip that phrase."""
+    """Search ``{phrase} site:instagram.com/reel`` per keyword. Failures skip that phrase.
+
+    ``date_restrict`` (``m3`` = past 3 months) keeps Google from returning reels
+    that rank well but are years old, which the recency filter would discard anyway.
+    """
     getter = http_get_json or _http_get_json
     seen: Set[str] = set()
     items: List[Dict[str, Any]] = []
     errors: List[Dict[str, str]] = []
     queries = 0
     num = max(1, min(int(per_keyword), 10))
+    restrict = str(date_restrict or "").strip()
 
     for phrase in keywords:
         if len(seen) >= max_total:
@@ -208,14 +234,15 @@ def google_cse_search_instagram_reel_items(
         q = (phrase or "").strip()
         if not q:
             continue
-        params = urllib.parse.urlencode(
-            {
-                "key": api_key,
-                "cx": cse_cx,
-                "q": f"{q} site:instagram.com/reel",
-                "num": num,
-            }
-        )
+        query_params: Dict[str, Any] = {
+            "key": api_key,
+            "cx": cse_cx,
+            "q": f"{q} site:instagram.com/reel",
+            "num": num,
+        }
+        if _DATE_RESTRICT_RE.match(restrict.lower()):
+            query_params["dateRestrict"] = restrict
+        params = urllib.parse.urlencode(query_params)
         url = f"{CSE_ENDPOINT}?{params}"
         queries += 1
         try:
@@ -245,6 +272,7 @@ def google_cse_search_instagram_reel_items(
         "items": len(items),
         "unique_short_codes": len(seen),
         "errors": errors,
+        "date_restrict": restrict,
     }
     return items, meta
 
@@ -276,19 +304,27 @@ def merge_google_cse_urls_if_enabled(
 
     items: List[Dict[str, Any]] = []
     meta: Dict[str, Any] = {}
+    date_restrict = resolve_google_date_restrict(payload=payload)
 
     if cse_configured:
         api_key = str(settings.google_cse_api_key).strip()
         cse_cx = str(settings.google_cse_cx).strip()
         fn = search_fn or google_cse_search_instagram_reel_items
         try:
-            items, meta = fn(api_key=api_key, cse_cx=cse_cx, keywords=keywords)
+            items, meta = fn(
+                api_key=api_key,
+                cse_cx=cse_cx,
+                keywords=keywords,
+                date_restrict=date_restrict,
+            )
         except Exception as e:
             logger.warning("google CSE search failed: %s", e)
             meta = {"error": str(e)[:300]}
     elif search_fn is not None:
         try:
-            items, meta = search_fn(api_key="", cse_cx="", keywords=keywords)
+            items, meta = search_fn(
+                api_key="", cse_cx="", keywords=keywords, date_restrict=date_restrict
+            )
         except Exception as e:
             logger.exception("custom search_fn failed")
             return {"used": False, "error": str(e)[:400]}
@@ -297,7 +333,7 @@ def merge_google_cse_urls_if_enabled(
     if not items and apify_token:
         try:
             apify_items, apify_meta = apify_google_search_instagram_reel_items(
-                apify_token=apify_token, keywords=keywords
+                apify_token=apify_token, keywords=keywords, date_restrict=date_restrict
             )
             if apify_items:
                 items = apify_items

@@ -16,16 +16,20 @@ def sanitize_apify_search_term(text: str, *, max_len: int = 48, max_words: int =
 
 
 def pick_default_keyword(niche_config: List) -> str:
+    """Last-resort search term. Only phrase-shaped values — truncating an
+    interview answer here is what produced searches like ``Ziele für die nächsten 12``."""
     if not niche_config:
         return "instagram marketing"
     n0 = niche_config[0]
-    k_de = n0.get("keywords_de") or []
-    k_en = n0.get("keywords") or []
-    if k_de:
-        return str(k_de[0])
-    if k_en:
-        return str(k_en[0])
-    return str(n0.get("name") or "content creator")
+    for candidate in (
+        *(n0.get("keywords_de") or []),
+        *(n0.get("keywords") or []),
+        n0.get("name"),
+    ):
+        s = str(candidate or "").strip()
+        if s and looks_like_search_phrase(s):
+            return s
+    return "content creator"
 
 
 def collect_hashtag_queries(niches: List, max_q: int = 6) -> List[str]:
@@ -50,16 +54,60 @@ def collect_hashtag_queries(niches: List, max_q: int = 6) -> List[str]:
     return out
 
 
+def looks_like_search_phrase(text: str) -> bool:
+    """Reject dumped interview answers that Instagram user-search cannot use."""
+    s = str(text or "").strip()
+    if not s or "\n" in s or len(s) > 80:
+        return False
+    return 1 <= len(s.split()) <= 6
+
+
+def competitor_search_phrases(
+    candidates: List[Any],
+    *,
+    max_terms: int = 8,
+) -> tuple[List[str], List[str]]:
+    """Keep only terms Instagram user-search can resolve.
+
+    Returns ``(used, dropped)`` so a run that found no accounts shows *which*
+    terms were unusable instead of silently searching on truncated prose.
+    """
+    used: List[str] = []
+    dropped: List[str] = []
+    seen: set[str] = set()
+    for raw in candidates or []:
+        s = " ".join(str(raw or "").split())
+        if not s:
+            continue
+        if not looks_like_search_phrase(s):
+            dropped.append(s[:120])
+            continue
+        term = sanitize_apify_search_term(s)
+        low = term.lower()
+        if not term or low in seen:
+            continue
+        seen.add(low)
+        used.append(term)
+        if len(used) >= max(1, max_terms):
+            break
+    return used, dropped
+
+
 def collect_keywords(niches: List, payload: Dict[str, Any]) -> List[str]:
     """Same as scripts competitor-batch-discover (--keywords / --lang)."""
     raw = payload.get("keywords")
     if isinstance(raw, list) and len(raw) > 0:
-        out = [str(x).strip() for x in raw if str(x).strip()]
+        out = [
+            sanitize_apify_search_term(x)
+            for x in raw
+            if looks_like_search_phrase(str(x))
+        ]
+        out = [x for x in out if x]
         if out:
             return out
     one = payload.get("keyword")
-    if one and str(one).strip():
-        return [str(one).strip()]
+    if one and looks_like_search_phrase(str(one)):
+        return [sanitize_apify_search_term(one)]
     mode = str(payload.get("keyword_mode") or "all").lower()
     if mode not in ("all", "de", "en"):
         mode = "all"
@@ -69,13 +117,13 @@ def collect_keywords(niches: List, payload: Dict[str, Any]) -> List[str]:
         if mode in ("all", "de"):
             for k in n.get("keywords_de") or []:
                 s = str(k).strip()
-                if s and s not in seen:
+                if looks_like_search_phrase(s) and s not in seen:
                     seen.add(s)
                     ordered.append(s)
         if mode in ("all", "en"):
             for k in n.get("keywords") or []:
                 s = str(k).strip()
-                if s and s not in seen:
+                if looks_like_search_phrase(s) and s not in seen:
                     seen.add(s)
                     ordered.append(s)
     if not ordered:

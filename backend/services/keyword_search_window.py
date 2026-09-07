@@ -25,6 +25,60 @@ DEFAULT_MIN_VIEWS_PER_DAY = 2000.0
 ONBOARDING_MIN_VIEWS_PER_DAY = 500.0
 ONBOARDING_URL_SOURCES = ["sasky", "google_cse"]
 
+# ``last-1-month`` is the widest value the Sasky ``date`` enum accepts, so the
+# keyword lane cannot look back further than 30 days. Google has no such ceiling:
+# it ranks by relevance over its whole index. Giving the Google lane its own
+# cutoff lets a 2-3 month old reel through while Sasky stays at 30 days.
+GOOGLE_LOOKBACK_DAYS = 90
+# Google Custom Search ``dateRestrict`` / google-search ``tbs=qdr:`` unit.
+GOOGLE_DATE_RESTRICT = "m3"
+GOOGLE_DISCOVERY_TAGS = ("google_cse", "google_search", "google")
+
+
+def resolve_google_lookback_days(
+    *,
+    niche_settings: Optional[Mapping[str, Any]] = None,
+    payload: Optional[Mapping[str, Any]] = None,
+    default_days: int = GOOGLE_LOOKBACK_DAYS,
+) -> int:
+    """Recency cutoff for Google-discovered reels (independent of the Sasky window)."""
+    pl = dict(payload or {})
+    nset = dict(niche_settings or {})
+    for src in (pl.get("google_lookback_days"), nset.get("google_lookback_days")):
+        if src is not None:
+            return max(1, int(src))
+    return max(1, int(default_days))
+
+
+def resolve_google_date_restrict(
+    *,
+    niche_settings: Optional[Mapping[str, Any]] = None,
+    payload: Optional[Mapping[str, Any]] = None,
+) -> str:
+    """``dateRestrict`` value handed to Google so it stops returning years-old reels."""
+    pl = dict(payload or {})
+    nset = dict(niche_settings or {})
+    for src in (pl.get("google_date_restrict"), nset.get("google_date_restrict")):
+        if src:
+            return str(src).strip()
+    return GOOGLE_DATE_RESTRICT
+
+
+def is_google_discovery(discovery: Any) -> bool:
+    return str(discovery or "").strip().lower() in GOOGLE_DISCOVERY_TAGS
+
+
+def recency_days_for_discovery(
+    discovery: Any,
+    *,
+    days: int,
+    google_days: int,
+) -> int:
+    """Per-source cutoff: Google reels may be older than the Sasky search window."""
+    if is_google_discovery(discovery):
+        return max(days, google_days)
+    return days
+
 
 def resolve_search_window_and_days(
     *,
@@ -99,4 +153,6 @@ def onboarding_keyword_similarity_payload() -> Dict[str, Any]:
         "source": "onboarding",
         "url_sources": list(ONBOARDING_URL_SOURCES),
         "min_views_per_day": ONBOARDING_MIN_VIEWS_PER_DAY,
+        "google_lookback_days": GOOGLE_LOOKBACK_DAYS,
+        "google_date_restrict": GOOGLE_DATE_RESTRICT,
     }

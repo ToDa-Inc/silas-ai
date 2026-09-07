@@ -14,6 +14,7 @@ import {
   buildOpportunityPool,
   canonicalPostUrl,
   findSessionForReel,
+  onboardingIsCompleted,
   resolveHeroState,
   type DailyPostMeta,
   type HeroResolved,
@@ -26,6 +27,7 @@ import { HeroCard } from "./hero-card";
 import { MakePostFab, type OpportunityCardState } from "./opportunity-card";
 import { MomentumLine } from "./momentum-line";
 import { StudioOverlay } from "./studio-overlay";
+import { DashboardWelcomeDock } from "./dashboard-welcome-dock";
 
 type ReelDraftMeta = {
   state: OpportunityCardState;
@@ -476,6 +478,7 @@ export function HomeFeed({
     return out.length > 0 ? out : pool.slice(0, 4);
   }, [freshReels, winReels, pool]);
 
+  const setupFinished = onboardingIsCompleted(summary.state);
   const heroTitle =
     hero.kind === "draft_ready"
       ? copy.heroDraftReadyTitle
@@ -484,7 +487,9 @@ export function HomeFeed({
         : hero.kind === "building"
           ? copy.heroBuildingTitle
           : hero.kind === "start"
-            ? copy.heroStartTitle
+            ? setupFinished
+              ? copy.heroStartTitleReady
+              : copy.heroStartTitle
             : copy.heroNextPostTitle;
 
   return (
@@ -494,11 +499,14 @@ export function HomeFeed({
         <h1 className="text-xl font-semibold tracking-tight text-app-fg">{heroTitle}</h1>
       </header>
 
+      <DashboardWelcomeDock clientSlug={clientSlug} completed={setupFinished} />
+
       <HeroCard
         hero={hero}
         pool={displayPool}
         disabled={disabled}
         busy={heroBusy}
+        setupComplete={setupFinished}
         onUseThis={() => void useHero()}
         onShowAnother={(reel) => {
           const idx = pool.findIndex((r) => r.id === reel.id);

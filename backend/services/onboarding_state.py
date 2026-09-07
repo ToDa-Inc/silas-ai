@@ -174,6 +174,30 @@ def update_onboarding_state(
     return out
 
 
+def _looks_like_search_phrase(text: str) -> bool:
+    """True for short Instagram-search phrases, not dumped interview answers."""
+    s = str(text or "").strip()
+    if not s or "\n" in s or len(s) > 80:
+        return False
+    return 1 <= len(s.split()) <= 6
+
+
+def content_goals_from_answer(raw: Any) -> List[str]:
+    """Turn quiz/voice goal text into short phrases. Essays become an empty list.
+
+    Voice onboarding used to comma-split whole Q9 answers, which then became
+    Instagram user-search terms like ``Ziele für die nächsten 12``.
+    """
+    if isinstance(raw, list):
+        parts = [str(x).strip() for x in raw if str(x).strip()]
+    else:
+        text = str(raw or "").strip()
+        if not text or "\n" in text or len(text) > 160:
+            return []
+        parts = [s.strip() for s in text.replace(";", ",").split(",") if s.strip()]
+    return [p for p in parts if _looks_like_search_phrase(p)]
+
+
 def apply_quiz_to_client(
     supabase: Client,
     client_id: str,
@@ -191,19 +215,17 @@ def apply_quiz_to_client(
     audience = str(quiz.get("target_audience") or "").strip()
     voice = str(quiz.get("brand_voice") or "").strip()
     offers = str(quiz.get("offers") or "").strip()
-    goals = quiz.get("content_goals")
-    if not isinstance(goals, list):
-        goals = []
-    goals = [str(g).strip() for g in goals if str(g).strip()]
+    goals = content_goals_from_answer(quiz.get("content_goals"))
 
     keywords: List[str] = []
     for g in goals[:6]:
         keywords.append(g)
-    if summary:
+    # Voice dumps put a full biography in niche_summary — those are not search terms.
+    if summary and _looks_like_search_phrase(summary):
         for part in summary.replace(";", ",").split(","):
             t = part.strip()
-            if t and len(t) > 2 and t not in keywords:
-                keywords.append(t[:80])
+            if _looks_like_search_phrase(t) and t not in keywords:
+                keywords.append(t)
 
     niche_config = [
         {

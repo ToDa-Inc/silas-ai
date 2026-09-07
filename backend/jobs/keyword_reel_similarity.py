@@ -28,6 +28,8 @@ from services.keyword_similarity_discovery import (
 from services.keyword_search_window import (
     DEFAULT_DAYS,
     DEFAULT_MIN_VIEWS_PER_DAY,
+    recency_days_for_discovery,
+    resolve_google_lookback_days,
     resolve_min_views_per_day,
     resolve_search_window_and_days,
 )
@@ -37,6 +39,14 @@ from services.instagram_post_url import (
     canonical_instagram_post_url,
     canonical_reel_url_from_short_code,
     instagram_post_short_code,
+)
+from services.matched_creator_expansion import (
+    DEFAULT_ONLY_NEWER_THAN,
+    DEFAULT_OUTLIERS_PER_HANDLE,
+    DEFAULT_POSTS_PER_HANDLE,
+    expansion_budget,
+    select_creator_outliers,
+    select_matched_creator_handles,
 )
 from services.niche_prerank import prerank_reels_for_similarity
 from services.openrouter import analyze_post_similarity, analyze_reel_similarity
@@ -56,6 +66,9 @@ MAX_ITEMS_PER_KEYWORD = 60
 MAX_KEYWORD_DISCOVERY_TOTAL = 600
 MAX_SCORE_SAFETY_CAP = 200  # hard ceiling to prevent runaway jobs — not a quality filter
 SIMILARITY_THRESHOLD = 85
+# Near-matches used to top up a thin onboarding batch. Kept close to the real bar:
+# these reels go into the taste step, so diluting them corrupts the taste signal.
+ONBOARDING_NEAR_MATCH_FLOOR = 70
 
 # Apify / model cost telemetry (USD).
 # Verified against actor pricing pages:
@@ -339,6 +352,143 @@ def _qualifying_to_recovery_payload(
             }
         )
     return out
+
+
+def select_onboarding_qualifying(
+    scored: List[Dict[str, Any]],
+    *,
+    threshold: int,
+    min_save: int = 8,
+    floor: int = ONBOARDING_NEAR_MATCH_FLOOR,
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Keep real matches, then fill a thin onboarding batch from near-matches.
+
+    Last resort only. The taste batch trains downstream picks, so padding it with
+    weak matches is worse than showing fewer cards — hence a floor close to the
+    real bar rather than the midpoint of the score range.
+    """
+    qualifying = [r for r in scored if int(r.get("similarity_score") or 0) >= threshold]
+    meta: Dict[str, Any] = {
+        "onboarding_fallback_saved": 0,
+        "onboarding_fallback_floor": floor,
+    }
+    if len(qualifying) >= min_save or not scored:
+        return qualifying, meta
+    have = {str(r.get("url") or "") for r in qualifying}
+    near = [
+        r
+        for r in scored
+        if int(r.get("similarity_score") or 0) >= floor
+        and str(r.get("url") or "") not in have
+    ]
+    near.sort(key=lambda x: int(x.get("similarity_score") or 0), reverse=True)
+    need = max(0, min_save - len(qualifying))
+    qualifying = qualifying + near[:need]
+    meta["onboarding_fallback_saved"] = len(qualifying)
+    return qualifying, meta
+
+
+def _creator_post_to_reel(
+    item: Dict[str, Any],
+    *,
+    username: str,
+    keywords: List[str],
+) -> Optional[Dict[str, Any]]:
+    """Map one Apify reel-actor item into the shape the scoring path expects."""
+    sc = str(item.get("shortCode") or item.get("shortcode") or "").strip()
+    if not sc:
+        sc = instagram_post_short_code(str(item.get("url") or ""))
+    if not sc:
+        return None
+    views = _views(item)
+    comments = int(item.get("commentsCount") or 0)
+    return {
+        "url": canonical_reel_url_from_short_code(sc),
+        "short_code": sc,
+        "username": _owner_username(item) or username,
+        "caption": _caption(item),
+        "views": views,
+        "likes": max(0, int(item.get("likesCount") or 0)),
+        "comments": comments,
+        "cv_ratio": _cv_ratio(views, comments),
+        "video_url": item.get("videoUrl") or "",
+        "video_duration": _duration_seconds(item.get("videoDuration") or item.get("duration")),
+        "posted_at": apify_instagram_item_posted_at_iso(item) or "",
+        "keywords": list(keywords),
+        "discovery": "matched_creator",
+        "thumbnail_url": reel_thumbnail_url_from_apify_item(item) or None,
+        "ig_type": str(item.get("type") or "").strip(),
+        "display_url": str(item.get("displayUrl") or item.get("display_url") or "").strip(),
+        "child_posts": item.get("childPosts") if isinstance(item.get("childPosts"), list) else [],
+    }
+
+
+def collect_matched_creator_candidates(
+    settings: Settings,
+    *,
+    handles: List[str],
+    keywords: List[str],
+    seen_short_codes: Set[str],
+    exclude_urls: Set[str],
+    posts_per_handle: int = DEFAULT_POSTS_PER_HANDLE,
+    outliers_per_handle: int = DEFAULT_OUTLIERS_PER_HANDLE,
+    only_newer_than: str = DEFAULT_ONLY_NEWER_THAN,
+    run_actor_fn: Optional[Any] = None,
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Scrape each matched creator and keep the reels that beat their own median.
+
+    Returns ``(candidates, per_handle_log)``. One Apify call per handle, so this
+    stays cheap relative to another round of keyword search.
+    """
+    from services.apify import instagram_reel_scraper_input, run_actor
+
+    runner = run_actor_fn or run_actor
+    candidates: List[Dict[str, Any]] = []
+    log: List[Dict[str, Any]] = []
+
+    for handle in handles:
+        entry: Dict[str, Any] = {"username": handle}
+        try:
+            items = runner(
+                settings.apify_api_token,
+                settings.apify_reel_actor,
+                instagram_reel_scraper_input(
+                    [handle],
+                    posts_per_handle,
+                    include_shares_count=settings.apify_include_shares_count,
+                    only_newer_than=only_newer_than,
+                    skip_pinned_posts=True,
+                ),
+            )
+        except Exception as e:
+            entry["error"] = str(e)[:200]
+            log.append(entry)
+            continue
+
+        posts: List[Dict[str, Any]] = []
+        for it in items or []:
+            if not isinstance(it, dict):
+                continue
+            row = _creator_post_to_reel(it, username=handle, keywords=keywords)
+            if not row:
+                continue
+            if row["short_code"] in seen_short_codes:
+                continue
+            posts.append(row)
+
+        entry["scraped"] = len(items or [])
+        outliers, meta = select_creator_outliers(
+            posts,
+            limit=outliers_per_handle,
+            exclude_urls=exclude_urls,
+        )
+        entry.update(meta)
+        for row in outliers:
+            row.pop("short_code", None)
+            candidates.append(row)
+        log.append(entry)
+
+    return candidates, log
 
 
 def persist_keyword_similarity_qualifying(
@@ -733,6 +883,7 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
         nset.get("min_video_seconds") or payload.get("min_video_duration_seconds") or 6.0
     )
     min_views_per_day = resolve_min_views_per_day(niche_settings=nset, payload=payload)
+    google_lookback_days = resolve_google_lookback_days(niche_settings=nset, payload=payload)
     if payload.get("onboarding_fast"):
         min_views_per_day = min(
             min_views_per_day, float(payload.get("min_views_per_day") or 800)
@@ -930,6 +1081,7 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
             ),
             "posted_at": posted_at,
             "keywords": meta["keywords"],
+            "discovery": str(meta.get("discovery") or "sasky"),
             "thumbnail_url": reel_thumbnail_url_from_apify_item(item) or None,
             "ig_type": str(item.get("type") or "").strip(),
             "display_url": str(item.get("displayUrl") or item.get("display_url") or "").strip(),
@@ -968,16 +1120,28 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
     progress["min_views_per_day"] = min_views_per_day
     progress["after_enrichment"] = len(reels)
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    # Per-source cutoff: Sasky cannot search beyond ``last-1-month``, but Google
+    # ranks its whole index, so a Google-discovered reel is allowed to be older.
+    now = datetime.now(timezone.utc)
     filtered: List[Dict[str, Any]] = []
+    kept_google_beyond_window = 0
     for r in reels:
+        source_days = recency_days_for_discovery(
+            r.get("discovery"), days=days, google_days=google_lookback_days
+        )
+        cutoff = now - timedelta(days=source_days)
+        if not r.get("posted_at"):
+            filtered.append(r)
+            continue
         p = _parse_posted_at(str(r.get("posted_at") or ""))
-        if r.get("posted_at") and p > cutoff:
+        if p > cutoff:
             filtered.append(r)
-        elif not r.get("posted_at"):
-            filtered.append(r)
+            if source_days > days and p <= now - timedelta(days=days):
+                kept_google_beyond_window += 1
 
     progress["after_date_filter"] = len(filtered)
+    progress["google_lookback_days"] = google_lookback_days
+    progress["kept_google_beyond_search_window"] = kept_google_beyond_window
 
     ranked = prerank_reels_for_similarity(filtered, keywords=keywords, recency_days=days)
     # Score everything that passed the filters — no arbitrary quality cap.
@@ -1031,20 +1195,94 @@ def run_keyword_reel_similarity(settings: Settings, job: Dict[str, Any]) -> None
                 progress.get("scored_with_slide_images") or 0
             ) + 1
 
+    # A reel that cleared the bar proves its author is on-brand, so their recent
+    # winners are a denser candidate pool than another keyword query.
+    if payload.get("expand_matched_creators") and scored:
+        exp_min_save = int(payload.get("min_onboarding_save") or 8)
+        real_matches = [r for r in scored if int(r.get("similarity_score") or 0) >= threshold]
+        budget = expansion_budget(saved=len(real_matches), min_save=exp_min_save)
+        handles = (
+            select_matched_creator_handles(
+                scored,
+                threshold=threshold,
+                max_handles=budget,
+                exclude={client_handle, *banned_handles},
+            )
+            if budget
+            else []
+        )
+        exp_meta: Dict[str, Any] = {
+            "matches_before": len(real_matches),
+            "min_save": exp_min_save,
+            "handles": handles,
+        }
+        if handles:
+            progress["phase"] = "expanding_matched_creators"
+            progress["matched_creator_expansion"] = exp_meta
+            supabase.table("background_jobs").update({"result": dict(progress)}).eq(
+                "id", job_id
+            ).execute()
+            candidates, per_handle = collect_matched_creator_candidates(
+                settings,
+                handles=handles,
+                keywords=keywords,
+                seen_short_codes=seen_scs,
+                exclude_urls={str(r.get("url") or "") for r in scored},
+            )
+            candidates = [c for c in candidates if _passes_min_duration(c)]
+            exp_meta["per_handle"] = per_handle
+            exp_meta["candidates"] = len(candidates)
+            if candidates:
+                extra_scored, extra_meta = score_items_bounded(settings, candidates, _score_one)
+                scored = scored + extra_scored
+                progress["scored"] = len(scored)
+                exp_meta["scored"] = len(extra_scored)
+                exp_meta["new_matches"] = sum(
+                    1
+                    for r in extra_scored
+                    if int(r.get("similarity_score") or 0) >= threshold
+                )
+                exp_carousel = sum(
+                    1
+                    for r in candidates
+                    if _ig_type_is_static_multimodal(str(r.get("ig_type") or ""))
+                )
+                score_carousel_n += exp_carousel
+                score_video_n += len(candidates) - exp_carousel
+                enrich_total = len(urls_to_enrich) + sum(
+                    int(h.get("scraped") or 0) for h in per_handle
+                )
+                progress["cost_estimate_usd"] = _estimate_cost_usd(
+                    raw_n=total_keyword_actor_items,
+                    enrich_n=enrich_total,
+                    score_video_n=score_video_n,
+                    score_carousel_n=score_carousel_n,
+                )
+                progress["cost_score_video_n"] = score_video_n
+                progress["cost_score_carousel_n"] = score_carousel_n
+        progress["matched_creator_expansion"] = exp_meta
+
     progress["phase"] = "upserting"
     supabase.table("background_jobs").update({"result": dict(progress)}).eq("id", job_id).execute()
 
+    progress["scored_summary"] = [
+        {
+            "url": r.get("url"),
+            "username": r.get("username"),
+            "score": int(r.get("similarity_score") or 0),
+            "views": int(r.get("views") or 0),
+            "posted_at": r.get("posted_at") or "",
+        }
+        for r in sorted(scored, key=lambda x: int(x.get("similarity_score") or 0), reverse=True)
+    ]
     qualifying = [r for r in scored if r["similarity_score"] >= threshold]
-    if payload.get("onboarding_fast") and not qualifying and scored:
-        # Safety net for genuinely sparse niches only — with a proper discovery window
-        # (see ONBOARDING_KEYWORD_PAYLOAD) this should rarely trigger. Keeps the taste-training
-        # step from showing zero examples rather than lowering the real 85-point quality bar.
+    if payload.get("onboarding_fast") and scored:
         floor = int(payload.get("onboarding_save_floor") or 50)
         min_save = int(payload.get("min_onboarding_save") or 8)
-        near = [r for r in scored if int(r.get("similarity_score") or 0) >= floor]
-        qualifying = sorted(near or scored, key=lambda x: x["similarity_score"], reverse=True)[:min_save]
-        progress["onboarding_fallback_saved"] = len(qualifying)
-        progress["onboarding_fallback_floor"] = floor
+        qualifying, fill_meta = select_onboarding_qualifying(
+            scored, threshold=threshold, min_save=min_save, floor=floor
+        )
+        progress.update(fill_meta)
     if qualifying:
         # Persist replay payload before DB write — if upsert throws, worker keeps status=failed
         # but result.recovery_snapshot remains for apply_keyword_similarity_recovery_snapshot().

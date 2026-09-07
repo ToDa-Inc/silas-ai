@@ -11,7 +11,11 @@ from core.database import get_supabase_for_settings
 from services.client_dna_compile import maybe_recompile_client_dna
 from services.client_context_real_prompts import generate_sections_from_real_prompts
 from services.onboarding_questions import build_transcript_from_answers, normalize_lang
-from services.onboarding_state import apply_quiz_to_client, update_onboarding_state
+from services.onboarding_state import (
+    apply_quiz_to_client,
+    content_goals_from_answer,
+    update_onboarding_state,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,12 +36,10 @@ def _quiz_from_answers(answers: Dict[str, str]) -> Dict[str, Any]:
     def g(qid: str) -> str:
         return (answers.get(qid) or "").strip()
 
-    goals_raw = g("9")
-    goals = [s.strip() for s in goals_raw.replace(";", ",").split(",") if s.strip()]
     return {
         "niche_summary": g("1"),
         "target_audience": g("8"),
-        "content_goals": goals,
+        "content_goals": content_goals_from_answer(g("9")),
         "brand_voice": g("10"),
         "offers": g("4"),
         "competitor_hints": [],

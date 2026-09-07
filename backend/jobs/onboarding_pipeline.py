@@ -37,6 +37,7 @@ from services.similarity_discovery_keywords import (
     similarity_scan_keywords,
 )
 from services.keyword_search_window import onboarding_keyword_similarity_payload
+from services.niche_queries import competitor_search_phrases
 
 logger = logging.getLogger(__name__)
 
@@ -55,12 +56,22 @@ ONBOARDING_COMPETITOR_PAYLOAD: Dict[str, Any] = {
 # No threshold override: the real 85-point quality bar is fine (verified — 5/7 saved reels in
 # a same-niche test scored 92+); the earlier "no candidates" case was caused by the narrow
 # window returning too small/stale a raw pool, not by the bar being too strict.
+#
+# ``max_score_cap`` must leave room for ``min_onboarding_save`` to be reachable.
+# A cap of 12 against an 85-point bar demanded a 67% hit rate; observed keyword-lane
+# precision is closer to 10%, so the batch could never fill. Enrichment is already
+# paid for every discovered URL ($2.30/1K) — scoring one more of those reels costs
+# ~$0.03, so a wider cap buys real matches cheaply instead of diluting the bar.
+ONBOARDING_SCORE_CAP = 36
+ONBOARDING_RETRY_SCORE_CAP = 24
+
 ONBOARDING_KEYWORD_PAYLOAD: Dict[str, Any] = {
     **onboarding_keyword_similarity_payload(),
     "onboarding_fast": True,
     "max_keywords": 3,
-    "max_score_cap": 12,
+    "max_score_cap": ONBOARDING_SCORE_CAP,
     "min_onboarding_save": 8,
+    "expand_matched_creators": True,
 }
 # Retry pass, used only when the first (precise, narrow-keyword) pass saves zero reels: casts
 # a much wider keyword net and drops the velocity bar hard. Trades precision for *some* taste
@@ -70,9 +81,10 @@ ONBOARDING_KEYWORD_PAYLOAD_RETRY: Dict[str, Any] = {
     **onboarding_keyword_similarity_payload(),
     "onboarding_fast": True,
     "max_keywords": 10,
-    "max_score_cap": 12,
+    "max_score_cap": ONBOARDING_RETRY_SCORE_CAP,
     "min_views_per_day": 250,
     "min_onboarding_save": 4,
+    "expand_matched_creators": True,
 }
 # User rejected the first taste batch ("Find more") — skip the narrow pass, use a different
 # keyword mix (skip already-tried terms), drop the bar further so we surface *new* candidates.
@@ -80,9 +92,10 @@ ONBOARDING_KEYWORD_PAYLOAD_BROADEN: Dict[str, Any] = {
     **onboarding_keyword_similarity_payload(),
     "onboarding_fast": True,
     "max_keywords": 12,
-    "max_score_cap": 12,
+    "max_score_cap": ONBOARDING_RETRY_SCORE_CAP,
     "min_views_per_day": 150,
     "min_onboarding_save": 3,
+    "expand_matched_creators": True,
 }
 
 
@@ -276,11 +289,33 @@ def run_onboarding_pipeline(settings: Settings, job: Dict[str, Any]) -> None:
     try:
         _progress(supabase, client_id, "dna_compile")
         force_recompile_client_dna_sync(settings, supabase, client_id)
+        fresh = (
+            supabase.table("clients")
+            .select("*")
+            .eq("id", client_id)
+            .limit(1)
+            .execute()
+        )
+        if fresh.data:
+            client = fresh.data[0]
 
         _progress(supabase, client_id, "competitor_discovery")
         fail_abandoned_queued_jobs(supabase, client_id=client_id, job_type="competitor_discovery")
         if not has_active_job(supabase, client_id=client_id, job_type="competitor_discovery"):
             comp_payload = dict(ONBOARDING_COMPETITOR_PAYLOAD)
+            dna_keywords, _ = similarity_scan_keywords(client=client, max_keywords=12)
+            # niche_config.keywords can be chopped interview answers; DNA phrases
+            # are the terms Instagram user-search can actually resolve.
+            comp_terms, comp_dropped = competitor_search_phrases(dna_keywords, max_terms=8)
+            if comp_terms:
+                comp_payload["keywords"] = comp_terms
+            _progress(
+                supabase,
+                client_id,
+                "competitor_discovery",
+                competitor_keywords_used=comp_terms,
+                competitor_keywords_dropped=comp_dropped[:8],
+            )
             if broaden:
                 comp_payload["limit"] = max(int(comp_payload.get("limit") or 5), 8)
                 comp_payload["posts_per_account"] = max(
@@ -366,20 +401,21 @@ def run_onboarding_pipeline(settings: Settings, job: Dict[str, Any]) -> None:
                 )
 
                 upserted = int(first_result.get("upserted") or 0)
+                min_save = int(ONBOARDING_KEYWORD_PAYLOAD.get("min_onboarding_save") or 8)
                 # Retrying won't help if the first pass never got a real answer from Apify/OpenRouter
                 # (credentials missing on this machine, or Apify's account-wide usage cap tripped) —
-                # only retry on a *clean* run that legitimately found nothing worth saving.
+                # only retry on a *clean* run that legitimately found too few saves.
                 hard_blocker = (
                     kw_row.get("status") == "failed"
                     or first_result.get("keyword_search_error_type") == "apify_usage_limit"
                 )
 
-                if upserted == 0 and hard_blocker:
+                if upserted < min_save and hard_blocker:
                     errors.append(
                         "keyword_reel_similarity blocked (not retried — retry wouldn't help): "
                         f"{(kw_row.get('error_message') or first_result.get('keyword_search_error') or 'unknown error')[:300]}"
                     )
-                elif upserted == 0:
+                elif upserted < min_save:
                     retry_payload = _retry_keywords_payload(
                         supabase, client_id, first_result.get("keywords_used") or []
                     )
@@ -387,7 +423,10 @@ def run_onboarding_pipeline(settings: Settings, job: Dict[str, Any]) -> None:
                         supabase,
                         client_id,
                         "keyword_scan_retry",
-                        reason="first pass saved 0 reels — retrying with broader keywords",
+                        reason=(
+                            f"first pass saved {upserted} reels "
+                            f"(want {min_save}) — retrying with broader keywords"
+                        ),
                         retry_keyword_count=len(retry_payload.get("keywords") or []),
                     )
                     kw_row = _run_inline_subjob(
@@ -409,11 +448,12 @@ def run_onboarding_pipeline(settings: Settings, job: Dict[str, Any]) -> None:
                             f"keyword_reel_similarity retry failed: "
                             f"{(kw_row.get('error_message') or 'unknown error')[:300]}"
                         )
-                    elif int(retry_result.get("upserted") or 0) == 0:
+                    elif int(retry_result.get("upserted") or 0) < min_save:
                         errors.append(
-                            "keyword_reel_similarity found 0 reels on both the precise and the "
-                            "broadened retry pass — niche keywords may be too narrow, or there is "
-                            "little matching recent Instagram content right now."
+                            "keyword_reel_similarity still below the onboarding taste batch "
+                            f"({min_save}) after the precise pass and the broadened retry — "
+                            "niche keywords may be too narrow, or there is little matching "
+                            "recent Instagram content right now."
                         )
                 elif kw_row.get("status") != "completed":
                     errors.append(

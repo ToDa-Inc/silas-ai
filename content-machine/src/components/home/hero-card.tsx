@@ -18,6 +18,7 @@ type Props = {
   disabled?: boolean;
   busy?: boolean;
   primaryLabel?: string;
+  setupComplete?: boolean;
   onUseThis: () => void;
   onShowAnother: (reel: ScrapedReelRow) => void;
   layoutId?: string;
@@ -29,6 +30,7 @@ export function HeroCard({
   disabled,
   busy,
   primaryLabel,
+  setupComplete = false,
   onUseThis,
   onShowAnother,
   layoutId = "hero-card",
@@ -149,22 +151,35 @@ export function HeroCard({
         {hero.kind === "start" && (
           <div className="space-y-4">
             <div>
-              <h2 className="text-lg font-semibold text-app-fg">{copy.heroStartTitle}</h2>
-              <p className="mt-1 text-sm text-app-fg-muted">{copy.heroStartSub}</p>
+              <h2 className="text-lg font-semibold text-app-fg">
+                {setupComplete ? copy.heroStartTitleReady : copy.heroStartTitle}
+              </h2>
+              <p className="mt-1 text-sm text-app-fg-muted">
+                {setupComplete ? copy.heroStartSubReady : copy.heroStartSub}
+              </p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row">
               <Link
                 href="/generate"
-                className="flex flex-1 items-center justify-center rounded-xl bg-amber-500 px-4 py-3 text-sm font-bold text-zinc-950 transition hover:bg-amber-400"
+                className="flex flex-1 items-center justify-center rounded-xl bg-amber-500 px-4 py-3 text-sm font-bold text-black transition hover:bg-amber-400"
               >
                 {copy.pasteReel}
               </Link>
-              <Link
-                href="/onboarding"
-                className="flex flex-1 items-center justify-center rounded-xl border border-zinc-200 px-4 py-3 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50 dark:border-white/10 dark:text-zinc-300 dark:hover:bg-white/5"
-              >
-                {copy.finishSetup}
-              </Link>
+              {setupComplete ? (
+                <Link
+                  href="/generate"
+                  className="flex flex-1 items-center justify-center rounded-xl border border-zinc-200 px-4 py-3 text-sm font-semibold text-zinc-900 transition hover:bg-zinc-50 dark:border-white/10 dark:text-zinc-100 dark:hover:bg-white/5"
+                >
+                  {copy.browseStudio}
+                </Link>
+              ) : (
+                <Link
+                  href="/onboarding"
+                  className="flex flex-1 items-center justify-center rounded-xl border border-zinc-200 px-4 py-3 text-sm font-semibold text-zinc-900 transition hover:bg-zinc-50 dark:border-white/10 dark:text-zinc-100 dark:hover:bg-white/5"
+                >
+                  {copy.finishSetup}
+                </Link>
+              )}
             </div>
           </div>
         )}
@@ -226,7 +241,7 @@ function HeroBody({
             disabled={disabled || busy}
             onClick={onPrimary}
             className={cn(
-              "inline-flex items-center gap-2 rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-bold text-zinc-950 transition hover:bg-amber-400 disabled:opacity-50",
+              "inline-flex items-center gap-2 rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-bold text-black transition hover:bg-amber-400 disabled:opacity-50",
               busy && "scale-[1.02] shadow-md",
             )}
           >
@@ -244,7 +259,7 @@ function HeroBody({
               type="button"
               disabled={disabled || busy}
               onClick={onSecondary}
-              className="rounded-xl border border-zinc-200 px-4 py-2.5 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50 disabled:opacity-50 dark:border-white/10 dark:text-zinc-300"
+              className="rounded-xl border border-zinc-200 px-4 py-2.5 text-sm font-semibold text-zinc-900 transition hover:bg-zinc-50 disabled:opacity-50 dark:border-white/10 dark:text-zinc-100"
             >
               {copy.showAnother}
             </button>

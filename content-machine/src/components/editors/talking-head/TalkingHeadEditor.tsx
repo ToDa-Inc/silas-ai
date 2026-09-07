@@ -158,7 +158,7 @@ export function TalkingHeadEditor({
         </div>
       </div>
 
-      {showCover ? (
+      {showCover && !guidedMode ? (
         <CoverEditor
           hooks={hooks}
           coverOptions={coverOptions}

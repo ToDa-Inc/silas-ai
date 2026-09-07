@@ -16,9 +16,10 @@ export default async function DashboardLayout({
 }) {
   const ctx = await getCachedServerApiContext();
   const cookieStore = await cookies();
-  const onboardingBypass = readOnboardingBypassActive(
+  const onboardingBypassCookie = readOnboardingBypassActive(
     cookieStore.get(ONBOARDING_BYPASS_COOKIE)?.value,
   );
+  let onboardingBypass = onboardingBypassCookie;
 
   if (!ctx.user) {
     const h = await headers();
@@ -28,17 +29,18 @@ export default async function DashboardLayout({
   if (ctx.user && !ctx.tenancy) {
     redirect("/onboarding");
   }
-  if (!onboardingBypass && ctx.user && ctx.tenancy && ctx.clientSlug) {
+  if (ctx.user && ctx.tenancy && ctx.clientSlug) {
     const h = await headers();
     const path = h.get("x-middleware-pathname")?.trim() || "";
-    if (!dashboardPathAllowedDuringOnboarding(path)) {
-      const onboarding = await fetchOnboardingStatus();
-      if (
-        onboarding.ok &&
-        onboarding.data &&
-        onboarding.data.status !== "completed" &&
-        onboarding.data.current_step !== "done"
-      ) {
+    const onboarding = await fetchOnboardingStatus();
+    const finished =
+      onboarding.ok &&
+      onboarding.data &&
+      (onboarding.data.status === "completed" || onboarding.data.current_step === "done");
+    if (finished) {
+      onboardingBypass = false;
+    } else if (!onboardingBypass && !dashboardPathAllowedDuringOnboarding(path)) {
+      if (onboarding.ok && onboarding.data) {
         redirect("/onboarding");
       }
     }

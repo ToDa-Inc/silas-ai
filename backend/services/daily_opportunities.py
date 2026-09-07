@@ -19,6 +19,9 @@ from supabase import Client
 logger = logging.getLogger(__name__)
 
 DASHBOARD_LOOKBACK_DAYS = 3
+# Onboarding scrapes a 30-day window. A 3-day home snapshot then hides those
+# reels and the hero falls back to "Finish setup" after onboarding is done.
+DASHBOARD_FALLBACK_LOOKBACK_DAYS = 30
 DASHBOARD_LIMIT = 12
 COMPETITOR_WIN_MIN_RATIO = 1.5
 
@@ -37,6 +40,20 @@ def select_fresh_niche_reel_ids(
     *,
     days: int = DASHBOARD_LOOKBACK_DAYS,
     limit: int = DASHBOARD_LIMIT,
+    fallback_days: int = DASHBOARD_FALLBACK_LOOKBACK_DAYS,
+) -> List[str]:
+    ids = _select_fresh_niche_reel_ids(supabase, client_id, days=days, limit=limit)
+    if ids or fallback_days <= days:
+        return ids
+    return _select_fresh_niche_reel_ids(supabase, client_id, days=fallback_days, limit=limit)
+
+
+def _select_fresh_niche_reel_ids(
+    supabase: Client,
+    client_id: str,
+    *,
+    days: int,
+    limit: int,
 ) -> List[str]:
     try:
         res = (

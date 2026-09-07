@@ -100,6 +100,15 @@ export type HeroResolved =
   | { kind: "building"; phase: string }
   | { kind: "start" };
 
+export function onboardingIsCompleted(state?: {
+  onboarding_completed?: boolean;
+  onboarding_step?: string;
+} | null): boolean {
+  if (!state) return false;
+  if (state.onboarding_completed) return true;
+  return state.onboarding_step === "done";
+}
+
 export type DailyPostMeta = {
   sessionId: string | null;
   status: string | null;

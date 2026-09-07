@@ -98,6 +98,7 @@ export type HomeSummaryRow = {
   state: {
     phase: string;
     setup_complete: boolean;
+    onboarding_completed?: boolean;
     onboarding_step: string;
     is_building: boolean;
   };

@@ -20,7 +20,13 @@ const EMPTY_SUMMARY: HomeSummaryRow = {
     working: false,
   },
   analyst: { reels_studied: 0, avg_views: null, outliers: 0, trend_pct: null, working: false },
-  state: { phase: "", setup_complete: false, onboarding_step: "", is_building: false },
+  state: {
+    phase: "",
+    setup_complete: false,
+    onboarding_completed: false,
+    onboarding_step: "",
+    is_building: false,
+  },
   momentum: { posts_made: 0, last_export: null },
 };
 

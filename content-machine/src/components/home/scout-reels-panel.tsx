@@ -6,7 +6,7 @@ import { ChevronLeft, ChevronRight, ExternalLink, LayoutGrid, List, Loader2, Sea
 import { SegmentedFilterPills } from "@/app/(dashboard)/intelligence/reels/source-filter-pills";
 import { ReelThumbnail } from "@/components/reel-thumbnail";
 import type { HomeSummaryRow, ScrapedReelRow } from "@/lib/api";
-import { opportunityTitle } from "@/lib/home-opportunities";
+import { onboardingIsCompleted, opportunityTitle } from "@/lib/home-opportunities";
 import { formatCompactViews, useHomeCopy } from "@/lib/home-ui";
 import {
   scoutCatalogHref,
@@ -204,7 +204,7 @@ export function ScoutReelsPanel({
 
       {!catalog.loading && catalog.rows.length === 0 ? (
         <p className="rounded-xl border border-dashed border-zinc-200 px-4 py-6 text-center text-sm text-app-fg-muted dark:border-white/10">
-          {copy.scoutEmpty}
+          {onboardingIsCompleted(summary.state) ? copy.scoutEmptyReady : copy.scoutEmpty}
         </p>
       ) : viewMode === "rows" ? (
         <div className="overflow-x-auto rounded-xl border border-zinc-200/90 dark:border-white/10">
@@ -296,7 +296,7 @@ function ScoutReelRow({ reel, onUse }: { reel: ScrapedReelRow; onUse: () => void
         <button
           type="button"
           onClick={onUse}
-          className="rounded-lg bg-amber-500 px-3 py-1.5 text-[11px] font-bold text-zinc-950 transition hover:bg-amber-400"
+          className="rounded-lg bg-amber-500 px-3 py-1.5 text-[11px] font-bold text-black transition hover:bg-amber-400"
         >
           {copy.useThis}
         </button>

@@ -3756,7 +3756,8 @@ def home_summary(
     phase = str(pipeline_progress.get("phase") or "")
     onboarding_status = str(onboarding_row.get("status") or "") if onboarding_row else ""
     onboarding_step = str(onboarding_row.get("current_step") or "") if onboarding_row else ""
-    setup_complete = onboarding_status == "completed" or onboarding_step == "done" or phase == "complete"
+    onboarding_completed = onboarding_status == "completed" or onboarding_step == "done"
+    setup_complete = onboarding_completed or phase == "complete"
 
     building_phases = {
         "dna_compile",
@@ -3798,6 +3799,7 @@ def home_summary(
         "state": {
             "phase": phase,
             "setup_complete": setup_complete,
+            "onboarding_completed": onboarding_completed,
             "onboarding_step": onboarding_step,
             "is_building": is_building,
         },
