@@ -2,9 +2,12 @@ const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_KEY || "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"
-});
+if (!process.env.OPENAI_API_KEY) {
+  console.error('Missing OPENAI_API_KEY in config/.env');
+  process.exit(1);
+}
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const audioPath = process.argv[2] || path.join(__dirname, 'data/frames/talking_head_test/audio.mp3');
 

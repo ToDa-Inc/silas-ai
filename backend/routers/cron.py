@@ -1,3 +1,4 @@
+import hmac
 from typing import Annotated, Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -40,7 +41,9 @@ def _require_cron_secret(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="CRON_SECRET not configured",
         )
-    if not x_cron_secret or x_cron_secret != settings.cron_secret:
+    if not x_cron_secret or not hmac.compare_digest(
+        x_cron_secret.encode("utf-8"), settings.cron_secret.encode("utf-8")
+    ):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid cron secret")
 
 
