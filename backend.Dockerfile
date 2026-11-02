@@ -34,6 +34,8 @@ ENV npm_config_fund=false \
     npm_config_update_notifier=false
 RUN npm ci --no-audit --fund=false
 COPY video-production/broll-caption-editor/ /opt/broll-caption-editor/
+# Pre-bundle so renders use build/index.html (see services/video_render.py) instead of bundling per job.
+RUN npx remotion bundle src/Root.tsx
 WORKDIR /app
 
 COPY backend/requirements.txt .

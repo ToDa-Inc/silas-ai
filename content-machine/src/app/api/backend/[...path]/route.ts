@@ -104,7 +104,11 @@ async function proxyRequest(req: NextRequest, pathSegments: string[]) {
   }
 
   // Buffer so undici fully decompresses before we hand bytes to the browser.
-  const payload = Buffer.from(await upstream.arrayBuffer());
+  // HEAD/204/304 must be a null body: the Response constructor throws on any body for those.
+  const payload =
+    method === "HEAD" || upstream.status === 204 || upstream.status === 304
+      ? null
+      : Buffer.from(await upstream.arrayBuffer());
 
   const outHeaders = new Headers();
   upstream.headers.forEach((value, key) => {

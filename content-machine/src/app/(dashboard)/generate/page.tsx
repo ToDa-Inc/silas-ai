@@ -759,11 +759,21 @@ export default function GeneratePage() {
   const [clientSlug, setClientSlug] = useState("");
   const [orgSlug, setOrgSlug] = useState("");
 
-  const refreshSessions = useCallback(async () => {
-    if (!clientSlug || !orgSlug) return;
-    const lr = await generationListSessions(clientSlug, orgSlug, 15);
-    if (lr.ok) setSessions(lr.data);
-  }, [clientSlug, orgSlug]);
+  const refreshSessions = useCallback(
+    async (cs?: string, os?: string) => {
+      const slug = (cs ?? clientSlug).trim();
+      const org = (os ?? orgSlug).trim();
+      if (!slug || !org) return null;
+      const lr = await generationListSessions(slug, org, 15);
+      if (lr.ok) {
+        setSessions(lr.data);
+        return lr.data;
+      }
+      show(lr.error, "error");
+      return null;
+    },
+    [clientSlug, orgSlug, show],
+  );
 
   const refreshContext = useCallback(async () => {
     const ctx = await clientApiContext();
@@ -831,6 +841,7 @@ export default function GeneratePage() {
         fetchFormatDigests(ctx.clientSlug, ctx.orgSlug, false),
       ]);
       if (listRes.ok) setSessions(listRes.data);
+      else show(listRes.error, "error");
       if (digRes.ok) {
         setFormatDigests(digRes.data);
       } else {
@@ -1103,17 +1114,25 @@ export default function GeneratePage() {
       }
       return;
     }
-    if (!clientSlug.trim() || !orgSlug.trim()) {
-      // Wait for client/org bootstrap to finish — keep the loading gate up.
-      return;
-    }
     let cancelled = false;
     void (async () => {
-      const res = await generationGetSession(clientSlug, orgSlug, raw);
+      const ctx = await clientApiContext();
+      if (cancelled) return;
+      const cs = ctx.clientSlug.trim();
+      const os = ctx.orgSlug.trim();
+      if (!cs || !os) {
+        setLoadingFromUrl(false);
+        show("No active creator — pick one in the sidebar.", "error");
+        return;
+      }
+      setClientSlug(cs);
+      setOrgSlug(os);
+      const res = await generationGetSession(cs, os, raw);
       if (cancelled) return;
       if (!res.ok) {
         setLoadingFromUrl(false);
         show(res.error, "error");
+        router.replace("/generate", { scroll: false });
         return;
       }
       currentSessionIdRef.current = res.data.id;
@@ -1123,7 +1142,7 @@ export default function GeneratePage() {
       } else {
         setStep("angles");
       }
-      await refreshSessions();
+      await refreshSessions(cs, os);
       setLoadingFromUrl(false);
       if (!sessionIdFromPath) {
         router.replace(generateSessionHref(raw), { scroll: false });
@@ -1133,15 +1152,7 @@ export default function GeneratePage() {
     return () => {
       cancelled = true;
     };
-  }, [
-    clientSlug,
-    orgSlug,
-    sessionIdFromPath,
-    sessionIdFromUrl,
-    router,
-    show,
-    refreshSessions,
-  ]);
+  }, [sessionIdFromPath, sessionIdFromUrl, router, show, refreshSessions]);
 
   const requestDeleteSession = useCallback((id: string) => {
     setDeleteSessionId(id);

@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import math
-import os
-import subprocess
-import tempfile
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
@@ -15,7 +12,11 @@ from models.video_spec import (
     VideoSpecHook,
     VideoSpecV1,
     effective_background_duration,
+    frame_to_sec,
+    playable_background_frames,
 )
+from services.broll_normalize import broll_duration_from_row, broll_frames_from_row
+from services.video_probe import COMPOSITION_FPS, ffprobe_duration_seconds
 
 GAP_MIN = 0.0
 # Per-pause cap. Generous so users can leave real breathing room between
@@ -58,46 +59,7 @@ def probe_http_video_duration_sec(url: str, *, timeout: float = 120.0) -> Option
         return None
 
 
-def ffprobe_duration_seconds(video_bytes: bytes) -> Optional[float]:
-    """Return container duration in seconds, or None if ffprobe unavailable."""
-    path = ""
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as vf:
-            vf.write(video_bytes)
-            path = vf.name
-        proc = subprocess.run(
-            [
-                "ffprobe",
-                "-v",
-                "error",
-                "-show_entries",
-                "format=duration",
-                "-of",
-                "default=noprint_wrappers=1:nokey=1",
-                path,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=45,
-        )
-        if proc.returncode != 0:
-            return None
-        s = (proc.stdout or "").strip()
-        if not s:
-            return None
-        return float(s)
-    except (ValueError, OSError, subprocess.TimeoutExpired):
-        return None
-    finally:
-        if path:
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
-
-
-def fetch_broll_duration_sec(supabase: Any, client_id: str, clip_id: str) -> Optional[float]:
-    """Resolve B-roll length: ``broll_clips.duration_s`` when set, else ffprobe on ``file_url``."""
+def fetch_broll_clip_row(supabase: Any, client_id: str, clip_id: str) -> Optional[Dict[str, Any]]:
     cid = (clip_id or "").strip()
     cl = (client_id or "").strip()
     if not cid or not cl or supabase is None:
@@ -105,7 +67,9 @@ def fetch_broll_duration_sec(supabase: Any, client_id: str, clip_id: str) -> Opt
     try:
         res = (
             supabase.table("broll_clips")
-            .select("duration_s, file_url")
+            .select(
+                "duration_frames, duration_sec, duration_s, master_url, file_url"
+            )
             .eq("id", cid)
             .eq("client_id", cl)
             .limit(1)
@@ -113,23 +77,54 @@ def fetch_broll_duration_sec(supabase: Any, client_id: str, clip_id: str) -> Opt
         )
         if not res.data:
             return None
-        row = res.data[0]
-        raw = row.get("duration_s")
-        if raw is not None:
-            try:
-                v = float(raw)
-            except (TypeError, ValueError):
-                v = 0.0
-            if math.isfinite(v) and v > 0:
-                return v
-        fu = str(row.get("file_url") or "").strip()
-        if fu:
-            probed = probe_http_video_duration_sec(fu)
-            if probed is not None and probed > 0:
-                return probed
-        return None
+        return res.data[0]
     except Exception:
         return None
+
+
+def fetch_broll_timing(
+    supabase: Any, client_id: str, clip_id: str
+) -> Tuple[Optional[int], Optional[float]]:
+    """Return (duration_frames, duration_sec) for a clip row."""
+    row = fetch_broll_clip_row(supabase, client_id, clip_id)
+    if not row:
+        return None, None
+    frames = broll_frames_from_row(row)
+    dur = broll_duration_from_row(row)
+    if dur is not None:
+        return frames, dur
+    fu = str(row.get("master_url") or row.get("file_url") or "").strip()
+    if fu:
+        probed = probe_http_video_duration_sec(fu)
+        if probed is not None and probed > 0:
+            est = max(1, round(probed * COMPOSITION_FPS))
+            return est, probed
+    return None, None
+
+
+def fetch_broll_duration_sec(supabase: Any, client_id: str, clip_id: str) -> Optional[float]:
+    """Resolve B-roll length: frames → sec, else ``duration_sec`` / ffprobe."""
+    _frames, dur = fetch_broll_timing(supabase, client_id, clip_id)
+    return dur
+
+
+def clamp_spec_to_video_frames(spec: VideoSpecV1) -> VideoSpecV1:
+    """Cap hook, blocks, and ``totalSec`` to the playable frame window (export-safe)."""
+    pf = playable_background_frames(spec.background)
+    if pf is None or pf <= 0:
+        return spec
+    cap_sec = frame_to_sec(pf)
+    hook = spec.hook
+    if hook.durationSec > cap_sec:
+        hook = hook.model_copy(update={"durationSec": max(0.05, cap_sec)})
+    blocks: List[VideoSpecBlock] = []
+    for b in sorted(spec.blocks, key=lambda x: x.startSec):
+        start = min(float(b.startSec), cap_sec)
+        end = min(float(b.endSec), cap_sec)
+        if end <= start:
+            start = max(0.0, end - 0.05)
+        blocks.append(b.model_copy(update={"startSec": start, "endSec": end}))
+    return spec.model_copy(update={"hook": hook, "blocks": blocks, "totalSec": cap_sec})
 
 
 def _round_cs(n: float) -> float:
@@ -292,7 +287,10 @@ def relayout_spec(spec: VideoSpecV1) -> VideoSpecV1:
 
     max_end = max((b.endSec for b in new_blocks), default=0.0)
     min_total = max(max_end, h + 0.5, 2.0)
-    if cap is not None:
+    pf = playable_background_frames(spec.background)
+    if pf is not None:
+        total = frame_to_sec(pf)
+    elif cap is not None:
         total = _round_cs(min(min_total, float(cap)))
     else:
         total = _round_cs(max(min_total, float(spec.totalSec)))
