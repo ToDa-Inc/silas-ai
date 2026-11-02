@@ -12,7 +12,7 @@ class _MonkeyPatch:
 
 
 def test_compose_thumbnail_accepts_crop_and_text_style_options(monkeypatch):
-    monkeypatch.setattr(image_generation, "_load_font", lambda _size: ImageFont.load_default())
+    monkeypatch.setattr(image_generation, "_load_font", lambda _size, _font_id=None: ImageFont.load_default())
     src = Image.new("RGB", (800, 800), (80, 120, 180))
     buf = io.BytesIO()
     src.save(buf, format="PNG")
