@@ -93,6 +93,8 @@ export function compositionDurationInFrames(spec: {
 export type VideoSpecHook = {
   text: string;
   durationSec: number;
+  /** Per-hook size multiplier on top of ``layout.scale``; omitted/null = 1.0. */
+  fontScale?: number | null;
 };
 
 export type VideoSpecBlock = {
@@ -106,6 +108,8 @@ export type VideoSpecBlock = {
   textTreatment?: VideoTextTreatmentId | null;
   /** Inherits from top-level ``appearance`` when omitted. */
   appearance?: VideoSpecAppearance | null;
+  /** Per-beat size multiplier on top of ``layout.scale``; omitted/null = 1.0. */
+  fontScale?: number | null;
 };
 
 export type VerticalAnchor = 'bottom' | 'center' | 'top';
