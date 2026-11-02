@@ -9,6 +9,7 @@ from core.config import Settings
 from core.database import get_supabase_for_settings
 from core.id_generator import generate_baseline_id
 from services.apify import instagram_reel_scraper_input, run_actor
+from services.apify_reel_fields import view_count_from_item
 from services.client_own_reels import upsert_client_own_reels
 from services.reel_snapshots import insert_snapshots_for_scrape_job
 from services.competitor_tier_backfill import backfill_competitor_tiers
@@ -71,9 +72,9 @@ def run_baseline_scrape(settings: Settings, job: Dict[str, Any]) -> None:
     videos = [
         x
         for x in items
-        if x.get("type") in ("Video", "GraphVideo") and (x.get("videoViewCount") or 0) > 0
+        if x.get("type") in ("Video", "GraphVideo") and view_count_from_item(x) > 0
     ]
-    views = [int(v["videoViewCount"]) for v in videos]
+    views = [view_count_from_item(v) for v in videos]
     likes = [int(v.get("likesCount") or 0) for v in videos]
 
     scraped_at = datetime.now(timezone.utc)

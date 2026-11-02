@@ -23,7 +23,11 @@ from services.apify import (
 from services.apify_posted_at import apify_instagram_item_posted_at_iso
 from services.instagram_post_url import canonical_instagram_post_url
 from services.reel_snapshots import insert_snapshots_for_scrape_job
-from services.apify_reel_fields import saves_and_shares_from_item, video_duration_seconds_from_item
+from services.apify_reel_fields import (
+    saves_and_shares_from_item,
+    video_duration_seconds_from_item,
+    view_count_from_item,
+)
 from services.reel_thumbnail_url import reel_thumbnail_url_from_apify_item
 from services.first_day_stats import update_milestones_for_competitor
 from services.format_digest_jobs import enqueue_auto_analyze_scraped, enqueue_format_digest_recompute
@@ -86,7 +90,7 @@ def _reel_items(items: list) -> List[dict]:
     for x in items:
         if x.get("type") not in ("Video", "GraphVideo"):
             continue
-        views = int(x.get("videoViewCount") or x.get("playsCount") or 0)
+        views = view_count_from_item(x)
         if views <= 0:
             continue
         out.append(x)
@@ -219,7 +223,7 @@ def run_profile_scrape(settings: Settings, job: Dict[str, Any]) -> None:
         )
 
     # ── Recalculate competitor averages from this fresh batch ──
-    all_views = [int(v.get("videoViewCount") or v.get("playsCount") or 0) for v in videos]
+    all_views = [view_count_from_item(v) for v in videos]
     all_likes = [int(v.get("likesCount") or 0) for v in videos]
     all_comments = [int(v.get("commentsCount") or 0) for v in videos]
 
@@ -242,7 +246,7 @@ def run_profile_scrape(settings: Settings, job: Dict[str, Any]) -> None:
         url = _post_url(item)
         if not url:
             continue
-        views = int(item.get("videoViewCount") or item.get("playsCount") or 0)
+        views = view_count_from_item(item)
         likes = int(item.get("likesCount") or 0)
         comments = int(item.get("commentsCount") or 0)
         saves, shares = saves_and_shares_from_item(item)
@@ -642,7 +646,7 @@ def _run_own_scrape(
         url = _post_url(item)
         if not url:
             continue
-        views = int(item.get("videoViewCount") or item.get("playsCount") or 0)
+        views = view_count_from_item(item)
         likes = int(item.get("likesCount") or 0)
         comments = int(item.get("commentsCount") or 0)
         saves, shares = saves_and_shares_from_item(item)

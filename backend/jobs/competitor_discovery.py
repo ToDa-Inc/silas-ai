@@ -11,7 +11,7 @@ from core.database import get_supabase_for_settings
 from core.id_generator import generate_competitor_id
 from services.apify import SEARCH_ACTOR, instagram_reel_scraper_input, run_actor
 from services.niche_queries import collect_keywords
-from services.apify_reel_fields import video_duration_seconds_from_item
+from services.apify_reel_fields import video_duration_seconds_from_item, view_count_from_item
 from services.instagram_account_lookup import fetch_instagram_user_by_username
 from services.competitor_scoring import evaluate_competitor
 from services.openrouter import analyze_relevance
@@ -148,7 +148,7 @@ def _scrape_account_posts(
             out.append(
                 {
                     "caption": cap or "",
-                    "views": int(r.get("videoViewCount") or r.get("videoPlayCount") or 0),
+                    "views": view_count_from_item(r),
                     "likes": int(r.get("likesCount") or 0),
                     "comments": int(r.get("commentsCount") or 0),
                     "duration": video_duration_seconds_from_item(r) or 0,
@@ -184,7 +184,7 @@ def _scrape_account_posts(
         posts.append(
             {
                 "caption": cap,
-                "views": int(r.get("videoViewCount") or r.get("playsCount") or 0),
+                "views": view_count_from_item(r),
                 "likes": int(r.get("likesCount") or 0),
                 "comments": int(r.get("commentsCount") or 0),
                 "duration": video_duration_seconds_from_item(r) or 0,

@@ -10,7 +10,11 @@ from supabase import Client
 from core.id_generator import generate_reel_id
 from services.apify_posted_at import apify_instagram_item_posted_at_iso
 from services.instagram_post_url import canonical_instagram_post_url
-from services.apify_reel_fields import saves_and_shares_from_item, video_duration_seconds_from_item
+from services.apify_reel_fields import (
+    saves_and_shares_from_item,
+    video_duration_seconds_from_item,
+    view_count_from_item,
+)
 from services.reel_thumbnail_url import reel_thumbnail_url_from_apify_item
 
 
@@ -64,7 +68,7 @@ def upsert_client_own_reels(
         url = _post_url(item)
         if not url:
             continue
-        views = int(item.get("videoViewCount") or item.get("playsCount") or 0)
+        views = view_count_from_item(item)
         if views <= 0:
             continue
         likes = int(item.get("likesCount") or 0)

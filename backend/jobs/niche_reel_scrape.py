@@ -29,7 +29,11 @@ from core.database import get_supabase_for_settings
 from core.id_generator import generate_reel_id
 from services.apify import instagram_reel_scraper_input, run_actor, run_keyword_reel_search
 from services.apify_posted_at import apify_instagram_item_posted_at_iso
-from services.apify_reel_fields import saves_and_shares_from_item, video_duration_seconds_from_item
+from services.apify_reel_fields import (
+    saves_and_shares_from_item,
+    video_duration_seconds_from_item,
+    view_count_from_item,
+)
 from services.format_digest_jobs import enqueue_auto_analyze_scraped, enqueue_format_digest_recompute
 from services.instagram_post_url import canonical_instagram_post_url
 from services.niche_queries import build_niche_reel_search_queries
@@ -91,7 +95,7 @@ def _batch_avgs_by_owner(rows: List[Tuple[str, str, dict]]) -> Dict[str, Tuple[i
         by_o[key].append(item)
     out: Dict[str, Tuple[int, int, int]] = {}
     for own, items in by_o.items():
-        vs = [int(x.get("videoViewCount") or x.get("playsCount") or 0) for x in items]
+        vs = [view_count_from_item(x) for x in items]
         ls = [int(x.get("likesCount") or 0) for x in items]
         cs = [int(x.get("commentsCount") or 0) for x in items]
         n = len(items)
@@ -243,7 +247,7 @@ def run_niche_reel_scrape(settings: Settings, job: Dict[str, Any]) -> None:
         item = items[0]
         if item.get("type") not in ("Video", "GraphVideo"):
             continue
-        views = int(item.get("videoViewCount") or item.get("playsCount") or 0)
+        views = view_count_from_item(item)
         if views <= 0:
             continue
         owner = _owner_username(item, uname_hint)
@@ -283,7 +287,7 @@ def run_niche_reel_scrape(settings: Settings, job: Dict[str, Any]) -> None:
         post_url = _post_url_from_item(item, url_key)
         post_url = canonical_instagram_post_url(post_url)
         caption = _caption_text(item)
-        views = int(item.get("videoViewCount") or item.get("playsCount") or 0)
+        views = view_count_from_item(item)
         likes = int(item.get("likesCount") or 0)
         comments = int(item.get("commentsCount") or 0)
         saves, shares = saves_and_shares_from_item(item)
