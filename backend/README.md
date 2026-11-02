@@ -74,6 +74,16 @@ Optional: `backend/.env` or `config/.env` for overrides (see load order in root 
 
 11. **Save** the file. Load order is **repo `.env` → `backend/.env` → `config/.env`** (each overrides the previous). Put shared keys in repo `.env`; keep `config/.env` only if Node scripts still read it.
 
+## Tests
+
+```bash
+cd backend
+pip install -r requirements-dev.txt
+python -m pytest -q
+```
+
+No credentials are needed. CI (`.github/workflows/backend-tests.yml`) runs the same command on every PR that touches `backend/`. `tests/test_auth_access.py` fails if any new route is reachable without an API key or cron secret; add intentionally public routes to `PUBLIC_ROUTES` there.
+
 ## Scheduled scraping (GitHub Actions / cron)
 
 One daily workflow runs all three POSTs **in parallel** in the same run: `.github/workflows/cron-daily-pipeline.yml` (default **14:30 Asia/Makassar**). Individual routes can still be triggered via `workflow_dispatch` on `cron-sync-all.yml`, `cron-niche-discovery.yml`, and `cron-scraped-reels-refresh.yml`.
