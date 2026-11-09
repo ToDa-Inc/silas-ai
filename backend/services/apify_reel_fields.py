@@ -25,6 +25,20 @@ def _first_positive_duration_seconds(*candidates: Any) -> Optional[int]:
     return None
 
 
+def view_count_from_item(item: Dict[str, Any]) -> int:
+    """View/play count of a reel; 0 when Apify returned none.
+
+    ``apify~instagram-reel-scraper`` now returns the number as ``videoPlayCount`` and leaves
+    ``videoViewCount`` null (verified on production runs 2026-11-02, own and competitor reels).
+    Older output used ``videoViewCount``; ``playsCount`` is kept for other actors. First positive wins.
+    """
+    for key in ("videoViewCount", "videoPlayCount", "playsCount"):
+        n = _to_non_negative_int(item.get(key))
+        if n:
+            return n
+    return 0
+
+
 def video_duration_seconds_from_item(item: Dict[str, Any]) -> Optional[int]:
     """Seconds from Apify / Instagram item (several possible keys and nested ``video``)."""
     nested: Dict[str, Any] = {}

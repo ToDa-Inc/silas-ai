@@ -23,13 +23,14 @@ from core.config import Settings
 from core.errors import MissingCredentialsError
 from core.database import get_supabase_for_settings
 from services.apify import instagram_reel_scraper_input, run_actor
+from services.apify_reel_fields import view_count_from_item
 from services.first_day_stats import compute_competitor_milestone_averages
 
 logger = logging.getLogger(__name__)
 
 
 def _views_from_item(item: dict) -> int:
-    return int(item.get("videoViewCount") or item.get("playsCount") or 0)
+    return view_count_from_item(item)
 
 
 def run_milestone_scrape(settings: Settings, job: Dict[str, Any]) -> None:
