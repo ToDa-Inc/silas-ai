@@ -10,6 +10,7 @@ from core.config import Settings
 from core.database import get_supabase_for_settings
 from services.client_dna_compile import maybe_recompile_client_dna
 from services.client_context_real_prompts import generate_sections_from_real_prompts
+from services.onboarding_context_merge import merge_onboarding_context
 from services.onboarding_questions import build_transcript_from_answers, normalize_lang
 from services.onboarding_state import (
     apply_quiz_to_client,
@@ -108,18 +109,22 @@ def run_onboarding_brain_generate(settings: Settings, job: Dict[str, Any]) -> No
         )
 
         now = _now()
-        ctx = dict(client.get("client_context") or {}) if isinstance(client.get("client_context"), dict) else {}
-        ctx["onboarding_transcript"] = {
-            "text": transcript,
-            "source": "voice",
-            "file": None,
-            "updated_at": now,
+        incoming: Dict[str, Any] = {
+            "onboarding_transcript": {
+                "text": transcript,
+                "source": "voice",
+                "file": None,
+                "updated_at": now,
+            }
         }
         for key in SECTION_KEYS:
             text = str(sections.get(key) or "").strip()
             if text:
-                ctx[key] = {"text": text, "source": "generated", "file": None, "updated_at": now}
+                incoming[key] = {"text": text, "source": "generated", "file": None, "updated_at": now}
 
+        ctx, kept = merge_onboarding_context(client.get("client_context"), incoming)
+        if kept:
+            logger.info("onboarding_brain_generate kept protected sections client=%s keys=%s", client_id, kept)
         supabase.table("clients").update({"client_context": ctx}).eq("id", client_id).execute()
 
         quiz = _quiz_from_answers(str_answers)
@@ -149,7 +154,11 @@ def run_onboarding_brain_generate(settings: Settings, job: Dict[str, Any]) -> No
             {
                 "status": "completed",
                 "completed_at": now,
-                "result": {"pipeline": "onboarding_brain_generate", "sections": list(sections.keys())},
+                "result": {
+                    "pipeline": "onboarding_brain_generate",
+                    "sections": list(sections.keys()),
+                    "kept_protected": kept,
+                },
             }
         ).eq("id", job_id).execute()
     except Exception as e:

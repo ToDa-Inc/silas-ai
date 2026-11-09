@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from supabase import Client
 
 from core.config import Settings, get_settings
-from core.database import get_supabase
+from core.database import get_supabase, get_supabase_for_settings
 from core.deps import require_org_access, resolve_client_id
 from core.id_generator import generate_job_id
 from models.generation import GenerationStartBody
@@ -35,6 +35,7 @@ from services.onboarding_state import (
     update_onboarding_state,
 )
 from services.client_dna_compile import maybe_recompile_client_dna
+from services.onboarding_context_merge import merge_onboarding_context
 
 router = APIRouter(prefix="/api/v1/clients", tags=["onboarding"])
 logger = logging.getLogger(__name__)
@@ -93,6 +94,38 @@ class VoiceGenerateBody(BaseModel):
 
 class VoiceTextBody(BaseModel):
     text: str = Field(..., min_length=40)
+
+
+class OnboardingContextBody(BaseModel):
+    client_context: Dict[str, Any] = Field(..., min_length=1)
+
+
+def _background_recompile_dna(client_id: str) -> None:
+    try:
+        settings = get_settings()
+        maybe_recompile_client_dna(settings, get_supabase_for_settings(settings), client_id, force=False)
+    except Exception:
+        logger.exception("client_dna background recompile failed for %s", client_id)
+
+
+@router.put("/{slug}/onboarding/context")
+def save_onboarding_context(
+    slug: str,
+    body: OnboardingContextBody,
+    background_tasks: BackgroundTasks,
+    org_id: Annotated[str, Depends(require_org_access)],
+    client_id: Annotated[str, Depends(resolve_client_id)],
+    supabase: Annotated[Client, Depends(get_supabase)],
+) -> Dict[str, Any]:
+    """Save onboarding drafts into client_context, keeping uploaded / hand-written docs."""
+    _ = slug, org_id
+    crow = supabase.table("clients").select("client_context").eq("id", client_id).limit(1).execute()
+    if not crow.data:
+        raise HTTPException(status_code=404, detail="Client not found")
+    merged, kept = merge_onboarding_context(crow.data[0].get("client_context"), body.client_context)
+    supabase.table("clients").update({"client_context": merged}).eq("id", client_id).execute()
+    background_tasks.add_task(_background_recompile_dna, client_id)
+    return {"client_context": merged, "kept_protected": kept}
 
 
 def _context_preview_locked(supabase: Client, client_id: str) -> bool:

@@ -216,6 +216,33 @@ export async function startOnboardingBrainGenerate(
   }
 }
 
+/** Save onboarding drafts; the API keeps any uploaded or hand-written docs already on the client. */
+export async function saveOnboardingContext(
+  clientSlug: string,
+  orgSlug: string,
+  client_context: Record<string, unknown>,
+): Promise<{ ok: true; kept_protected: string[] } | { ok: false; error: string }> {
+  const base = getContentApiBase();
+  const headers = await clientApiHeaders({ orgSlug });
+  try {
+    const res = await contentApiFetch(
+      `${base}/api/v1/clients/${encodeURIComponent(clientSlug)}/onboarding/context`,
+      {
+        method: "PUT",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ client_context }),
+      },
+    );
+    const json = (await res.json().catch(() => ({}))) as { kept_protected?: string[]; detail?: unknown };
+    if (!res.ok) {
+      return { ok: false, error: formatFastApiError(json, `Save failed (${res.status})`) };
+    }
+    return { ok: true, kept_protected: json.kept_protected ?? [] };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "fetch failed" };
+  }
+}
+
 export async function fetchOnboardingReelCandidates(
   clientSlug: string,
   orgSlug: string,

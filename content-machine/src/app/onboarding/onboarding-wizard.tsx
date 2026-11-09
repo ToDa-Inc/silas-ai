@@ -29,7 +29,7 @@ import {
   startOnboardingFirstContent,
   startOnboardingIgPrefill,
   startOnboardingPipeline,
-  putClientClientContext,
+  saveOnboardingContext,
   clientApiHeaders,
   getContentApiBase,
   type OnboardingReelCandidate,
@@ -502,7 +502,7 @@ export function OnboardingWizard({
         }
       }
 
-      const putResult = await putClientClientContext(clientSlug, orgSlug, clientContext);
+      const putResult = await saveOnboardingContext(clientSlug, orgSlug, clientContext);
       if (!putResult.ok) {
         setError(putResult.error);
         return;
